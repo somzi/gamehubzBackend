@@ -1,4 +1,5 @@
 using GameHubz.Common;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
 {
@@ -18,7 +19,7 @@ namespace GameHubz.DataModels.Domain
 
         public DateTime? ScheduledStartTime { get; set; }
 
-        public string? Status { get; set; }
+        public MatchStatus Status { get; set; }
 
         public Guid? WinnerUserId { get; set; }
 

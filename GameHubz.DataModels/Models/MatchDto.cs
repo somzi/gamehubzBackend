@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class MatchDto
@@ -18,7 +20,7 @@ namespace GameHubz.DataModels.Models
 
         public DateTime? ScheduledStartTime { get; set; }
 
-        public string? Status { get; set; }
+        public MatchStatus Status { get; set; }
 
         public Guid? WinnerUserId { get; set; }
 

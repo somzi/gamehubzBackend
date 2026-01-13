@@ -1,3 +1,4 @@
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
 namespace GameHubz.DataModels.Models
@@ -14,7 +15,7 @@ namespace GameHubz.DataModels.Models
 
         public string? Rules { get; set; }
 
-        public string? Status { get; set; }
+        public TournamentStatus Status { get; set; }
 
         public string? MaxPlayers { get; set; }
 

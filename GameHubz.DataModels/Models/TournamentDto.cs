@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class TournamentDto
@@ -12,7 +14,7 @@ namespace GameHubz.DataModels.Models
 
         public string? Rules { get; set; }
 
-        public string? Status { get; set; }
+        public TournamentStatus Status { get; set; }
 
         public string? MaxPlayers { get; set; }
 
