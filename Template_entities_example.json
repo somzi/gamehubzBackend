@@ -1,0 +1,42 @@
+{
+  "migrationNumber": 22,
+  "projectRootPath": "C:\\W_Sipod\\Template-api",
+  "entities": [
+    {
+      "name": "Foo",
+      "routeName": "Foo",
+      "memberDefs": [
+        {
+          "name": "Age",
+          "dataType": "Int32",
+          "dataTypeParam": null,
+          "isRequired": true
+        },
+        {
+          "name": "FirstName",
+          "dataType": "String",
+          "dataTypeParam": "100",
+          "isRequired": true
+        },
+        {
+          "name": "LastName",
+          "dataType": "String",
+          "dataTypeParam": "100",
+          "isRequired": true
+        },
+        {
+          "name": "Address",
+          "dataType": "String",
+          "dataTypeParam": "max",
+          "isRequired": true
+        },
+        {
+          "name": "Notes",
+          "dataType": "String",
+          "dataTypeParam": "12",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

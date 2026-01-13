@@ -1,0 +1,27 @@
+{
+  "rootNamespace": "Template",
+  "project": "Loyalty",
+  "domainSuffix": "Entity",
+  "getDtoSuffix": "Dto",
+  "postDtoSuffix": "Post",
+  "editDtoSuffix": "Edit",
+  "baseServiceClassName": "AppBaseServiceGeneric",
+  "baseControllerClassName": "BasicGenericController",
+  "projectPaths": {
+    "dataContextPathAppend": "Template.Data\\Context\\ApplicationContext.cs",
+    "repositoryPath": "Template.Data\\Repository",
+    "domainEntityPath": "Template.DataModels\\Domain",
+    "dtoModelPath": "Template.DataModels\\Models",
+    "servicePath": "Template.Logic\\Services",
+    "logicInterfacePath": "Template.Logic\\Interfaces",
+    "validatorPath": "Template.Logic\\Validators",
+    "mapperPath": "Template.Logic\\Mappings",
+    "mapperRegisterPathAppend": "Template.Logic\\Mappings\\MapperRegistrator.cs",
+    "migrationPath": "Template.DataMigrations",
+    "serviceRegisterPathAppend": "Template.Logic\\ServiceCollectionExtension.cs",
+    "iUnitOfWorkPathAppend": "Template.Logic\\Interfaces\\IAppUnitOfWork.cs",
+    "unitOfWorkPathAppend": "Template.Data\\UnitOfWork\\AppUnitOfWork.cs",
+    "validatorRegisterPathAppend": "Template.Logic\\ServiceCollectionExtension.cs",
+    "controllerPath": "Template.Api\\Controllers"
+  }
+}

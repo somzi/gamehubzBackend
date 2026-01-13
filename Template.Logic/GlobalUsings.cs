@@ -1,0 +1,11 @@
+﻿global using global::Template.Common.Enums;
+global using global::Template.Common.Interfaces;
+global using global::Template.Common.Models;
+global using global::Template.Common.Extensions;
+global using global::Template.DataModels;
+global using global::Template.DataModels.Domain;
+global using global::Template.DataModels.Models;
+global using global::Template.Logic.Exceptions;
+global using global::Template.Logic.Interfaces;
+global using global::Template.Logic.Utility;
+global using global::AutoMapper;

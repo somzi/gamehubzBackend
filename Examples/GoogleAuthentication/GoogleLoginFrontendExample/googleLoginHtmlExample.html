@@ -1,0 +1,26 @@
+<html>
+  <body>
+      <script src="https://accounts.google.com/gsi/client" async defer></script>
+      <div id="g_id_onload"
+         data-client_id="233519784173-b1v1jm4kkl3rnnk08b5f5dsto8k15j49.apps.googleusercontent.com"
+         data-login_uri="https://localhost:7057/"
+         data-auto_prompt="true"
+         data-callback="handleCredentialResponse">
+      </div>
+      <div class="g_id_signin"
+         data-type="standard"
+         data-size="large"
+         data-theme="outline"
+         data-text="sign_in_with"
+         data-shape="rectangular"
+         data-logo_alignment="left">
+      </div>
+  </body>
+</html>
+<script>
+   function handleCredentialResponse(response) {
+
+      console.log("ID: " + response.credential);
+      
+   }
+ </script>
