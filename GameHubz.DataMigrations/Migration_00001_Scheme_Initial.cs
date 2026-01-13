@@ -1,5 +1,4 @@
 using System.Data;
-using FluentMigrator;
 
 namespace GameHubz.DataMigrations
 {
@@ -49,15 +48,6 @@ namespace GameHubz.DataMigrations
                 .WithColumn("RequestUrl").AsString(400).Nullable()
                 .WithColumn("RequestMethod").AsString(20).Nullable()
                 .WithColumn("RequestBody").AsMaxString().Nullable();
-
-            this.Create.TableWithCommonColumns("Asset")
-                .WithColumn("FileName").AsString(256).Nullable()
-                .WithColumn("BlobName").AsString(256).Nullable()
-                .WithColumn("Extension").AsString(50).Nullable()
-                .WithColumn("FileFormat").AsString(50).Nullable()
-                .WithColumn("AssetType").AsInt32().NotNullable()
-                .WithColumn("Size").AsInt64().NotNullable()
-                .WithColumn("Description").AsString(1000).Nullable();
 
             this.Create.TableWithCommonColumns("EmailQueue")
                 .WithColumn("To").AsString(1000).NotNullable()
