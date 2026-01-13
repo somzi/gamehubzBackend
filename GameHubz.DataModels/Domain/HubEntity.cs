@@ -8,5 +8,7 @@ namespace GameHubz.DataModels.Domain
         public string? Description { get; set; }
         public Guid UserId { get; set; }
         public UserEntity User { get; set; } = null!;
+        public List<UserHubEntity>? UserHubs { get; set; } = new();
+        public List<TournamentEntity>? Tournaments { get; set; } = new();
     }
 }

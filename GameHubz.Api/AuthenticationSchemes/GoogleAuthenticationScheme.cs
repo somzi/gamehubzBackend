@@ -31,23 +31,23 @@ namespace GameHubz.Api.AuthenticationSchemes
             validatedToken = tokenHandler.ReadJwtToken(securityToken);
             var principle = new ClaimsPrincipal();
 
-            GoogleJsonWebSignature.Payload payload
-                = Task.Run(async () => await GoogleJsonWebSignature
-                    .ValidateAsync(
-                        securityToken,
-                        new GoogleJsonWebSignature.ValidationSettings()
-                        {
-                            Audience = new[] { clientId }
-                        })).Result;
+            //GoogleJsonWebSignature.Payload payload
+            //    = Task.Run(async () => await GoogleJsonWebSignature
+            //        .ValidateAsync(
+            //            securityToken,
+            //            new GoogleJsonWebSignature.ValidationSettings()
+            //            {
+            //                Audience = new[] { clientId }
+            //            })).Result;
 
-            var claims = new List<Claim>
-                    {
-                        new Claim(ClaimTypes.Name, payload.GivenName),
-                        new Claim(ClaimTypes.Surname, payload.FamilyName),
-                        new Claim(ClaimTypes.Email, payload.Email),
-                    };
+            //var claims = new List<Claim>
+            //        {
+            //            new Claim(ClaimTypes.Name, payload.GivenName),
+            //            new Claim(ClaimTypes.Surname, payload.FamilyName),
+            //            new Claim(ClaimTypes.Email, payload.Email),
+            //        };
 
-            principle.AddIdentity(new ClaimsIdentity(claims, JwtBearerDefaults.AuthenticationScheme));
+            //principle.AddIdentity(new ClaimsIdentity(claims, JwtBearerDefaults.AuthenticationScheme));
             return principle;
         }
     }

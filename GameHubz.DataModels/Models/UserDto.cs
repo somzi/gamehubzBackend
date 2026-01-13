@@ -17,5 +17,10 @@ namespace GameHubz.DataModels.Models
         public string UserRoleSystemName { get; set; } = "";
 
         public string Language { get; set; } = "";
+        public List<UserHubDto>? UserHubs { get; set; } = new();
+
+        public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
+
+        public List<MatchDto>? Matches { get; set; } = new();
     }
 }

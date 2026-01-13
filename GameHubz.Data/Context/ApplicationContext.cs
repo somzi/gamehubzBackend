@@ -41,6 +41,102 @@ namespace GameHubz.Data.Context
             //********** GENERATED **************************
             //***********************************************
 
+            modelBuilder.Entity<UserHubEntity>().ToTable("UserHub").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserHubEntity>().ToTable("UserHub")
+                .HasOne(x => x.User)
+                .WithMany(x => x.UserHubs)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<UserHubEntity>().ToTable("UserHub")
+                .HasOne(x => x.Hub)
+                .WithMany(x => x.UserHubs)
+                .HasForeignKey(x => x.HubId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<TournamentEntity>().ToTable("Tournament").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TournamentEntity>().ToTable("Tournament")
+                .HasMany(x => x.TournamentRegistrations)
+                .WithOne(x => x.Tournament)
+                .HasForeignKey(x => x.TournamentId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<TournamentEntity>().ToTable("Tournament")
+                .HasMany(x => x.Matches)
+                .WithOne(x => x.Tournament)
+                .HasForeignKey(x => x.TournamentId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<TournamentEntity>().ToTable("Tournament")
+                .HasOne(x => x.Hub)
+                .WithMany(x => x.Tournaments)
+                .HasForeignKey(x => x.HubId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<TournamentRegistrationEntity>().ToTable("TournamentRegistration").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TournamentRegistrationEntity>().ToTable("TournamentRegistration")
+                .HasOne(x => x.Tournament)
+                .WithMany(x => x.TournamentRegistrations)
+                .HasForeignKey(x => x.TournamentId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<TournamentRegistrationEntity>().ToTable("TournamentRegistration")
+                .HasOne(x => x.User)
+                .WithMany(x => x.TournamentRegistrations)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasOne(x => x.Tournament)
+                .WithMany(x => x.Matches)
+                .HasForeignKey(x => x.TournamentId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasOne(x => x.AwayUser)
+                .WithMany()
+                .HasForeignKey(x => x.AwayUserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasOne(x => x.HomeUser)
+                .WithMany()
+                .HasForeignKey(x => x.HomeUserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasOne(x => x.WinnerUser)
+                .WithMany()
+                .HasForeignKey(x => x.WinnerUserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<UserEntity>().ToTable("User").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserEntity>().ToTable("User")
+                .HasMany(x => x.UserHubs)
+                .WithOne(x => x.User)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<UserEntity>().ToTable("User")
+                .HasMany(x => x.TournamentRegistrations)
+                .WithOne(x => x.User)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<HubEntity>().ToTable("Hub").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<HubEntity>().ToTable("Hub")
+                .HasMany(x => x.UserHubs)
+                .WithOne(x => x.Hub)
+                .HasForeignKey(x => x.HubId)
+                .HasPrincipalKey(x => x.Id);
+
             // DO NOT DELETE - Generated Configuration Tag
         }
 

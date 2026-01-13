@@ -1,6 +1,4 @@
 using FluentValidation;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using GameHubz.DataModels.Config;
 using GameHubz.Logic.Crypto;
 using GameHubz.Logic.Queuing.Consumers.LocalQueueConsumers;
@@ -11,6 +9,8 @@ using GameHubz.Logic.Queuing.Services.RabbitMqServices;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.Tokens;
 using GameHubz.Logic.Validators;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GameHubz.Logic
 {
@@ -68,6 +68,11 @@ namespace GameHubz.Logic
             //********** GENERATED **************************
             //***********************************************
 
+            services.AddTransient<UserHubService>();
+            services.AddTransient<TournamentService>();
+            services.AddTransient<TournamentRegistrationService>();
+            services.AddTransient<MatchService>();
+
             // DO NOT DELETE - Generated Service Tag
 
             ConfigureValidators(services);
@@ -86,6 +91,11 @@ namespace GameHubz.Logic
             //***********************************************
             //********** GENERATED **************************
             //***********************************************
+
+            services.AddTransient<IValidator<UserHubEntity>, UserHubValidator>();
+            services.AddTransient<IValidator<TournamentEntity>, TournamentValidator>();
+            services.AddTransient<IValidator<TournamentRegistrationEntity>, TournamentRegistrationValidator>();
+            services.AddTransient<IValidator<MatchEntity>, MatchValidator>();
 
             // DO NOT DELETE - Generated Validator Tag
         }

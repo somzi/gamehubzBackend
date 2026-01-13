@@ -27,6 +27,11 @@ namespace GameHubz.Data.UnitOfWork
         //********** GENERATED **************************
         //***********************************************
 
+        public IUserHubRepository UserHubRepository => this.GetRepository<UserHubRepository>();
+        public ITournamentRepository TournamentRepository => this.GetRepository<TournamentRepository>();
+        public ITournamentRegistrationRepository TournamentRegistrationRepository => this.GetRepository<TournamentRegistrationRepository>();
+        public IMatchRepository MatchRepository => this.GetRepository<MatchRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }
