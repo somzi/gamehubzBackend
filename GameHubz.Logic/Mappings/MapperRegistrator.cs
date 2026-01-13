@@ -12,6 +12,7 @@ namespace GameHubz.Logic.Mappings
             mapperConfiguration.AddProfile(new AssetProfile(configuration));
             mapperConfiguration.AddProfile(new UserProfile());
             mapperConfiguration.AddProfile(new EmailQueueProfile());
+            mapperConfiguration.AddProfile(new HubProfile());
 
             //***********************************************
             //********** GENERATED **************************

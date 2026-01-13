@@ -13,6 +13,8 @@ namespace GameHubz.Data.UnitOfWork
 
         public IUserRepository UserRepository => this.GetRepository<UserRepository>();
 
+        public IHubRepository HubRepository => this.GetRepository<HubRepository>();
+
         public IUserRoleRepository UserRoleRepository => this.GetRepository<UserRoleRepository>();
 
         public IRefreshTokenRepository RefreshTokenRepository => this.GetRepository<RefreshTokenRepository>();

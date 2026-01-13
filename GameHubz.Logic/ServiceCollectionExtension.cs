@@ -43,6 +43,7 @@ namespace GameHubz.Logic
             services.AddTransient<AesCrypter>();
             services.AddTransient<LoggerService>();
             services.AddTransient<UserService>();
+            services.AddTransient<HubService>();
             services.AddTransient<SearchService>();
             services.AddTransient<AuthService>();
             services.AddTransient<GoogleAuthService>();
@@ -79,6 +80,7 @@ namespace GameHubz.Logic
             services.AddTransient<IValidator<UserEntity>, UserValidator>();
             services.AddTransient<IValidator<AssetEntity>, AssetValidator>();
             services.AddTransient<IValidator<EmailQueueEntity>, EmailQueueValidator>();
+            services.AddTransient<IValidator<HubEntity>, HubValidator>();
             services.AddTransient<IValidator<LoginRequestDto>, LoginRequestValidator>();
 
             //***********************************************

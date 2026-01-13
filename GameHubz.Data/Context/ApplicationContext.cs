@@ -16,11 +16,23 @@ namespace GameHubz.Data.Context
             UserRoleConfigurator(modelBuilder);
             AssetsConfigurator(modelBuilder);
             EmailQueueConfigurator(modelBuilder);
+            HubConfigurator(modelBuilder);
 
             modelBuilder.Entity<RefreshTokenEntity>().ToTable("RefreshToken")
                 .HasQueryFilter(x => x.IsDeleted == false);
 
             GeneratedEntityConfigurator(modelBuilder);
+        }
+
+        private static void HubConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<HubEntity>().ToTable("Hub");
+
+            modelBuilder.Entity<HubEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
         }
 
         private static void GeneratedEntityConfigurator(ModelBuilder modelBuilder)

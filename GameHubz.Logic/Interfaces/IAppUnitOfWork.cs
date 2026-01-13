@@ -1,8 +1,10 @@
 namespace GameHubz.Logic.Interfaces
 {
-    public interface IAppUnitOfWork : IDisposable, Common.Interfaces.IUnitOfWork
+    public interface IAppUnitOfWork : IDisposable, IUnitOfWork
     {
         IUserRepository UserRepository { get; }
+
+        IHubRepository HubRepository { get; }
 
         IUserRoleRepository UserRoleRepository { get; }
 
