@@ -1,1 +1,1 @@
-.\_internal_rename.ps1 -NewProjectName "SysTech"
+.\_internal_rename.ps1 -NewProjectName "GameHubz"

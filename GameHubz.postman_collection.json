@@ -1,0 +1,76 @@
+{
+	"info": {
+		"_postman_id": "db043a5b-022f-45ac-90f6-baa13449c49c",
+		"name": "GameHubz",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "3307216"
+	},
+	"item": [
+		{
+			"name": "Migration local Copy",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Basic MVhpdTdCUDU2V1o2ZjU4VlZPOkQ0bFhaZXpPZnI4QWRSeUZnMg==",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://localhost:7057/api/DataMigration/Migrate",
+					"protocol": "https",
+					"host": [
+						"localhost"
+					],
+					"port": "7057",
+					"path": [
+						"api",
+						"DataMigration",
+						"Migrate"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Login Local Copy",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "",
+						"value": "",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"Email\": \"admin@GameHubz.com\",\r\n    \"Password\": \"admin1234\"\r\n}"
+				},
+				"url": {
+					"raw": "https://localhost:7057/api/auth/login",
+					"protocol": "https",
+					"host": [
+						"localhost"
+					],
+					"port": "7057",
+					"path": [
+						"api",
+						"auth",
+						"login"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

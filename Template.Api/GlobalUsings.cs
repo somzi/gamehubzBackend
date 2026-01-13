@@ -1,1 +1,0 @@
-﻿global using Template.Common.Extensions;

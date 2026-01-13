@@ -1,0 +1,27 @@
+{
+  "rootNamespace": "GameHubz",
+  "project": "Loyalty",
+  "domainSuffix": "Entity",
+  "getDtoSuffix": "Dto",
+  "postDtoSuffix": "Post",
+  "editDtoSuffix": "Edit",
+  "baseServiceClassName": "AppBaseServiceGeneric",
+  "baseControllerClassName": "BasicGenericController",
+  "projectPaths": {
+    "dataContextPathAppend": "GameHubz.Data\\Context\\ApplicationContext.cs",
+    "repositoryPath": "GameHubz.Data\\Repository",
+    "domainEntityPath": "GameHubz.DataModels\\Domain",
+    "dtoModelPath": "GameHubz.DataModels\\Models",
+    "servicePath": "GameHubz.Logic\\Services",
+    "logicInterfacePath": "GameHubz.Logic\\Interfaces",
+    "validatorPath": "GameHubz.Logic\\Validators",
+    "mapperPath": "GameHubz.Logic\\Mappings",
+    "mapperRegisterPathAppend": "GameHubz.Logic\\Mappings\\MapperRegistrator.cs",
+    "migrationPath": "GameHubz.DataMigrations",
+    "serviceRegisterPathAppend": "GameHubz.Logic\\ServiceCollectionExtension.cs",
+    "iUnitOfWorkPathAppend": "GameHubz.Logic\\Interfaces\\IAppUnitOfWork.cs",
+    "unitOfWorkPathAppend": "GameHubz.Data\\UnitOfWork\\AppUnitOfWork.cs",
+    "validatorRegisterPathAppend": "GameHubz.Logic\\ServiceCollectionExtension.cs",
+    "controllerPath": "GameHubz.Api\\Controllers"
+  }
+}

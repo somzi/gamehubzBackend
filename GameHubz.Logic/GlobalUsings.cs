@@ -1,0 +1,11 @@
+global using global::GameHubz.Common.Enums;
+global using global::GameHubz.Common.Interfaces;
+global using global::GameHubz.Common.Models;
+global using global::GameHubz.Common.Extensions;
+global using global::GameHubz.DataModels;
+global using global::GameHubz.DataModels.Domain;
+global using global::GameHubz.DataModels.Models;
+global using global::GameHubz.Logic.Exceptions;
+global using global::GameHubz.Logic.Interfaces;
+global using global::GameHubz.Logic.Utility;
+global using global::AutoMapper;

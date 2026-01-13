@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AuthService.InvalidEmailOrPassword" xml:space="preserve">
+    <value>Invalid email or password</value>
+  </data>
+  <data name="AuthService.InvalidUsernameOrPassword" xml:space="preserve">
+    <value>Invalid username or password</value>
+  </data>
+  <data name="CommonValidator.CannotDeleteEntityAlreadyAddedTo" xml:space="preserve">
+    <value>{0} with ID {1} cannot be deleted because it is already added to {2}.</value>
+  </data>
+  <data name="CommonValidator.DoesNotBelongToParentException" xml:space="preserve">
+    <value>{0} with ID: {1} does not belong to {2} with ID: {3}</value>
+  </data>
+  <data name="CommonValidator.PropertyIsEmpty" xml:space="preserve">
+    <value>{0} is required</value>
+  </data>
+  <data name="CommonValidator.PropertyValueAlreadyExists" xml:space="preserve">
+    <value>{0} {1} must be unique.</value>
+  </data>
+  <data name="EmailQueueValidator.GeneralErrorMessage" xml:space="preserve">
+    <value>EmailQueueValidator errors:</value>
+  </data>
+  <data name="EmailQueueValidator.IsMessageHtmlIsEmpty" xml:space="preserve">
+    <value>IsMessageHtml is required</value>
+  </data>
+  <data name="EmailQueueValidator.ToIsEmpty" xml:space="preserve">
+    <value>To is required</value>
+  </data>
+  <data name="Error.TokenCannotBeCreated" xml:space="preserve">
+    <value>Token cannot be created.</value>
+  </data>
+  <data name="Exception.AssetUploadFailedException" xml:space="preserve">
+    <value>Asset upload failed</value>
+  </data>
+  <data name="Exception.AttributeExistsOnTaxonomyException" xml:space="preserve">
+    <value>Attribute already exists on Taxonomy</value>
+  </data>
+  <data name="Exception.EmailAlreadyInUseException" xml:space="preserve">
+    <value>Email is already in use</value>
+  </data>
+  <data name="Exception.EmptyEmail" xml:space="preserve">
+    <value>Email is required</value>
+  </data>
+  <data name="Exception.EmptyPassword" xml:space="preserve">
+    <value>Password is required when you create a new user.</value>
+  </data>
+  <data name="Exception.EmptyQueueConfig" xml:space="preserve">
+    <value>Queue config is required</value>
+  </data>
+  <data name="Exception.EntityNotFoundException" xml:space="preserve">
+    <value>Entity is not found</value>
+  </data>
+  <data name="Exception.EntityNotFoundExceptionByCriteria" xml:space="preserve">
+    <value>Entity: [{0}] searched by: [{1}] was not found</value>
+  </data>
+  <data name="Exception.EntityNotFoundExceptionWithDetails" xml:space="preserve">
+    <value>Entity: [{0}] ID: [{1}] was not found</value>
+  </data>
+  <data name="Exception.FileSizeZeroBytesException" xml:space="preserve">
+    <value>File is empty.</value>
+  </data>
+  <data name="Exception.InvalidDeserializedMessage" xml:space="preserve">
+    <value>The message received from queue was not successfully deserialized</value>
+  </data>
+  <data name="Exception.InvalidForgotPasswordToken" xml:space="preserve">
+    <value>The forgot passwor token has expired or does not exist</value>
+  </data>
+  <data name="Exception.InvalidQueueConnection" xml:space="preserve">
+    <value>The connection with the queue has not been established</value>
+  </data>
+  <data name="Exception.InvalidTokenException" xml:space="preserve">
+    <value>Invalid token.</value>
+  </data>
+  <data name="Exception.InvalidVerifyEmailToken" xml:space="preserve">
+    <value>The verify email token has expired or does not exist</value>
+  </data>
+  <data name="Exception.NotVerifiedUser" xml:space="preserve">
+    <value>User already exists, but email is not verified.</value>
+  </data>
+  <data name="Exception.ParameterException" xml:space="preserve">
+    <value>Parameter error. Parameter: '{0}'.</value>
+  </data>
+  <data name="Exception.ParameterExceptionInvalidToken" xml:space="preserve">
+    <value>Parameter error. Invalid token. Parameter: '{0}'.</value>
+  </data>
+  <data name="Exception.ParameterGoogleToken" xml:space="preserve">
+    <value>Missing Google token parameter: '{0}'.</value>
+  </data>
+  <data name="Exception.ParameterNullException" xml:space="preserve">
+    <value>Parameter is null. Parameter: '{0}'.</value>
+  </data>
+  <data name="Exception.PasswordNotMatching" xml:space="preserve">
+    <value>Password and Confirm password are not the same</value>
+  </data>
+  <data name="Exception.PrincipalClaimNotFoundException" xml:space="preserve">
+    <value>Claim not found in token.</value>
+  </data>
+  <data name="Exception.RabbitMqInvalidServerConnection" xml:space="preserve">
+    <value>The connection with RabbitMq does not exist, you must enable it in the configuration</value>
+  </data>
+  <data name="Exception.UnauthorizedAccessException" xml:space="preserve">
+    <value>User exists in system but is not authorized to access the system or user object is corrupted.</value>
+  </data>
+  <data name="Exception.UnauthorizedAccessToObjectException" xml:space="preserve">
+    <value>Unauthorized access to object '{0}' with key '{1}'.</value>
+  </data>
+  <data name="Exception.UnauthorizedAccessToServiceException" xml:space="preserve">
+    <value>Unauthorized access.</value>
+  </data>
+  <data name="Exception.UnauthorizedUserModificationException" xml:space="preserve">
+    <value>User is not authorized to access requested functionality.</value>
+  </data>
+  <data name="Exception.UnavaliableService" xml:space="preserve">
+    <value>Service is unavaliable or doesnt exist</value>
+  </data>
+  <data name="Exception.UserAlreadyExists" xml:space="preserve">
+    <value>User already exists</value>
+  </data>
+  <data name="Exception.UserIsAlreadyVerified" xml:space="preserve">
+    <value>User is already verified</value>
+  </data>
+  <data name="Exception.UserTokenNotFoundException" xml:space="preserve">
+    <value>User token not found in request.</value>
+  </data>
+  <data name="LoginRequestValidator.EmailIsEmpty" xml:space="preserve">
+    <value>Email is required</value>
+  </data>
+  <data name="LoginRequestValidator.PasswordIsEmpty" xml:space="preserve">
+    <value>Password is required</value>
+  </data>
+  <data name="Password.ForgotPassword" xml:space="preserve">
+    <value>The verification code has been sent to the email address you entered previously.</value>
+  </data>
+  <data name="Password.PasswordSuccessfullyReset" xml:space="preserve">
+    <value>Password successfully reset.</value>
+  </data>
+  <data name="UserValidator.EmailIsEmpty" xml:space="preserve">
+    <value>Email is required</value>
+  </data>
+  <data name="UserValidator.PasswordIsEmpty" xml:space="preserve">
+    <value>Password is required</value>
+  </data>
+  <data name="UserValidator.RoleIsEmpty" xml:space="preserve">
+    <value>Role is required</value>
+  </data>
+</root>

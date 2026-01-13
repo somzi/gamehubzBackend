@@ -202,7 +202,7 @@ If the message is acknowledged it will be removed from the queue, if not, it wil
 
 In this example, if the email service has successfully sent the email message, it will be removed from the queue, if it is not sent successfully, it will be sent to the dead letter queue.<br/><br/><br/>
 
-# RabbitMQ in our Template project explanation
+# RabbitMQ in our GameHubz project explanation
 
 1.To use RabbitMQ in our application you must configure RabbitMq in appsettings.json, you need to set 'IsRabbitMqEnabled' parameter to true and addd queue in Queues list.
 
@@ -229,13 +229,13 @@ In this example, if the email service has successfully sent the email message, i
                     "QueueName": "email-send",
                     "ExchangeName": "email-box",
                     "RoutingKeyName": "email-add",
-                    "InitClassName": "Template.Logic.RabbitMqConsumers.EmailConsumer"
+                    "InitClassName": "GameHubz.Logic.RabbitMqConsumers.EmailConsumer"
                 },
                 "DeadLetterQueue": {
                     "QueueName": "dead-letter-email-send",
                     "ExchangeName": "dead-letter-email-box",
                     "RoutingKeyName": "dead-letter-email-add",
-                    "InitClassName": "Template.Logic.RabbitMqConsumers.DeadLetterEmailConsumer"
+                    "InitClassName": "GameHubz.Logic.RabbitMqConsumers.DeadLetterEmailConsumer"
                 }
             }
         ]

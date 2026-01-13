@@ -1,0 +1,6 @@
+@GameHubz.DataMigrations.Api_HostAddress = http://localhost:5230
+
+GET {{GameHubz.DataMigrations.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
