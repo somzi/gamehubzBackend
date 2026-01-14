@@ -38,6 +38,7 @@ namespace GameHubz.Logic
             services.AddTransient<ISortStringBuilder, SortStringBuilder>();
             services.AddTransient<AssetService>();
             services.AddTransient<UserService>();
+            services.AddTransient<UserProfileService>();
 
             services.AddTransient<ImageService>();
             services.AddTransient<AesCrypter>();

@@ -1,5 +1,3 @@
-using AutoMapper;
-
 namespace GameHubz.Logic.Mappings
 {
     public class UserProfile : Profile
@@ -19,6 +17,8 @@ namespace GameHubz.Logic.Mappings
                 .ForMember(x => x.UserId, m => m.MapFrom(x => x.Id));
 
             this.CreateMap<UserRoleEntity, LookupResponse>();
+
+            this.CreateMap<UserEntity, UserProfileDto>();
         }
     }
 }

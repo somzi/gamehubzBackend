@@ -1,12 +1,11 @@
 using AutoMapper;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
 using GameHubz.Common.Consts;
-using GameHubz.Common.Enums;
 using GameHubz.Common.Interfaces;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 
 namespace GameHubz.Api.Controllers
 {

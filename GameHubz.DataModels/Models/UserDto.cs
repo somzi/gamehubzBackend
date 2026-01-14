@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class UserDto
@@ -19,6 +21,8 @@ namespace GameHubz.DataModels.Models
         public string Language { get; set; } = "";
 
         public string Username { get; set; } = string.Empty;
+
+        public RegionType Region { get; set; }
 
         public List<UserHubDto>? UserHubs { get; set; } = new();
 

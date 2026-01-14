@@ -1,4 +1,5 @@
 using GameHubz.Common;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
 {
@@ -23,6 +24,10 @@ namespace GameHubz.DataModels.Domain
         public string Password { get; set; } = "";
 
         public string PasswordNonce { get; set; } = "";
+
+        public string Username { get; set; } = "";
+
+        public RegionType Region { get; set; }
 
         public Guid UserRoleId { get; set; }
 

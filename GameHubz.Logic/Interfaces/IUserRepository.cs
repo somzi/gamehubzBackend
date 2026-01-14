@@ -31,5 +31,9 @@ namespace GameHubz.Logic.Interfaces
         bool IsEmailUnique(UserEntity entity, string email);
 
         bool IsObjectIdUnique(UserEntity entity, string? objectId);
+
+        Task<UserEntity> GetWithSocials(Guid id);
+
+        Task<UserEntity> GetWithSocialsAndStats(Guid id);
     }
 }

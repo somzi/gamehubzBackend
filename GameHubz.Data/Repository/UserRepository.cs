@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using GameHubz.Common.Interfaces;
 using GameHubz.Common.Models;
 using GameHubz.Data.Base;
@@ -8,6 +7,7 @@ using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
@@ -145,6 +145,22 @@ namespace GameHubz.Data.Repository
         {
             return base.DbSetForSingleAndList()
                 .Include(x => x.UserRole);
+        }
+
+        public async Task<UserEntity> GetWithSocials(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.UserSocials)
+                .Where(x => x.Id == id)
+                .SingleAsync();
+        }
+
+        public async Task<UserEntity> GetWithSocialsAndStats(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.UserSocials)
+                .Where(x => x.Id == id)
+                .SingleAsync();
         }
     }
 }

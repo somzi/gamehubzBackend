@@ -11,7 +11,5 @@ namespace GameHubz.DataModels.Models
         public string Username { get; set; } = "";
 
         public Guid? UserId { get; set; }
-
-        public UserDto? User { get; set; }
     }
 }

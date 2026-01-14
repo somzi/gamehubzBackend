@@ -11,6 +11,8 @@ namespace GameHubz.Logic.Mappings
             this.CreateMap<MatchEntity, MatchDto>();
             this.CreateMap<MatchEntity, MatchEdit>();
             this.CreateMap<MatchPost, MatchEntity>();
+            this.CreateMap<MatchEntity, MatchListItemDto>()
+              .ForMember(dest => dest.IsWin, opt => opt.Ignore());
         }
     }
 }

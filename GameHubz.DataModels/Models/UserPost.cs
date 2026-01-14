@@ -1,3 +1,4 @@
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
 namespace GameHubz.DataModels.Models
@@ -19,5 +20,7 @@ namespace GameHubz.DataModels.Models
         public string? Language { get; set; }
 
         public string Username { get; set; } = string.Empty;
+
+        public RegionType Region { get; set; }
     }
 }
