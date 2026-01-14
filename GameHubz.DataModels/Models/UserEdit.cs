@@ -18,5 +18,6 @@ namespace GameHubz.DataModels.Models
         public List<TournamentRegistrationEdit>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchEdit>? Matches { get; set; } = new();
+        public List<UserSocialEdit>? UserSocials { get; set; } = new();
     }
 }

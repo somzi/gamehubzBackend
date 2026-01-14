@@ -23,6 +23,8 @@ namespace GameHubz.Logic.Interfaces
         ITournamentRegistrationRepository TournamentRegistrationRepository { get; }
         IMatchRepository MatchRepository { get; }
 
+        IUserSocialRepository UserSocialRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

@@ -47,5 +47,7 @@ namespace GameHubz.DataModels.Domain
         public List<UserHubEntity>? UserHubs { get; set; } = new();
 
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
+
+        public List<UserSocialEntity>? UserSocials { get; set; } = new();
     }
 }

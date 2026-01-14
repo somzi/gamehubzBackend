@@ -137,6 +137,21 @@ namespace GameHubz.Data.Context
                 .HasForeignKey(x => x.HubId)
                 .HasPrincipalKey(x => x.Id);
 
+            modelBuilder.Entity<UserSocialEntity>().ToTable("UserSocial").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserSocialEntity>().ToTable("UserSocial")
+                .HasOne(x => x.User)
+                .WithMany(x => x.UserSocials)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<UserEntity>().ToTable("User").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserEntity>().ToTable("User")
+                .HasMany(x => x.UserSocials)
+                .WithOne(x => x.User)
+                .HasForeignKey(x => x.UserId)
+                .HasPrincipalKey(x => x.Id);
             // DO NOT DELETE - Generated Configuration Tag
         }
 
