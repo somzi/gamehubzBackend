@@ -17,5 +17,7 @@ namespace GameHubz.DataModels.Models
         public Guid UserRoleId { get; set; }
 
         public string? Language { get; set; }
+
+        public string Username { get; set; } = string.Empty;
     }
 }

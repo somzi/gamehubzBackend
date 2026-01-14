@@ -13,6 +13,8 @@ namespace GameHubz.DataModels.Models
         public string Password { get; set; } = string.Empty;
 
         public string? Language { get; set; }
+
+        public string Username { get; set; } = string.Empty;
         public List<UserHubEdit>? UserHubs { get; set; } = new();
 
         public List<TournamentRegistrationEdit>? TournamentRegistrations { get; set; } = new();
