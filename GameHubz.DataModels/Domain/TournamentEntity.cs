@@ -15,6 +15,9 @@ namespace GameHubz.DataModels.Domain
         public DateTime? RegistrationDeadline { get; set; }
         public TournamentFormat Format { get; set; }
         public HubEntity? Hub { get; set; }
+        public int Prize { get; set; }
+        public int PrizeCurrency { get; set; }
+        public RegionType Region { get; set; }
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

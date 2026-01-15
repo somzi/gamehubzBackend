@@ -60,5 +60,13 @@ namespace GameHubz.Data.Repository
 
             return stats ?? new PlayerStatsDto();
         }
+
+        public async Task<MatchEntity?> GetWithStage(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.TournamentStage)
+                .Include(x => x.Id == id)
+                .FirstOrDefaultAsync();
+        }
     }
 }

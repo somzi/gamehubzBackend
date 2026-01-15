@@ -55,7 +55,7 @@ namespace GameHubz.Api.Controllers
             [FromQuery] List<SortItem> sortItems,
             [FromQuery] List<FilterItem> filterItems)
         {
-            await this.AppAuthorizationService.CheckAuthorization(this.UserRolesRead());
+            //await this.AppAuthorizationService.CheckAuthorization(this.UserRolesRead());
 
             EntityListDto<TDto> list = await this.Service.GetEntities(
                 filterItems,

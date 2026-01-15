@@ -21,8 +21,10 @@ namespace GameHubz.DataModels.Models
         public DateTime? StartDate { get; set; }
 
         public DateTime? RegistrationDeadline { get; set; }
+        public RegionType Region { get; set; }
 
-        public HubDto? Hub { get; set; }
+        public int Prize { get; set; }
+        public int? PrizeCurrency { get; set; }
 
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 

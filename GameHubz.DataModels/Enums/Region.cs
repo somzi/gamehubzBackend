@@ -7,6 +7,7 @@
         ASIA = 3,
         SA = 4,
         AFRICA = 5,
-        OCEANIA = 6
+        OCEANIA = 6,
+        ALL = 7
     }
 }

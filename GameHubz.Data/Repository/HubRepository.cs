@@ -1,8 +1,10 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
@@ -15,6 +17,19 @@ namespace GameHubz.Data.Repository
             ILocalizationService localizationService)
             : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
         {
+        }
+
+        public async Task<List<HubEntity>> GetOverview()
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.UserHubs)
+                .Include(x => x.Tournaments)
+                .ToListAsync();
+        }
+
+        public Task<List<HubEntity>> GetWithDetailsById(Guid id)
+        {
+            throw new NotImplementedException();
         }
     }
 }

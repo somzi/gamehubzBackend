@@ -5,5 +5,7 @@ namespace GameHubz.Logic.Interfaces
         Task<PlayerStatsDto> GetStatsByUserId(Guid userId);
 
         Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId);
+
+        Task<MatchEntity?> GetWithStage(Guid userId);
     }
 }

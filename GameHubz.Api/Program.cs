@@ -117,7 +117,7 @@ namespace GameHubz.Api
                 }
             });
 
-            app.UseHttpsRedirection();
+            //app.UseHttpsRedirection();
             app.UseRouting();
             app.UseAuthentication();
             app.UseAuthorization();

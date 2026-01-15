@@ -9,18 +9,26 @@ namespace GameHubz.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
-    public class HubController : BasicGenericController<HubService, HubEntity, HubDto, HubPost, HubEdit>
+    public class HubController : ControllerBase
     {
+        private readonly HubService hubService;
+
         public HubController(
-            HubService service,
-            AppAuthorizationService appAuthorizationService)
-            : base(service, appAuthorizationService)
+            HubService service)
         {
+            this.hubService = service;
         }
 
-        protected override UserRoleEnum[]? UserRolesDelete() => new[] { UserRoleEnum.Admin };
+        [HttpGet("getAll")]
+        public async Task<IEnumerable<HubDto>> GetAll()
+        {
+            return await hubService.GetAll();
+        }
 
-        protected override UserRoleEnum[]? UserRolesRead() => new[] { UserRoleEnum.Admin };
+        [HttpGet("{id}")]
+        public async Task<IEnumerable<HubDto>> GetAll(Guid id)
+        {
+            return await hubService.GetById(id);
+        }
     }
 }

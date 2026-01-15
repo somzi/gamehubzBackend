@@ -8,8 +8,10 @@ namespace GameHubz.DataModels.Models
         public Guid UserId { get; set; }
         public string UserDisplayName { get; set; } = string.Empty;
 
-        public List<UserHubDto>? UserHubs { get; set; } = new();
+        public int NumberOfUsers { get; set; }
+
 
         public List<TournamentDto>? Tournaments { get; set; } = new();
+        public int NumberOfTournaments { get; set; }
     }
 }

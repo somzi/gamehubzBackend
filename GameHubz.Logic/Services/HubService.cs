@@ -1,10 +1,4 @@
 using FluentValidation;
-using GameHubz.DataModels.Domain;
-using GameHubz.DataModels.Models;
-using GameHubz.Logic.Interfaces;
-using GameHubz.Logic.Services;
-using GameHubz.Common.Interfaces;
-using GameHubz.Common.Models;
 
 namespace GameHubz.Logic.Services
 {
@@ -27,6 +21,20 @@ namespace GameHubz.Logic.Services
                   mapper,
                   serviceFunctions)
         {
+        }
+
+        public async Task<List<HubDto>> GetAll()
+        {
+            var entities = await this.AppUnitOfWork.HubRepository.GetOverview();
+
+            return this.Mapper.Map<List<HubDto>>(entities);
+        }
+
+        public async Task<IEnumerable<HubDto>> GetById(Guid id)
+        {
+            var entities = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);
+
+            return this.Mapper.Map<List<HubDto>>(entities);
         }
 
         protected override IRepository<HubEntity> GetRepository()
