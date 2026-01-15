@@ -25,20 +25,22 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Include(x => x.Tournament)
-                .Include(x => x.HomeUser)
-                .Include(x => x.AwayUser)
-                .Where(m => (m.HomeUserId == userId || m.AwayUserId == userId)
-                            && m.Status == MatchStatus.Finished)
+                .Include(x => x.HomeParticipant)
+                    .ThenInclude(x => x!.User)
+                .Include(x => x.AwayParticipant)
+                    .ThenInclude(x => x!.User)
+                .Where(m => (m.HomeParticipantId == userId || m.AwayParticipantId == userId)
+                            && m.Status == MatchStatus.Completed)
                 .OrderByDescending(m => m.ScheduledStartTime)
                 .Take(5)
                 .Select(m => new MatchListItemDto
                 {
                     TournamentName = m.Tournament!.Name,
                     ScheduledTime = m.ScheduledStartTime,
-                    OpponentName = m.HomeUserId == userId ? m.AwayUser!.Username : m.HomeUser!.Username,
-                    OpponentScore = m.HomeUserId == userId ? m.AwayUserScore : m.HomeUserScore,
-                    UserScore = m.HomeUserId == userId ? m.HomeUserScore : m.AwayUserScore,
-                    IsWin = m.WinnerUserId == userId,
+                    OpponentName = m.HomeParticipantId == userId ? m.AwayParticipant!.User!.Username : m.HomeParticipant!.User!.Username,
+                    OpponentScore = m.HomeParticipantId == userId ? m.AwayUserScore : m.HomeUserScore,
+                    UserScore = m.HomeParticipantId == userId ? m.HomeUserScore : m.AwayUserScore,
+                    IsWin = m.WinnerParticipantId == userId,
                 })
                 .ToListAsync();
         }
@@ -46,13 +48,13 @@ namespace GameHubz.Data.Repository
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
             var stats = await this.BaseDbSet()
-            .Where(m => (m.HomeUserId == userId || m.AwayUserId == userId) && m.Status == MatchStatus.Finished)
+            .Where(m => (m.HomeParticipantId == userId || m.AwayParticipantId == userId) && m.Status == MatchStatus.Completed)
             .GroupBy(_ => 1)
             .Select(g => new PlayerStatsDto
             {
                 TotalMatches = g.Count(),
-                Wins = g.Count(m => m.WinnerUserId == userId),
-                Losses = g.Count(m => m.WinnerUserId != null && m.WinnerUserId != userId)
+                Wins = g.Count(m => m.WinnerParticipantId == userId),
+                Losses = g.Count(m => m.WinnerParticipantId != null && m.WinnerParticipantId != userId)
             })
              .FirstOrDefaultAsync();
 

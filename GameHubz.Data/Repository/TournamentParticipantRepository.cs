@@ -7,23 +7,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
-    public class TournamentRepository : BaseRepository<ApplicationContext, TournamentEntity>, ITournamentRepository
+    public class TournamentParticipantRepository : BaseRepository<ApplicationContext, TournamentParticipantEntity>, ITournamentParticipantRepository
     {
-        public TournamentRepository(
+        public TournamentParticipantRepository(
             ApplicationContext context,
             DateTimeProvider dateTimeProvider,
             IFilterExpressionBuilder filterExpressionBuilder,
             ISortStringBuilder sortStringBuilder,
             ILocalizationService localizationService)
             : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
-        {
+        {   
         }
 
-        public async Task<TournamentEntity?> GetWithParticipents(Guid id)
-        {
-            return await this.BaseDbSet()
-                .Include(x => x.TournamentParticipants)
-                .FirstOrDefaultAsync(x => x.Id == id);
-        }
+
     }
 }

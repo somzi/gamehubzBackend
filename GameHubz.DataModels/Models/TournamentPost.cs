@@ -17,7 +17,7 @@ namespace GameHubz.DataModels.Models
 
         public TournamentStatus Status { get; set; }
 
-        public string? MaxPlayers { get; set; }
+        public int MaxPlayers { get; set; }
 
         public DateTime? StartDate { get; set; }
 

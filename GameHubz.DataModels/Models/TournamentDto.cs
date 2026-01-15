@@ -16,7 +16,7 @@ namespace GameHubz.DataModels.Models
 
         public TournamentStatus Status { get; set; }
 
-        public string? MaxPlayers { get; set; }
+        public int MaxPlayers { get; set; }
 
         public DateTime? StartDate { get; set; }
 
@@ -27,5 +27,8 @@ namespace GameHubz.DataModels.Models
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();
+        public List<TournamentStageDto>? TournamentStages { get; set; } = new();
+
+        public List<TournamentParticipantDto>? TournamentParticipants { get; set; } = new();
     }
 }

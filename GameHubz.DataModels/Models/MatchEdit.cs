@@ -29,5 +29,8 @@ namespace GameHubz.DataModels.Models
         public UserEdit? AwayUser { get; set; }
 
         public UserEdit? WinnerUser { get; set; }
+        public Guid? TournamentStageId { get; set; }
+
+
     }
 }

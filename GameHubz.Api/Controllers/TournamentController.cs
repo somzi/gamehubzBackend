@@ -11,11 +11,31 @@ namespace GameHubz.Api.Controllers
     [Authorize]
     public class TournamentController : BasicGenericController<TournamentService, TournamentEntity, TournamentDto, TournamentPost, TournamentEdit>
     {
+        private readonly BracketService bracketService;
+
         public TournamentController(
             TournamentService service,
-            AppAuthorizationService appAuthorizationService)
+            AppAuthorizationService appAuthorizationService,
+            BracketService bracketService)
             : base(service, appAuthorizationService)
         {
+            this.bracketService = bracketService;
+        }
+
+        [HttpPost("{tournamentId}/createBracket")]
+        public async Task<IActionResult> CreateBracket(Guid tournamentId)
+        {
+            await this.bracketService.GenerateSingleEliminationBracket(tournamentId);
+
+            return Ok();
+        }
+
+        [HttpPost("matchResult")]
+        public async Task<IActionResult> UpdateMatchResult([FromBody] MatchResultDto request)
+        {
+            await this.bracketService.UpdateMatchResult(request);
+
+            return Ok();
         }
     }
 }

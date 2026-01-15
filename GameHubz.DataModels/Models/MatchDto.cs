@@ -10,9 +10,9 @@ namespace GameHubz.DataModels.Models
 
         public int? RoundNumber { get; set; }
 
-        public Guid HomeUserId { get; set; }
+        public Guid HomeParticipantId { get; set; }
 
-        public Guid AwayUserId { get; set; }
+        public Guid AwayParticipantId { get; set; }
 
         public int? HomeUserScore { get; set; }
 
@@ -22,7 +22,7 @@ namespace GameHubz.DataModels.Models
 
         public MatchStatus Status { get; set; }
 
-        public Guid? WinnerUserId { get; set; }
+        public Guid? WinnerParticipantId { get; set; }
 
         public TournamentDto? Tournament { get; set; }
 
@@ -31,5 +31,6 @@ namespace GameHubz.DataModels.Models
         public UserDto? AwayUser { get; set; }
 
         public UserDto? WinnerUser { get; set; }
+        public Guid? TournamentStageId { get; set; }
     }
 }

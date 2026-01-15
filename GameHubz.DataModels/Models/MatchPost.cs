@@ -1,4 +1,3 @@
-using System;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
@@ -12,9 +11,9 @@ namespace GameHubz.DataModels.Models
 
         public int? RoundNumber { get; set; }
 
-        public Guid HomeUserId { get; set; }
+        public Guid HomeParticipantId { get; set; }
 
-        public Guid AwayUserId { get; set; }
+        public Guid AwayParticipantId { get; set; }
 
         public int? HomeUserScore { get; set; }
 
@@ -24,6 +23,7 @@ namespace GameHubz.DataModels.Models
 
         public MatchStatus Status { get; set; }
 
-        public Guid? WinnerUserId { get; set; }
+        public Guid? WinnerParticipantId { get; set; }
+        public Guid? TournamentStageId { get; set; }
     }
 }

@@ -8,9 +8,9 @@ namespace GameHubz.Logic.Validators
         {
             this.RuleFor(x => x.TournamentId)
                 .NotEmpty();
-            this.RuleFor(x => x.HomeUserId)
+            this.RuleFor(x => x.HomeParticipantId)
                 .NotEmpty();
-            this.RuleFor(x => x.AwayUserId)
+            this.RuleFor(x => x.AwayParticipantId)
                 .NotEmpty();
         }
     }
