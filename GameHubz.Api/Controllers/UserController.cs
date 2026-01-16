@@ -65,6 +65,14 @@ namespace GameHubz.Api.Controllers
             return this.mapper.Map<UserDto>(user);
         }
 
+        [HttpPost("follow")]
+        public async Task<IActionResult> GetByHubPaged([FromBody] HubFollowRequest request)
+        {
+            await this.Service.FollowHub(request);
+
+            return Ok();
+        }
+
         protected override UserRoleEnum[]? UserRolesDelete()
         {
             return

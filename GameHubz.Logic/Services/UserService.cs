@@ -1,10 +1,10 @@
-using System.Net.Mail;
 using FluentValidation;
-using Microsoft.Extensions.Configuration;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Api;
 using GameHubz.Logic.Crypto;
 using GameHubz.Logic.Queuing.Queues;
+using Microsoft.Extensions.Configuration;
+using System.Net.Mail;
 
 namespace GameHubz.Logic.Services
 {
@@ -162,6 +162,21 @@ namespace GameHubz.Logic.Services
             };
 
             await this.emailQueue.Enqueue(emailQueue);
+        }
+
+        public async Task FollowHub(HubFollowRequest request)
+        {
+            var userId = request.UserId ?? (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId;
+
+            var entity = new UserHubEntity
+            {
+                HubId = request.HubId,
+                UserId = userId
+            };
+
+            await this.AppUnitOfWork.UserHubRepository.AddEntity(entity, UserContextReader);
+
+            await this.SaveAsync();
         }
 
         protected override async Task BeforeSave(UserEntity entity, UserPost inputDto, bool isNew)

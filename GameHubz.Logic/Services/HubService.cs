@@ -30,11 +30,26 @@ namespace GameHubz.Logic.Services
             return this.Mapper.Map<List<HubDto>>(entities);
         }
 
-        public async Task<IEnumerable<HubDto>> GetById(Guid id)
+        public async Task<HubOverviewDto> GetOverviewById(Guid id)
         {
-            var entities = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);
+            var entity = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);
 
-            return this.Mapper.Map<List<HubDto>>(entities);
+            return this.Mapper.Map<HubOverviewDto>(entity);
+        }
+
+        public async Task<TournamentPagedResponse> GetTournamentsPaged(Guid id, TournamentRequest request)
+        {
+            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(id, request.Status, request.Page, request.PageSize);
+
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetByHubCount(id, request.Status);
+
+            var tournamentDtos = this.Mapper.Map<List<TournamentDto>>(tournaments);
+
+            return new TournamentPagedResponse
+            {
+                Count = tournamentsCount,
+                Tournaments = tournamentDtos
+            };
         }
 
         protected override IRepository<HubEntity> GetRepository()

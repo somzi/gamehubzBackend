@@ -1,8 +1,5 @@
-using GameHubz.Common.Consts;
-using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GameHubz.Api.Controllers
@@ -26,9 +23,17 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("{id}")]
-        public async Task<IEnumerable<HubDto>> GetAll(Guid id)
+        public async Task<HubOverviewDto> GetAll(Guid id)
         {
-            return await hubService.GetById(id);
+            return await hubService.GetOverviewById(id);
+        }
+
+        [HttpGet("{id}/tournaments")]
+        public async Task<IActionResult> GetByHubPaged([FromRoute] Guid id, [FromQuery] TournamentRequest request)
+        {
+            var result = await hubService.GetTournamentsPaged(id, request);
+
+            return Ok(result);
         }
     }
 }
