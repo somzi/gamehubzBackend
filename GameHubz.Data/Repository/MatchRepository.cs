@@ -68,5 +68,23 @@ namespace GameHubz.Data.Repository
                 .Include(x => x.Id == id)
                 .FirstOrDefaultAsync();
         }
+
+        public Task<MatchEntity?> GetWithTournamentStage(Guid id)
+        {
+            return this.BaseDbSet().Include(x => x.TournamentStage)
+                .FirstOrDefaultAsync(x => x.Id == id);
+        }
+
+        public async Task<bool> HasMatchesForStage(Guid stageId)
+        {
+            return await this.BaseDbSet()
+                .AnyAsync(m => m.TournamentStageId == stageId);
+        }
+
+        public async Task<bool> IsExistingByStageId(Guid? bracketStageId)
+        {
+            return await this.BaseDbSet()
+                .AnyAsync(m => m.TournamentStageId == bracketStageId);
+        }
     }
 }

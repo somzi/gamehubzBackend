@@ -9,6 +9,7 @@ namespace GameHubz.DataModels.Domain
         public int Order { get; set; }
         public int? QualifiedPlayersCount { get; set; }
         public Guid? TournamentId { get; set; }
+        public string? Name { get; set; }
         public TournamentEntity? Tournament { get; set; }
         public List<MatchEntity>? Matches { get; set; } = new();
         public List<TournamentGroupEntity>? TournamentGroups { get; set; } = new();

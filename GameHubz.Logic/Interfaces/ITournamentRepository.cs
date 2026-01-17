@@ -15,5 +15,7 @@ namespace GameHubz.Logic.Interfaces
         Task<int> GetCountByHubs(Guid userId, List<Guid> hubIds, TournamentUserStatus filter);
 
         Task<TournamentEntity> GetWithPendingRegistration(Guid id);
+
+        Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId);
     }
 }

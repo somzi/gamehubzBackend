@@ -7,5 +7,11 @@ namespace GameHubz.Logic.Interfaces
         Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId);
 
         Task<MatchEntity?> GetWithStage(Guid userId);
+
+        Task<MatchEntity?> GetWithTournamentStage(Guid id);
+
+        Task<bool> IsExistingByStageId(Guid? id);
+
+        Task<bool> HasMatchesForStage(Guid value);
     }
 }

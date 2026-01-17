@@ -6,6 +6,7 @@
         GroupsThenSingleElimination,
         GroupsThenDoubleElimination,
         SingleElimination,
-        DoubleElimination
+        DoubleElimination,
+        GroupStageWithKnockout
     }
 }

@@ -1,4 +1,4 @@
-using GameHubz.Data.Base;
+﻿using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
@@ -96,9 +96,28 @@ namespace GameHubz.Data.Repository
         public async Task<TournamentEntity> GetWithPendingRegistration(Guid id)
         {
             return await this.BaseDbSet()
-                .Include(x => x.TournamentRegistrations)
-                .Where(x => x.Id == id && x.TournamentRegistrations!.Any(tr => tr.Status == TournamentRegistrationStatus.Pending))
-                .SingleAsync();
+                .Include(x => x.TournamentRegistrations!
+                    .Where(tr => tr.Status == TournamentRegistrationStatus.Pending))
+                .SingleAsync(x => x.Id == id);
+        }
+
+        // ✅ IMPLEMENTED: Optimized deep load for Tournament Structure
+        public async Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .AsNoTracking() // Read-only speed boost
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.TournamentGroups)
+                // Load Matches for every stage
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.Matches!)
+                        .ThenInclude(m => m.HomeParticipant)
+                            .ThenInclude(p => p!.User) // Get Username/Avatar
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.Matches!)
+                        .ThenInclude(m => m.AwayParticipant)
+                            .ThenInclude(p => p!.User)
+                .FirstOrDefaultAsync(t => t.Id == tournamentId);
         }
 
         private IQueryable<TournamentEntity> ApplyFilters(

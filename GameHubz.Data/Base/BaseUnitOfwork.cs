@@ -51,7 +51,14 @@ namespace GameHubz.Data
                 this.SetTimestamps();
             }
 
-            await this.Context.SaveChangesAsync();
+            try
+            {
+                await this.Context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                var a = ex;
+            }
         }
 
         public void Dispose()

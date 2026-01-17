@@ -71,6 +71,17 @@ namespace GameHubz.Logic.Services
             await SaveAsync();
         }
 
+        public async Task Publish(Guid id)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetByIdOrThrowIfNull(id);
+
+            tournament.Status = TournamentStatus.RegistrationOpen;
+
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+            await SaveAsync();
+        }
+
         private async Task RejectPendings(TournamentEntity tournament)
         {
             foreach (var registration in tournament.TournamentRegistrations!)
