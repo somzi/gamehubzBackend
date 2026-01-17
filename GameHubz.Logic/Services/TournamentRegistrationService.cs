@@ -67,6 +67,13 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
+        public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId(Guid tournamentId)
+        {
+            var registrations = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingByTournamenId(tournamentId);
+
+            return registrations;
+        }
+
         private async Task CreateTournamentParticipant(TournamentRegistrationEntity tournamentRegistration)
         {
             var tournamentParticipants = new TournamentParticipantPost

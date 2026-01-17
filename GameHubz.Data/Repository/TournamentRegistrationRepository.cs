@@ -1,6 +1,8 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Enums;
+using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +26,17 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .Where(x => ids.Contains(x.Id!.Value))
                 .ToListAsync();
+        }
+
+        public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamenId(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+               .Where(tp => tp.TournamentId == tournamentId && tp.Status == TournamentRegistrationStatus.Pending)
+               .Select(x => new TournamentRegistrationOverview
+               {
+                   Username = x.User!.Username
+               })
+               .ToListAsync();
         }
     }
 }

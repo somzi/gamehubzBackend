@@ -41,5 +41,11 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpGet("tournament/{tournamentId}/pending")]
+        public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId([FromBody] Guid tournamentId)
+        {
+            return await this.Service.GetPendingByTournamentId(tournamentId);
+        }
     }
 }
