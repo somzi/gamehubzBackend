@@ -111,12 +111,31 @@ namespace GameHubz.Logic.Services
         public async Task GenerateSingleEliminationBracket(Guid tournamentId)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
-            var participants = tournament!.TournamentParticipants?.OrderBy(p => p.Seed ?? 999).ToList();
 
-            if (!IsPowerOfTwo(participants!.Count))
-                throw new Exception($"Player count must be power of 2. Got {participants.Count}. Add BYEs or remove players.");
+            // 1. Load participants
+            var participants = tournament!.TournamentParticipants?.ToList();
+            if (participants == null || participants.Count == 0) throw new Exception("No participants");
 
-            // Create Stage
+            // 2. CHECK: Power of 2
+            if (!IsPowerOfTwo(participants.Count))
+                throw new Exception($"Player count must be power of 2. Got {participants.Count}.");
+
+            // =========================================================================
+            // 3. RANDOMIZE (SHUFFLE)
+            // =========================================================================
+            var rng = new Random();
+            // Shuffle the list randomly
+            var shuffledParticipants = participants.OrderBy(a => rng.Next()).ToList();
+
+            // Assign Seeds based on this random order (1, 2, 3, 4...)
+            // This ensures "Standard Seeding" logic works on a random set of people
+            for (int i = 0; i < shuffledParticipants.Count; i++)
+            {
+                shuffledParticipants[i].Seed = i + 1;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffledParticipants[i], this.UserContextReader);
+            }
+
+            // 4. Create Stage
             var stage = new TournamentStageEntity
             {
                 Id = Guid.NewGuid(),
@@ -127,8 +146,9 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
 
-            // Seed & Generate
-            var seededParticipants = GetStandardBracketSeeding(participants);
+            // 5. Generate with newly assigned random seeds
+            // This will pair Seed 1 vs Seed 8, but Seed 1 is now a random person.
+            var seededParticipants = GetStandardBracketSeeding(shuffledParticipants);
             var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, seededParticipants);
 
             foreach (var match in allMatches)
@@ -136,7 +156,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
-            // Update Status
+            // 6. Update Status
             tournament.Status = TournamentStatus.InProgress;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
@@ -148,7 +168,12 @@ namespace GameHubz.Logic.Services
         public async Task GenerateLeagueTournament(Guid tournamentId, bool doubleRoundRobin = false)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
-            var participants = tournament!.TournamentParticipants?.ToList();
+
+            // 1. Load & Shuffle
+            var rng = new Random();
+            var participants = tournament!.TournamentParticipants?
+                .OrderBy(x => rng.Next()) // <--- RANDOMIZE HERE
+                .ToList();
 
             // Create Stage
             var stage = new TournamentStageEntity
@@ -161,7 +186,7 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
 
-            // Create Default Group container
+            // Create Default Group
             var group = new TournamentGroupEntity
             {
                 Id = Guid.NewGuid(),
@@ -170,19 +195,19 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(group, this.UserContextReader);
 
-            // Link players to group for stats
+            // Link players
             foreach (var p in participants!)
             {
                 p.TournamentGroupId = group.Id;
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
             }
 
-            // Generate Matches
+            // Generate Matches (Now using randomized list)
             var allMatches = GenerateRoundRobinMatches(tournamentId, stage.Id.Value, participants!, doubleRoundRobin);
 
             foreach (var match in allMatches)
             {
-                match.TournamentGroupId = group.Id; // Link match to group
+                match.TournamentGroupId = group.Id;
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
