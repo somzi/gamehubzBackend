@@ -9,7 +9,7 @@ namespace GameHubz.DataModels.Models
 
         public Guid? UserId { get; set; }
 
-        public RegistrationStatus Status { get; set; }
+        public TournamentRegistrationStatus Status { get; set; }
 
         public TournamentDto? Tournament { get; set; }
 

@@ -3,6 +3,7 @@ using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
@@ -16,6 +17,13 @@ namespace GameHubz.Data.Repository
             ILocalizationService localizationService)
             : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
         {
+        }
+
+        public async Task<List<TournamentRegistrationEntity>> GetByIds(List<Guid> ids)
+        {
+            return await this.BaseDbSet()
+                .Where(x => ids.Contains(x.Id!.Value))
+                .ToListAsync();
         }
     }
 }

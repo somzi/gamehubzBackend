@@ -1,6 +1,6 @@
 ﻿namespace GameHubz.DataModels.Enums
 {
-    public enum RegistrationStatus
+    public enum TournamentRegistrationStatus
     {
         Pending = 1,
         Approved = 2,
