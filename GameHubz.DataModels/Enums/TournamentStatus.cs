@@ -2,8 +2,11 @@ namespace GameHubz.DataModels.Enums
 {
     public enum TournamentStatus
     {
-        Upcoming = 1,
-        Live = 2,
-        Finished = 3
+        Draft = 0,
+        RegistrationOpen = 1,
+        RegistrationClosed = 2,
+        InProgress = 3,
+        Completed = 4,
+        Cancelled = 5
     }
 }

@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Services
 {
     public class HubService : AppBaseServiceGeneric<HubEntity, HubDto, HubPost, HubEdit>
     {
+        private readonly TournamentService tournamentService;
+
         public HubService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -11,7 +13,8 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             SearchService searchService,
             IUserContextReader userContextReader,
-            ServiceFunctions serviceFunctions)
+            ServiceFunctions serviceFunctions,
+            TournamentService tournamentService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -21,6 +24,7 @@ namespace GameHubz.Logic.Services
                   mapper,
                   serviceFunctions)
         {
+            this.tournamentService = tournamentService;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -39,17 +43,7 @@ namespace GameHubz.Logic.Services
 
         public async Task<TournamentPagedResponse> GetTournamentsPaged(Guid id, TournamentRequest request)
         {
-            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(id, request.Status, request.Page, request.PageSize);
-
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetByHubCount(id, request.Status);
-
-            var tournamentDtos = this.Mapper.Map<List<TournamentDto>>(tournaments);
-
-            return new TournamentPagedResponse
-            {
-                Count = tournamentsCount,
-                Tournaments = tournamentDtos
-            };
+            return await this.tournamentService.GetTournamentsPagedForHub(id, request);
         }
 
         protected override IRepository<HubEntity> GetRepository()

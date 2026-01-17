@@ -3,6 +3,7 @@ using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
@@ -16,6 +17,14 @@ namespace GameHubz.Data.Repository
             ILocalizationService localizationService)
             : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
         {
+        }
+
+        public async Task<List<Guid>> GetHubIdsByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(uh => uh.UserId == userId && uh.HubId != null)
+                .Select(x => x.HubId!.Value)
+                .ToListAsync();
         }
     }
 }

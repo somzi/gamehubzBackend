@@ -37,5 +37,11 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpGet("{id}/details")]
+        public async Task<IActionResult> GetDetails(Guid id)
+        {
+            await this.Service.GetDetailsById(id);
+        }
     }
 }

@@ -16,6 +16,7 @@ namespace GameHubz.Logic.Services
         private readonly IPasswordHasher passwordHasher;
         private const int VerifyEmailTokenExpireHours = 48;
         private readonly EmailQueue emailQueue;
+        private readonly TournamentService tournamentService;
 
         public UserService(
             IUnitOfWorkFactory factory,
@@ -29,7 +30,8 @@ namespace GameHubz.Logic.Services
             AnonymousUserContextReader anonymousUserContextReader,
             DateTimeProvider dateTimeProvider,
             IPasswordHasher pbkdf2Hasher,
-            EmailQueue emailQueue)
+            EmailQueue emailQueue,
+            TournamentService tournamentService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -44,6 +46,7 @@ namespace GameHubz.Logic.Services
             this.dateTimeProvider = dateTimeProvider;
             this.passwordHasher = pbkdf2Hasher;
             this.emailQueue = emailQueue;
+            this.tournamentService = tournamentService;
         }
 
         public async Task AddUpdateUserAnonymously(UserEntity userEntity)
@@ -177,6 +180,11 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.UserHubRepository.AddEntity(entity, UserContextReader);
 
             await this.SaveAsync();
+        }
+
+        public async Task<TournamentPagedResponse> GetTournamentsPaged(Guid id, UserTournamentRequest request)
+        {
+            return await this.tournamentService.GetTournamentPagedForUser(id, request);
         }
 
         protected override async Task BeforeSave(UserEntity entity, UserPost inputDto, bool isNew)

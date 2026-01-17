@@ -23,7 +23,7 @@ namespace GameHubz.DataModels.Models
 
         public DateTime? RegistrationDeadline { get; set; }
         public int Prize { get; set; }
-        public int? PrizeCurrency { get; set; }
+        public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
     }
 }

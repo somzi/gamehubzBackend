@@ -1,4 +1,5 @@
 using AutoMapper;
+using FirebirdSql.Data.Services;
 using GameHubz.Common.Consts;
 using GameHubz.Common.Interfaces;
 using GameHubz.DataModels.Domain;
@@ -16,16 +17,19 @@ namespace GameHubz.Api.Controllers
     {
         private readonly IMapper mapper;
         private readonly IUserContextReader userContextReader;
+        private readonly TournamentService tournamentService;
 
         public UserController(
             UserService service,
             AppAuthorizationService appAuthorizationService,
             IMapper mapper,
-            IUserContextReader userContextReader)
+            IUserContextReader userContextReader,
+            TournamentService tournamentService)
             : base(service, appAuthorizationService)
         {
             this.mapper = mapper;
             this.userContextReader = userContextReader;
+            this.tournamentService = tournamentService;
         }
 
         [HttpGet("lookup")]
@@ -71,6 +75,14 @@ namespace GameHubz.Api.Controllers
             await this.Service.FollowHub(request);
 
             return Ok();
+        }
+
+        [HttpGet("{id}/tournaments")]
+        public async Task<IActionResult> GetByHubPaged([FromRoute] Guid id, [FromQuery] UserTournamentRequest request)
+        {
+            var result = await tournamentService.GetTournamentPagedForUser(id, request);
+
+            return Ok(result);
         }
 
         protected override UserRoleEnum[]? UserRolesDelete()

@@ -16,7 +16,7 @@ namespace GameHubz.DataModels.Domain
         public TournamentFormat Format { get; set; }
         public HubEntity? Hub { get; set; }
         public int Prize { get; set; }
-        public int PrizeCurrency { get; set; }
+        public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();

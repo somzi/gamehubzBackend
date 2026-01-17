@@ -2,7 +2,7 @@
 {
     public class TournamentPagedResponse
     {
-        public List<TournamentDto> Tournaments { get; set; } = [];
+        public List<TournamentOverview> Tournaments { get; set; } = [];
 
         public int Count { get; set; }
     }

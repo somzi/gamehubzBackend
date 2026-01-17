@@ -84,7 +84,7 @@ namespace GameHubz.Logic.Services
             }
 
             // Update tournament status
-            tournament.Status = TournamentStatus.Live;
+            tournament.Status = TournamentStatus.InProgress;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
 
             await this.SaveAsync();
@@ -123,7 +123,7 @@ namespace GameHubz.Logic.Services
             }
 
             // Update tournament status
-            tournament.Status = TournamentStatus.Live;
+            tournament.Status = TournamentStatus.InProgress;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
 
             await this.SaveAsync();
