@@ -1,11 +1,11 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.ChangeTracking;
 using GameHubz.Common;
 using GameHubz.Common.Enums;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Extensions;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace GameHubz.Data
 {
@@ -51,14 +51,7 @@ namespace GameHubz.Data
                 this.SetTimestamps();
             }
 
-            try
-            {
-                await this.Context.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                var a = ex;
-            }
+            await this.Context.SaveChangesAsync();
         }
 
         public void Dispose()
