@@ -85,6 +85,22 @@ namespace GameHubz.Data.Repository
             return await query.CountAsync();
         }
 
+        public async Task<int> GetByHubCount(Guid hubId, TournamentStatus status)
+        {
+            var query = this.BaseDbSet()
+                .Where(x => x.HubId == hubId && x.Status == status);
+
+            return await query.CountAsync();
+        }
+
+        public async Task<TournamentEntity> GetWithPendingRegistration(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.TournamentRegistrations)
+                .Where(x => x.Id == id && x.TournamentRegistrations!.Any(tr => tr.Status == TournamentRegistrationStatus.Pending))
+                .SingleAsync();
+        }
+
         private IQueryable<TournamentEntity> ApplyFilters(
             Guid userId,
             List<Guid> hubIds,
@@ -131,14 +147,6 @@ namespace GameHubz.Data.Repository
             }
 
             return query;
-        }
-
-        public async Task<int> GetByHubCount(Guid hubId, TournamentStatus status)
-        {
-            var query = this.BaseDbSet()
-                .Where(x => x.HubId == hubId && x.Status == status);
-
-            return await query.CountAsync();
         }
     }
 }

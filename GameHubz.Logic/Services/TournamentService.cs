@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
 {
@@ -55,6 +56,28 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(id);
 
             return this.Mapper.Map<TournamentDto>(tournament);
+        }
+
+        public async Task CloseRegistration(Guid id)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
+
+            tournament.Status = TournamentStatus.RegistrationClosed;
+
+            await RejectPendings(tournament);
+
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+            await SaveAsync();
+        }
+
+        private async Task RejectPendings(TournamentEntity tournament)
+        {
+            foreach (var registration in tournament.TournamentRegistrations!)
+            {
+                registration.Status = TournamentRegistrationStatus.Rejected;
+                await this.AppUnitOfWork.TournamentRegistrationRepository.UpdateEntity(registration, this.UserContextReader);
+            }
         }
 
         protected override IRepository<TournamentEntity> GetRepository()

@@ -45,5 +45,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpPost("{id}/closeRegistration")]
+        public async Task<IActionResult> CloseRegistration([FromRoute] Guid id)
+        {
+            await this.Service.CloseRegistration(id);
+
+            return Ok();
+        }
     }
 }
