@@ -24,5 +24,12 @@ namespace GameHubz.Logic.Services
 
         protected override IRepository<TournamentParticipantEntity> GetRepository()
             => this.AppUnitOfWork.TournamentParticipantRepository;
+
+        public async Task<List<TournamentParticipantOverview>> GetByTournament(Guid tournamentId)
+        {
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByTournamentId(tournamentId);
+
+            return this.Mapper.Map<List<TournamentParticipantOverview>>(participants);
+        }
     }
 }

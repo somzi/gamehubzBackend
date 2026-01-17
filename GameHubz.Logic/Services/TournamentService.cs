@@ -52,7 +52,9 @@ namespace GameHubz.Logic.Services
 
         public async Task<TournamentDto> GetDetailsById(Guid id)
         {
-            throw new NotImplementedException();
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(id);
+
+            return this.Mapper.Map<TournamentDto>(tournament);
         }
 
         protected override IRepository<TournamentEntity> GetRepository()

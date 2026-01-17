@@ -42,6 +42,8 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> GetDetails(Guid id)
         {
             await this.Service.GetDetailsById(id);
+
+            return Ok();
         }
     }
 }

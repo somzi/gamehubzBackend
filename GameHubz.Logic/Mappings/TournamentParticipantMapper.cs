@@ -12,10 +12,11 @@ namespace GameHubz.Logic.Mappings
 
         public TournamentParticipantProfile(ILocalizationService localizationService)
         {
-           this.CreateMap<TournamentParticipantEntity, TournamentParticipantDto>()
-            ;
-           this.CreateMap<TournamentParticipantEntity, TournamentParticipantEdit>();
-           this.CreateMap<TournamentParticipantPost, TournamentParticipantEntity>();
+            this.CreateMap<TournamentParticipantEntity, TournamentParticipantDto>();
+            this.CreateMap<TournamentParticipantEntity, TournamentParticipantEdit>();
+            this.CreateMap<TournamentParticipantEntity, TournamentParticipantOverview>();
+            this.CreateMap<TournamentParticipantPost, TournamentParticipantEntity>();
+            this.CreateMap<TournamentParticipantPost, TournamentParticipantEntity>();
         }
     }
 }

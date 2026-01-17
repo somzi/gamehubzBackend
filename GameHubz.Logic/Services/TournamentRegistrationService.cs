@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
 {
@@ -20,6 +21,13 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+        }
+
+        protected override async Task BeforeDtoMapToEntity(TournamentRegistrationPost inputDto, bool isNew)
+        {
+            inputDto.Status = RegistrationStatus.Pending;
+
+            await Task.CompletedTask;
         }
 
         protected override IRepository<TournamentRegistrationEntity> GetRepository()

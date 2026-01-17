@@ -17,5 +17,13 @@ namespace GameHubz.Api.Controllers
             : base(service, appAuthorizationService)
         {
         }
+
+        [HttpGet("tournament/{tournamentId}")]
+        public async Task<List<TournamentParticipantOverview>> GetByTournament(Guid tournamentId)
+        {
+            var participants = await this.Service.GetByTournament(tournamentId);
+
+            return participants;
+        }
     }
 }

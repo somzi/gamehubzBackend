@@ -1,3 +1,4 @@
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
 namespace GameHubz.DataModels.Models
@@ -10,6 +11,6 @@ namespace GameHubz.DataModels.Models
 
         public Guid? UserId { get; set; }
 
-        public string? Status { get; set; }
+        public RegistrationStatus Status { get; set; }
     }
 }

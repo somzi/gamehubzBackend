@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class TournamentRegistrationEdit
@@ -8,7 +10,7 @@ namespace GameHubz.DataModels.Models
 
         public Guid? UserId { get; set; }
 
-        public string? Status { get; set; }
+        public RegistrationStatus Status { get; set; }
 
         public TournamentEdit? Tournament { get; set; }
 
