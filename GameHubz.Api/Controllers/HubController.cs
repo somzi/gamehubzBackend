@@ -37,5 +37,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok(result);
         }
+
+        [HttpGet("user/{id}")]
+        public async Task<IEnumerable<HubOverviewDto>> GetByUserOwner([FromRoute] Guid id)
+        {
+            List<HubOverviewDto> result = await hubService.GetByUserOwner(id);
+
+            return result;
+        }
     }
 }

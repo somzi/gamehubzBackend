@@ -34,6 +34,8 @@ namespace GameHubz.Data.Repository
                .Where(tp => tp.TournamentId == tournamentId && tp.Status == TournamentRegistrationStatus.Pending)
                .Select(x => new TournamentRegistrationOverview
                {
+                   Id = x.Id!.Value,
+                   UserId = x.UserId!.Value,
                    Username = x.User!.Username
                })
                .ToListAsync();

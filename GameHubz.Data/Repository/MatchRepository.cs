@@ -65,7 +65,7 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Include(x => x.TournamentStage)
-                .Include(x => x.Id == id)
+                .Where(x => x.Id == id)
                 .FirstOrDefaultAsync();
         }
 

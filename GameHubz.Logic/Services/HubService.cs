@@ -34,6 +34,13 @@ namespace GameHubz.Logic.Services
             return this.Mapper.Map<List<HubDto>>(entities);
         }
 
+        public async Task<List<HubOverviewDto>> GetByUserOwner(Guid id)
+        {
+            var entities = await this.AppUnitOfWork.HubRepository.GetByUserId(id);
+
+            return this.Mapper.Map<List<HubOverviewDto>>(entities);
+        }
+
         public async Task<HubOverviewDto> GetOverviewById(Guid id)
         {
             var entity = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);

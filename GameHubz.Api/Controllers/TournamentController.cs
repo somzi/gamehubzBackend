@@ -49,9 +49,9 @@ namespace GameHubz.Api.Controllers
         [HttpGet("{id}/details")]
         public async Task<IActionResult> GetDetails(Guid id)
         {
-            await this.Service.GetDetailsById(id);
+            var tournament = await this.Service.GetDetailsById(id);
 
-            return Ok();
+            return Ok(tournament);
         }
 
         [HttpPost("{id}/closeRegistration")]

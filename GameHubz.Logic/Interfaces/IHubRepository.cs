@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Interfaces
     {
         Task<List<HubEntity>> GetOverview();
 
+        Task<List<HubEntity>> GetByUserId(Guid userId);
+
         Task<HubEntity> GetWithDetailsById(Guid id);
     }
 }

@@ -71,7 +71,8 @@ namespace GameHubz.Data.Repository
                     StartDate = x.StartDate ?? DateTime.MinValue,
                     NumberOfParticipants = x.TournamentParticipants!.Count(),
                     Prize = x.Prize,
-                    PrizeCurrency = x.PrizeCurrency
+                    PrizeCurrency = x.PrizeCurrency,
+                    Id = x.Id!.Value
                 })
                 .ToListAsync();
         }

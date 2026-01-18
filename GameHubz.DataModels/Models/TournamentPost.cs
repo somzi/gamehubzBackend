@@ -21,6 +21,8 @@ namespace GameHubz.DataModels.Models
 
         public DateTime? StartDate { get; set; }
 
+        public TournamentFormat? Format { get; set; }
+
         public DateTime? RegistrationDeadline { get; set; }
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
