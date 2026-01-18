@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class RegisterUserPostDto
@@ -12,6 +14,8 @@ namespace GameHubz.DataModels.Models
 
         public Guid UserRoleId { get; set; }
 
-        public string? Language { get; set; }
+        public RegionType Region { get; set; }
+
+        public string UserName { get; set; } = string.Empty;
     }
 }

@@ -6,7 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace GameHubz.Api.Controllers
 {
-    [Route("api/")]
+    [Route("api/[controller]")]
+    [Authorize]
     [ApiController]
     public class UserSocialController : BasicGenericController<UserSocialService, UserSocialEntity, UserSocialDto, UserSocialPost, UserSocialEdit>
     {

@@ -1,10 +1,12 @@
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GameHubz.Api.Controllers
 {
     [Route("api/[controller]")]
+    [Authorize]
     [ApiController]
     public class HubController : ControllerBase
     {

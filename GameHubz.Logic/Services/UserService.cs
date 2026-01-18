@@ -103,12 +103,14 @@ namespace GameHubz.Logic.Services
 
             user.PasswordNonce = NonceGenerator.GetNew();
             user.Password = this.HashPassword(user.Password, user.PasswordNonce);
+            user.UserRoleId = Guid.Parse("6AB87F80-2DE2-4F95-BCE5-7B86F38E426F");
+            user.IsVerified = true;
 
-            GenerateVerifyEmailToken(user);
+            //GenerateVerifyEmailToken(user);
 
             await this.AddUpdateUserAnonymously(user);
 
-            await this.SendVerificationEmail(user);
+            //await this.SendVerificationEmail(user);
         }
 
         public async Task ResendVerificationEmail(ResendVerificationRequestDto resendVerificationRequestDto)
