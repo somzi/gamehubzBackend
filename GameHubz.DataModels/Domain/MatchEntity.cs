@@ -1,5 +1,7 @@
 using GameHubz.Common;
 using GameHubz.DataModels.Enums;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json;
 
 namespace GameHubz.DataModels.Domain
 {
@@ -29,5 +31,22 @@ namespace GameHubz.DataModels.Domain
         public Guid? NextMatchLoserBracketId { get; set; }
         public MatchEntity? NextMatchLoserBracket { get; set; }
         public bool IsUpperBracket { get; set; } = true;
+
+        public string? HomeSlotsJson { get; set; }
+        public string? AwaySlotsJson { get; set; }
+
+        [NotMapped]
+        public List<DateTime> HomeSlots
+        {
+            get => string.IsNullOrEmpty(HomeSlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(HomeSlotsJson)!;
+            set => HomeSlotsJson = JsonSerializer.Serialize(value);
+        }
+
+        [NotMapped]
+        public List<DateTime> AwaySlots
+        {
+            get => string.IsNullOrEmpty(AwaySlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(AwaySlotsJson)!;
+            set => AwaySlotsJson = JsonSerializer.Serialize(value);
+        }
     }
 }

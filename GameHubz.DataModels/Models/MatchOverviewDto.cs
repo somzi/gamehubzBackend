@@ -1,13 +1,17 @@
-﻿namespace GameHubz.DataModels.Models
+﻿using GameHubz.DataModels.Enums;
+
+namespace GameHubz.DataModels.Models
 {
-    public class MatchListItemDto
+    public class MatchOverviewDto
     {
         public string TournamentName { get; set; } = string.Empty;
+
         public string HubName { get; set; } = string.Empty;
+
         public DateTime? ScheduledTime { get; set; }
-        public bool? IsWin { get; set; }
+
         public string OpponentName { get; set; } = string.Empty;
-        public int? OpponentScore { get; set; }
-        public int? UserScore { get; set; }
+
+        public MatchStatus Status { get; set; }
     }
 }

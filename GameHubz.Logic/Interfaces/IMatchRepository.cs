@@ -13,5 +13,7 @@ namespace GameHubz.Logic.Interfaces
         Task<bool> IsExistingByStageId(Guid? id);
 
         Task<bool> HasMatchesForStage(Guid value);
+
+        Task<List<MatchOverviewDto>> GetByUser(Guid userId);
     }
 }

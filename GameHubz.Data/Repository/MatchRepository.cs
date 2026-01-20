@@ -21,6 +21,23 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => (x.HomeParticipantId == userId || x.AwayParticipantId == userId) && (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled))
+                .Select(x => new MatchOverviewDto
+                {
+                    HubName = x.Tournament!.Hub!.Name,
+                    OpponentName = x.HomeParticipantId == userId
+                        ? x.AwayParticipant!.User!.Username
+                        : x.HomeParticipant!.User!.Username,
+                    ScheduledTime = x.ScheduledStartTime,
+                    TournamentName = x.Tournament!.Name,
+                    Status = x.Status
+                })
+                .ToListAsync();
+        }
+
         public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId)
         {
             return await this.BaseDbSet()

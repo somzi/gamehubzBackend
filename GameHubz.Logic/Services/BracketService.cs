@@ -655,7 +655,7 @@ namespace GameHubz.Logic.Services
                 RoundNumber = round,
                 Stage = stage,
                 MatchOrder = order,
-                Status = MatchStatus.Scheduled,
+                Status = MatchStatus.Pending,
                 IsUpperBracket = true
             };
         }
