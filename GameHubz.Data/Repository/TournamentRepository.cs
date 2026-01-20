@@ -30,8 +30,20 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<TournamentOverview>> GetByHubPaged(Guid hubId, TournamentStatus status, int page, int pageSize)
         {
+            List<TournamentStatus> statuses = [];
+
+            if (status == TournamentStatus.Draft || status == TournamentStatus.RegistrationOpen || status == TournamentStatus.RegistrationClosed)
+            {
+                statuses.Add(TournamentStatus.Draft);
+                statuses.Add(TournamentStatus.RegistrationClosed);
+                statuses.Add(TournamentStatus.RegistrationOpen);
+            }
+            else {
+                statuses.Add(status);
+            }
+
             var query = this.BaseDbSet()
-                .Where(x => x.HubId == hubId && x.Status == status);
+                .Where(x => x.HubId == hubId && statuses.Contains( x.Status ));
 
             var items = await query
                 .OrderByDescending(x => x.StartDate)
@@ -44,7 +56,8 @@ namespace GameHubz.Data.Repository
                      StartDate = x.StartDate ?? DateTime.MinValue,
                      NumberOfParticipants = x.TournamentParticipants!.Count(),
                      Prize = x.Prize,
-                     PrizeCurrency = x.PrizeCurrency
+                     PrizeCurrency = x.PrizeCurrency,
+                     Id = x.Id!.Value!
                  })
                 .ToListAsync();
 

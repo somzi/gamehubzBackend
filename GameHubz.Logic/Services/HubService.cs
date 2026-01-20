@@ -45,12 +45,35 @@ namespace GameHubz.Logic.Services
         {
             var entity = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);
 
-            return this.Mapper.Map<HubOverviewDto>(entity);
+            var hubOverviewDto = this.Mapper.Map<HubOverviewDto>(entity);
+
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var isUserFollowHub = entity.UserHubs!.Select(x => x.UserId).Any(x => x == user.UserId);
+            var isUserOwner = entity.UserId == user.UserId;
+            hubOverviewDto.IsUserFollowHub = isUserFollowHub;
+            hubOverviewDto.IsUserOwner = isUserOwner;
+
+            return hubOverviewDto;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPaged(Guid id, TournamentRequest request)
         {
             return await this.tournamentService.GetTournamentsPagedForHub(id, request);
+        }
+
+        public async Task<HubOverviewDto> UpdateDetails(HubPost request)
+        {
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(request.Id!.Value);
+
+            hub.Name = request.Name;
+            hub.Description = request.Description;
+
+            await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            return this.Mapper.Map<HubOverviewDto>(hub);
         }
 
         protected override IRepository<HubEntity> GetRepository()

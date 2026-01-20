@@ -22,6 +22,15 @@ namespace GameHubz.Logic.Services
         {
         }
 
+        public async Task Unfollow(Guid userId, Guid hubId)
+        {
+            var userHub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
+
+            await this.AppUnitOfWork.UserHubRepository.HardDeleteEntity(userHub);
+
+            await this.SaveAsync();
+        }
+
         protected override IRepository<UserHubEntity> GetRepository()
             => this.AppUnitOfWork.UserHubRepository;
     }

@@ -45,5 +45,13 @@ namespace GameHubz.Api.Controllers
 
             return result;
         }
+
+        [HttpPost("update")]
+        public async Task<HubOverviewDto> Update([FromBody] HubPost request)
+        {
+            HubOverviewDto result = await hubService.UpdateDetails(request);
+
+            return result;
+        }
     }
 }

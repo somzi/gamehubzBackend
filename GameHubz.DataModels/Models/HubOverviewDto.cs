@@ -11,5 +11,8 @@
         public int NumberOfUsers { get; set; }
 
         public int NumberOfTournaments { get; set; }
+
+        public bool IsUserFollowHub { get; set; }
+        public bool IsUserOwner { get; set; }
     }
 }

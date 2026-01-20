@@ -17,5 +17,15 @@ namespace GameHubz.Api.Controllers
             : base(service, appAuthorizationService)
         {
         }
+
+        [HttpDelete("unfollow")]
+        public async Task Unfollow([FromQuery] Guid userId, [FromQuery] Guid hubId)
+        {
+            //await this.AppAuthorizationService.CheckAuthorization(this.UserRolesDelete());
+
+            await this.Service.Unfollow(userId, hubId);
+
+            this.Ok();
+        }
     }
 }

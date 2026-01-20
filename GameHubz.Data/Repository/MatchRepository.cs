@@ -27,9 +27,10 @@ namespace GameHubz.Data.Repository
                 .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
                             && m.Status == MatchStatus.Completed)
                 .OrderByDescending(m => m.ScheduledStartTime)
-                .Take(5)
+                .Take(10)
                 .Select(m => new MatchListItemDto
                 {
+                    HubName = m.Tournament!.Hub!.Name,
                     TournamentName = m.Tournament!.Name,
                     ScheduledTime = m.ScheduledStartTime,
                     OpponentName = m.HomeParticipant!.UserId == userId

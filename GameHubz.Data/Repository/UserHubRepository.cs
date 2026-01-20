@@ -19,6 +19,12 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        public Task<UserHubEntity> GetByUserAndHub(Guid userId, Guid hubId)
+        {
+            return this.BaseDbSet()
+                .FirstAsync(uh => uh.UserId == userId && uh.HubId == hubId)!;
+        }
+
         public async Task<List<Guid>> GetHubIdsByUserId(Guid userId)
         {
             return await this.BaseDbSet()
