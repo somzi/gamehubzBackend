@@ -33,7 +33,26 @@ namespace GameHubz.Data.Repository
                 .Where(tp => tp.TournamentId == tournamentId)
                 .Select(x => new TournamentParticipantOverview
                 {
-                    Username = x.User!.Username
+                    Username = x.User!.Username,
+                    UserId = x.User!.Id!.Value
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<TournamentOverview>> GetByUserId(Guid userid)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.UserId == userid)
+                .Select(x => new TournamentOverview
+                {
+                    Id = x.Tournament!.Id!.Value,
+                    MaxPlayers = x.Tournament.MaxPlayers ?? 0,
+                    Name = x.Tournament.Name,
+                    NumberOfParticipants = x.Tournament.TournamentParticipants!.Count(),
+                    Prize = x.Tournament.Prize,
+                    PrizeCurrency = x.Tournament.PrizeCurrency,
+                    Region = x.Tournament.Region,
+                    StartDate = x.Tournament.StartDate!.Value
                 })
                 .ToListAsync();
         }

@@ -24,12 +24,7 @@ namespace GameHubz.Data.Repository
         public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId)
         {
             return await this.BaseDbSet()
-                .Include(x => x.Tournament)
-                .Include(x => x.HomeParticipant)
-                    .ThenInclude(x => x!.User)
-                .Include(x => x.AwayParticipant)
-                    .ThenInclude(x => x!.User)
-                .Where(m => (m.HomeParticipantId == userId || m.AwayParticipantId == userId)
+                .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
                             && m.Status == MatchStatus.Completed)
                 .OrderByDescending(m => m.ScheduledStartTime)
                 .Take(5)
@@ -37,10 +32,16 @@ namespace GameHubz.Data.Repository
                 {
                     TournamentName = m.Tournament!.Name,
                     ScheduledTime = m.ScheduledStartTime,
-                    OpponentName = m.HomeParticipantId == userId ? m.AwayParticipant!.User!.Username : m.HomeParticipant!.User!.Username,
-                    OpponentScore = m.HomeParticipantId == userId ? m.AwayUserScore : m.HomeUserScore,
-                    UserScore = m.HomeParticipantId == userId ? m.HomeUserScore : m.AwayUserScore,
-                    IsWin = m.WinnerParticipantId == userId,
+                    OpponentName = m.HomeParticipant!.UserId == userId
+                        ? m.AwayParticipant!.User!.Username
+                        : m.HomeParticipant!.User!.Username,
+                    OpponentScore = m.HomeParticipant!.UserId == userId
+                        ? m.AwayUserScore
+                        : m.HomeUserScore,
+                    UserScore = m.HomeParticipant!.UserId == userId
+                        ? m.HomeUserScore
+                        : m.AwayUserScore,
+                    IsWin = m.WinnerParticipant!.UserId == userId,
                 })
                 .ToListAsync();
         }

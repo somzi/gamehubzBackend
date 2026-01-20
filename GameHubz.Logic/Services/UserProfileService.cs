@@ -27,6 +27,13 @@
             };
         }
 
+        public async Task<List<TournamentOverview>> GetTournaments(Guid id)
+        {
+            var tournaments = await this.AppUnitOfWork.TournamentParticipantRepository.GetByUserId(id);
+
+            return tournaments;
+        }
+
         public async Task<UserProfileDto> GetUserProfileAsync(Guid userId)
         {
             var userEntity = await this.AppUnitOfWork.UserRepository.GetWithSocials(userId);

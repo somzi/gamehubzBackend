@@ -3,5 +3,6 @@
     public class TournamentParticipantOverview
     {
         public string Username { get; set; } = string.Empty;
+        public Guid UserId { get; set; }
     }
 }

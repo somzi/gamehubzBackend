@@ -32,5 +32,13 @@ namespace GameHubz.Api.Controllers
 
             return userProfile;
         }
+
+        [HttpGet("{id}/tournaments")]
+        public async Task<List<TournamentOverview>> GetTournaments(Guid id)
+        {
+            var userProfile = await userProfileService.GetTournaments(id);
+
+            return userProfile;
+        }
     }
 }
