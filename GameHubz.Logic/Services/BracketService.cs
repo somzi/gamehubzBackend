@@ -332,7 +332,6 @@ namespace GameHubz.Logic.Services
 
         public async Task UpdateMatchResult(MatchResultDto request)
         {
-            // IMPORTANT: Assumes you implement GetWithStage in your repository
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId);
 
             if (match == null) throw new Exception("Match not found");
@@ -353,11 +352,20 @@ namespace GameHubz.Logic.Services
             match.Status = MatchStatus.Completed;
 
             // 3. Determine Winner
-            Guid? winnerId = null;
-            if (request.HomeScore > request.AwayScore) winnerId = match.HomeParticipantId;
-            else if (request.AwayScore > request.HomeScore) winnerId = match.AwayParticipantId;
+            Guid? winnerParticipientId = null;
+            Guid? winnerUserId = null;
+            if (request.HomeScore > request.AwayScore)
+            {
+                winnerParticipientId = match.HomeParticipantId;
+                winnerUserId = match.HomeParticipant!.UserId;
+            }
+            else if (request.AwayScore > request.HomeScore)
+            { 
+                winnerParticipientId = match.AwayParticipantId;
+                winnerUserId = match.AwayParticipant!.UserId;
+            }
 
-            match.WinnerParticipantId = winnerId;
+            match.WinnerParticipantId = winnerParticipientId;
 
             // 4. Apply Rules
             if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
@@ -370,16 +378,40 @@ namespace GameHubz.Logic.Services
                 {
                     await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
                 }
+                if (match.TournamentStage?.Type == StageType.League)
+                {
+                    await CheckAndCompleteLeague(match.TournamentId);
+                }
             }
             else if (IsElimination(match.TournamentStage?.Type))
             {
                 // Bracket: Advance Winner
-                if (winnerId == null) throw new Exception("Draws not allowed in elimination.");
-                await AdvanceWinnerToNextMatch(match, winnerId.Value);
+                if (winnerParticipientId == null) throw new Exception("Draws not allowed in elimination.");
+                await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId);
             }
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
+        }
+
+        private async Task CheckAndCompleteLeague(Guid tournamentId)
+        {
+            var allMatchesFinished = await this.AppUnitOfWork.MatchRepository.AreAllMatchesFinishedInTournament(tournamentId);
+
+            // If any match is NOT completed, the league is still ongoing
+            if (!allMatchesFinished)
+                return;
+
+            var tournamentStandings = await this.GetLeagueStandings(tournamentId);
+
+            var winnerUserId = tournamentStandings.Select(s => s.UserId).FirstOrDefault();
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+
+            tournament.WinnerUserId = winnerUserId;
+            tournament.Status = TournamentStatus.Completed;
+
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
         }
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
@@ -524,7 +556,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
         }
 
-        private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId)
+        private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId, Guid? winnerUserId)
         {
             if (match.NextMatchId.HasValue)
             {
@@ -535,6 +567,14 @@ namespace GameHubz.Logic.Services
                     else if (!nextMatch.AwayParticipantId.HasValue) nextMatch.AwayParticipantId = winnerId;
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
                 }
+            }
+            else
+            {
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+
+                tournament.WinnerUserId = winnerUserId;
+                tournament.Status = TournamentStatus.Completed;
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             }
         }
 

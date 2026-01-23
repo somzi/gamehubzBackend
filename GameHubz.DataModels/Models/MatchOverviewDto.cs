@@ -13,5 +13,10 @@ namespace GameHubz.DataModels.Models
         public string OpponentName { get; set; } = string.Empty;
 
         public MatchStatus Status { get; set; }
+
+        public Guid Id { get; set; }
+
+        public Guid? HomeParticipantId { get; set; }
+        public Guid? AwayParticipantId { get; set; }
     }
 }

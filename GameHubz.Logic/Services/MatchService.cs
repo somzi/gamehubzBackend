@@ -23,6 +23,11 @@ namespace GameHubz.Logic.Services
         {
         }
 
+        public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
+        {
+            return await this.AppUnitOfWork.MatchRepository.GetAvailability(id, userId);
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             return await this.AppUnitOfWork.MatchRepository.GetByUser(userId);
@@ -33,7 +38,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var userId = user.UserId;
-            var match = await this.AppUnitOfWork.MatchRepository.GetById(matchId);
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
             if (match == null) throw new Exception("Match not found");
 
             // 1. Determine side (Home vs Away)

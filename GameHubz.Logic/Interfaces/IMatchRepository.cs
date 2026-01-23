@@ -15,5 +15,11 @@ namespace GameHubz.Logic.Interfaces
         Task<bool> HasMatchesForStage(Guid value);
 
         Task<List<MatchOverviewDto>> GetByUser(Guid userId);
+
+        Task<MatchEntity?> GetWithParticipants(Guid matchId);
+
+        Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId);
+
+        Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId);
     }
 }

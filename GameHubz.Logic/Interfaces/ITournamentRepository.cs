@@ -17,5 +17,7 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentEntity> GetWithPendingRegistration(Guid id);
 
         Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId);
+
+        Task<TournamentOverview?> GetOverview(Guid tournamentId);
     }
 }

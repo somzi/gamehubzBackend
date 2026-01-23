@@ -37,5 +37,12 @@ namespace GameHubz.Api.Controllers
             var matches = await this.Service.GetByUser(userId);
             return matches;
         }
+
+        [HttpGet("{id}/availability/user/{userId}")]
+        public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
+        {
+            var matchAvailabilityDto = await this.Service.GetAvailability(id, userId);
+            return matchAvailabilityDto;
+        }
     }
 }

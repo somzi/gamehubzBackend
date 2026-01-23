@@ -69,5 +69,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpGet("{id}/overview")]
+        public async Task<IActionResult> GetOverview([FromRoute] Guid id)
+        {
+            var data = await this.Service.GetOverview(id);
+
+            return Ok(data);
+        }
     }
 }

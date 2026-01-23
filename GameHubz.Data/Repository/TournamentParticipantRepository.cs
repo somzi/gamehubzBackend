@@ -51,6 +51,7 @@ namespace GameHubz.Data.Repository
                     NumberOfParticipants = x.Tournament.TournamentParticipants!.Count(),
                     Prize = x.Tournament.Prize,
                     PrizeCurrency = x.Tournament.PrizeCurrency,
+                    Status = x.Tournament.Status,
                     Region = x.Tournament.Region,
                     StartDate = x.Tournament.StartDate!.Value
                 })

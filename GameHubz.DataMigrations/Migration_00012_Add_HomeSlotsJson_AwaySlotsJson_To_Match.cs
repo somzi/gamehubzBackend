@@ -8,8 +8,8 @@ namespace GameHubz.DataMigrations
         public override void Up()
         {
             this.Alter.Table("Match")
-                .AddColumn("HomeSlotsJson").AsString().Nullable()
-                .AddColumn("AwaySlotsJson").AsString().Nullable();
+                .AddColumn("HomeSlotsJson").AsMaxString().Nullable()
+                .AddColumn("AwaySlotsJson").AsMaxString().Nullable();
         }
     }
 }

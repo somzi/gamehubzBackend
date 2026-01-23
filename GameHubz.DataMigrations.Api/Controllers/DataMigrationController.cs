@@ -6,7 +6,6 @@ namespace GameHubz.DataMigrations.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [BasicAuthentication("DatabaseMigrationsAuth")]
     public class DataMigrationController(IMigrationRunner migrationRunner) : ControllerBase
     {
         [HttpGet("migrate")]

@@ -18,6 +18,8 @@ namespace GameHubz.DataModels.Domain
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
+        public Guid? WinnerUserId { get; set; }
+        public UserEntity? WinnerUser { get; set; }
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

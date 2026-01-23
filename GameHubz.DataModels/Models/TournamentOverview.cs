@@ -12,5 +12,9 @@ namespace GameHubz.DataModels.Models
         public int MaxPlayers { get; set; }
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
+        public TournamentStatus Status { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public string Rules { get; set; } = string.Empty;
+        public Guid CreatedBy { get; set; }
     }
 }

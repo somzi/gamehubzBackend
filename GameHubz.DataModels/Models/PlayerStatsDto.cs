@@ -6,6 +6,10 @@
         public int Wins { get; set; }
         public int Losses { get; set; }
 
+        public int TournamentWon { get; set; }
+
+        public int Draws => TotalMatches - Wins - Losses;
+
         public double WinRate =>
             TotalMatches == 0 ? 0 : (double)Wins / TotalMatches * 100;
     }

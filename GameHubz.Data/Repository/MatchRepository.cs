@@ -21,19 +21,50 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        public async Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .AnyAsync(m => m.TournamentId == tournamentId && m.Status != MatchStatus.Completed);
+        }
+
+        public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.Id == id)
+                .Select(x => new MatchAvailabilityDto
+                {
+                    MatchId = x.Id!.Value,
+                    MySlotsJson = x.HomeParticipant!.UserId == userId
+                         ? x.HomeSlotsJson
+                         : x.AwaySlotsJson,
+                    OpponentSlotsJson = x.HomeParticipant!.UserId == userId
+                         ? x.AwaySlotsJson
+                         : x.HomeSlotsJson
+                })
+                .FirstAsync();
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             return await this.BaseDbSet()
-                .Where(x => (x.HomeParticipantId == userId || x.AwayParticipantId == userId) && (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled))
+                .Where(x =>
+                    (x.HomeParticipant!.UserId == userId ||
+                     x.AwayParticipant!.UserId == userId) &&
+                    (x.Status == MatchStatus.Pending ||
+                     x.Status == MatchStatus.Scheduled))
                 .Select(x => new MatchOverviewDto
                 {
                     HubName = x.Tournament!.Hub!.Name,
-                    OpponentName = x.HomeParticipantId == userId
-                        ? x.AwayParticipant!.User!.Username
-                        : x.HomeParticipant!.User!.Username,
+                    OpponentName =
+                        x.HomeParticipant!.UserId == userId
+                            ? x.AwayParticipant!.User!.Username
+                            : x.HomeParticipant!.User!.Username,
                     ScheduledTime = x.ScheduledStartTime,
                     TournamentName = x.Tournament!.Name,
-                    Status = x.Status
+                    Status = x.Status,
+                    Id = x.Id!.Value,
+                    AwayParticipantId = x.AwayParticipantId,
+                    HomeParticipantId = x.HomeParticipantId
                 })
                 .ToListAsync();
         }
@@ -67,23 +98,34 @@ namespace GameHubz.Data.Repository
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
             var stats = await this.BaseDbSet()
-            .Where(m => (m.HomeParticipantId == userId || m.AwayParticipantId == userId) && m.Status == MatchStatus.Completed)
+            .Where(m => (m.WinnerParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId) && m.Status == MatchStatus.Completed)
             .GroupBy(_ => 1)
             .Select(g => new PlayerStatsDto
             {
                 TotalMatches = g.Count(),
-                Wins = g.Count(m => m.WinnerParticipantId == userId),
-                Losses = g.Count(m => m.WinnerParticipantId != null && m.WinnerParticipantId != userId)
+                Wins = g.Count(m => m.WinnerParticipantId != null && m.WinnerParticipant!.UserId == userId),
+                Losses = g.Count(m => m.WinnerParticipantId != null && m.WinnerParticipant!.UserId != userId)
             })
              .FirstOrDefaultAsync();
 
             return stats ?? new PlayerStatsDto();
         }
 
+        public async Task<MatchEntity?> GetWithParticipants(Guid matchId)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.HomeParticipant)
+                .Include(x => x.AwayParticipant)
+                .Where(x => x.Id == matchId)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<MatchEntity?> GetWithStage(Guid id)
         {
             return await this.BaseDbSet()
                 .Include(x => x.TournamentStage)
+                .Include(x => x.HomeParticipant)
+                .Include(x => x.AwayParticipant)
                 .Where(x => x.Id == id)
                 .FirstOrDefaultAsync();
         }

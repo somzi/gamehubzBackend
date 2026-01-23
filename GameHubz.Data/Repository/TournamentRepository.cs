@@ -38,12 +38,13 @@ namespace GameHubz.Data.Repository
                 statuses.Add(TournamentStatus.RegistrationClosed);
                 statuses.Add(TournamentStatus.RegistrationOpen);
             }
-            else {
+            else
+            {
                 statuses.Add(status);
             }
 
             var query = this.BaseDbSet()
-                .Where(x => x.HubId == hubId && statuses.Contains( x.Status ));
+                .Where(x => x.HubId == hubId && statuses.Contains(x.Status));
 
             var items = await query
                 .OrderByDescending(x => x.StartDate)
@@ -57,6 +58,7 @@ namespace GameHubz.Data.Repository
                      NumberOfParticipants = x.TournamentParticipants!.Count(),
                      Prize = x.Prize,
                      PrizeCurrency = x.PrizeCurrency,
+                     Status = x.Status,
                      Id = x.Id!.Value!
                  })
                 .ToListAsync();
@@ -84,6 +86,7 @@ namespace GameHubz.Data.Repository
                     StartDate = x.StartDate ?? DateTime.MinValue,
                     NumberOfParticipants = x.TournamentParticipants!.Count(),
                     Prize = x.Prize,
+                    Status = x.Status,
                     PrizeCurrency = x.PrizeCurrency,
                     Id = x.Id!.Value
                 })
@@ -115,7 +118,6 @@ namespace GameHubz.Data.Repository
                 .SingleAsync(x => x.Id == id);
         }
 
-        // ✅ IMPLEMENTED: Optimized deep load for Tournament Structure
         public async Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId)
         {
             return await this.BaseDbSet()
@@ -132,6 +134,27 @@ namespace GameHubz.Data.Repository
                         .ThenInclude(m => m.AwayParticipant)
                             .ThenInclude(p => p!.User)
                 .FirstOrDefaultAsync(t => t.Id == tournamentId);
+        }
+
+        public async Task<TournamentOverview?> GetOverview(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.Id == tournamentId)
+                  .Select(x => new TournamentOverview
+                  {
+                      Name = x.Name,
+                      Region = x.Region,
+                      StartDate = x.StartDate ?? DateTime.MinValue,
+                      NumberOfParticipants = x.TournamentParticipants!.Count(),
+                      Prize = x.Prize,
+                      Status = x.Status,
+                      PrizeCurrency = x.PrizeCurrency,
+                      Id = x.Id!.Value,
+                      MaxPlayers = x.MaxPlayers!.Value,
+                      Description = x.Description ?? string.Empty,
+                      Rules = x.Rules ?? string.Empty,
+                      CreatedBy = x.CreatedBy!.Value
+                  }).FirstOrDefaultAsync();
         }
 
         private IQueryable<TournamentEntity> ApplyFilters(
