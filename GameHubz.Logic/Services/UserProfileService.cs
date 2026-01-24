@@ -17,7 +17,7 @@
         public async Task<PlayerMatchesDto> GetStats(Guid id)
         {
             var statsTask = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
-
+            var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
             var matchesTask = await this.AppUnitOfWork.MatchRepository.GetLastMatchesByUserId(id);
 
             return new PlayerMatchesDto

@@ -204,5 +204,11 @@ namespace GameHubz.Data.Repository
 
             return query;
         }
+
+        public async Task<int> GetNumberOfTournamentsWonByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                    .CountAsync(t => t.WinnerUserId == userId);
+        }
     }
 }

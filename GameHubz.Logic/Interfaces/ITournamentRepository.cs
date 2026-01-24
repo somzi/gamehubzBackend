@@ -19,5 +19,7 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId);
 
         Task<TournamentOverview?> GetOverview(Guid tournamentId);
+
+        Task<int> GetNumberOfTournamentsWonByUserId(Guid id);
     }
 }

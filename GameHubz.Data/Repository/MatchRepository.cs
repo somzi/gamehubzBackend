@@ -98,7 +98,7 @@ namespace GameHubz.Data.Repository
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
             var stats = await this.BaseDbSet()
-            .Where(m => (m.WinnerParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId) && m.Status == MatchStatus.Completed)
+            .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId) && m.Status == MatchStatus.Completed)
             .GroupBy(_ => 1)
             .Select(g => new PlayerStatsDto
             {
