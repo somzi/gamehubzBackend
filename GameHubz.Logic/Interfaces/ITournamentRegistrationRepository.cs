@@ -5,5 +5,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<TournamentRegistrationEntity>> GetByIds(List<Guid> ids);
 
         Task<List<TournamentRegistrationOverview>> GetPendingByTournamenId(Guid tournamentId);
+
+        Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId);
     }
 }

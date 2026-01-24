@@ -36,7 +36,12 @@ namespace GameHubz.Logic.Services
 
         public async Task ApproveRegistration(Guid registrationId)
         {
-            var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.ShallowGetByIdOrThrowIfNull(registrationId);
+            var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
+
+            if (IsAlreadyFullTournament(tournamentRegistration))
+            {
+                throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
+            }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
 
@@ -48,6 +53,11 @@ namespace GameHubz.Logic.Services
         public async Task ApproveRegistrations(List<Guid> registrationId)
         {
             List<TournamentRegistrationEntity> tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetByIds(registrationId);
+
+            if (tournamentRegistration.Count > 0 && IsAlreadyFullTournament(tournamentRegistration.First()))
+            {
+                throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
+            }
 
             foreach (var registration in tournamentRegistration)
             {
@@ -90,6 +100,11 @@ namespace GameHubz.Logic.Services
             tournamentRegistration.Status = status;
 
             await this.AppUnitOfWork.TournamentRegistrationRepository.UpdateEntity(tournamentRegistration, this.UserContextReader);
+        }
+
+        private static bool IsAlreadyFullTournament(TournamentRegistrationEntity tournamentRegistration)
+        {
+            return tournamentRegistration.Tournament != null && tournamentRegistration.Tournament.TournamentParticipants != null && tournamentRegistration.Tournament!.MaxPlayers >= tournamentRegistration.Tournament.TournamentParticipants.Count;
         }
 
         protected override IRepository<TournamentRegistrationEntity> GetRepository()

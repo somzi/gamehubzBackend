@@ -24,6 +24,8 @@ namespace GameHubz.Data.Repository
         public async Task<List<TournamentRegistrationEntity>> GetByIds(List<Guid> ids)
         {
             return await this.BaseDbSet()
+                .Include(x => x.Tournament)
+                    .ThenInclude(x => x!.TournamentParticipants)
                 .Where(x => ids.Contains(x.Id!.Value))
                 .ToListAsync();
         }
@@ -39,6 +41,14 @@ namespace GameHubz.Data.Repository
                    Username = x.User!.Username
                })
                .ToListAsync();
+        }
+
+        public Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId)
+        {
+            return this.BaseDbSet()
+                .Include(x => x.Tournament)
+                    .ThenInclude(x => x!.TournamentParticipants)
+                .FirstAsync(x => x.Id == registrationId);
         }
     }
 }
