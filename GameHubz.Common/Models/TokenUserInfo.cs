@@ -15,6 +15,8 @@ namespace GameHubz.Common.Models
 
         public Guid UserId { get; set; }
 
+        public int? Region { get; set; }
+
         public UserRoleEnum? RoleEnum { get; set; }
     }
 }

@@ -27,6 +27,8 @@ namespace GameHubz.DataModels.Domain
 
         public string Username { get; set; } = "";
 
+        public string Nickname { get; set; } = "";
+
         public RegionType Region { get; set; }
 
         public Guid UserRoleId { get; set; }

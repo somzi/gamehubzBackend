@@ -77,6 +77,14 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("update")]
+        public async Task<IActionResult> UpdateInfo(Guid id, [FromBody] UserUpdateInfoRequest request)
+        {
+            await this.Service.UpdateInfo(request);
+
+            return Ok();
+        }
+
         [HttpGet("{id}/tournaments")]
         public async Task<IActionResult> GetByHubPaged([FromRoute] Guid id, [FromQuery] UserTournamentRequest request)
         {

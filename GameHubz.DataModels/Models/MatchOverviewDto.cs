@@ -4,6 +4,8 @@ namespace GameHubz.DataModels.Models
 {
     public class MatchOverviewDto
     {
+        public Guid TournamentId { get; set; }
+
         public string TournamentName { get; set; } = string.Empty;
 
         public string HubName { get; set; } = string.Empty;

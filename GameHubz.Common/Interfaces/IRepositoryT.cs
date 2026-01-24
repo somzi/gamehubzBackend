@@ -12,6 +12,8 @@ namespace GameHubz.Common.Interfaces
 
         Task<TEntity> GetByIdOrThrowIfNull(Guid id);
 
+        Task DetachEntity(TEntity entity);
+
         Task<int> CountEntities(IList<FilterItem> filterItems);
 
         Task<EntityListResult<TEntity>> GetFilteredData(

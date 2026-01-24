@@ -23,6 +23,9 @@ namespace GameHubz.DataModels.Models
 
         public TournamentFormat? Format { get; set; }
 
+        public int? QualifiersPerGroup { get; set; }
+        public int? GroupsCount { get; set; }
+
         public DateTime? RegistrationDeadline { get; set; }
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }

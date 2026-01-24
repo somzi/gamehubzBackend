@@ -1,7 +1,7 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace GameHubz.Logic.Tokens
 {
@@ -27,10 +27,23 @@ namespace GameHubz.Logic.Tokens
             Claim? username = claimsPrincipal.FindFirst(JwtRegisteredClaimNames.Sub);
             Claim? emailFromToken = claimsPrincipal.FindFirst(ClaimTypes.Email);
             Claim? roleClaim = claimsPrincipal.FindFirst(ClaimTypes.Role);
+            Claim? regionClaim = claimsPrincipal.FindFirst("region");
 
             if (roleClaim == null)
             {
                 throw new InvalidTokenException("Role is missing in token.");
+            }
+
+            int? region = null;
+
+            if (regionClaim != null)
+            {
+                if (!int.TryParse(regionClaim.Value, out var regionInt))
+                {
+                    throw new InvalidTokenException("Region cannot be parsed.");
+                }
+
+                region = regionInt;
             }
 
             if (Enum.TryParse(roleClaim.Value, true, out UserRoleEnum userRole) == false)
@@ -50,7 +63,8 @@ namespace GameHubz.Logic.Tokens
                     UserId = userId,
                     Username = username?.Value ?? "",
                     Role = userRole.ToString(),
-                    RoleEnum = userRole
+                    RoleEnum = userRole,
+                    Region = region
                 };
             }
             else if (emailFromToken != null)
@@ -65,6 +79,7 @@ namespace GameHubz.Logic.Tokens
                         Username = emailFromToken.Value,
                         Role = userRole.ToString(),
                         RoleEnum = userRole,
+                        Region = region
                     };
             }
             else

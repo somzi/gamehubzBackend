@@ -18,6 +18,7 @@
         {
             var statsTask = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
             var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
+            statsTask.TournamentsWon = numberOfTournamentsWon;
             var matchesTask = await this.AppUnitOfWork.MatchRepository.GetLastMatchesByUserId(id);
 
             return new PlayerMatchesDto

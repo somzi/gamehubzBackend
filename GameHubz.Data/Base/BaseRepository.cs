@@ -72,6 +72,17 @@ namespace GameHubz.Data
             await Task.Yield();
         }
 
+        public virtual async Task DetachEntity(BaseEntity entity)
+        {
+            if (entity == null)
+            {
+                return;
+            }
+
+            this.ContextBase.Entry(entity).State = EntityState.Detached;
+            await Task.Yield();
+        }
+
         public virtual async Task AddUpdateEntity(BaseEntity entity, IUserContextReader userContextReader)
         {
             if (entity is null)

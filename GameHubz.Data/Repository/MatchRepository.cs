@@ -44,6 +44,13 @@ namespace GameHubz.Data.Repository
                 .FirstAsync();
         }
 
+        public Task<List<MatchEntity>> GetByStageId(Guid groupStageId)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentStageId == groupStageId)
+                .ToListAsync();
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             return await this.BaseDbSet()
@@ -51,7 +58,7 @@ namespace GameHubz.Data.Repository
                     (x.HomeParticipant!.UserId == userId ||
                      x.AwayParticipant!.UserId == userId) &&
                     (x.Status == MatchStatus.Pending ||
-                     x.Status == MatchStatus.Scheduled))
+                     (x.Status == MatchStatus.Scheduled && x.ScheduledStartTime != null)))
                 .Select(x => new MatchOverviewDto
                 {
                     HubName = x.Tournament!.Hub!.Name,
@@ -64,7 +71,8 @@ namespace GameHubz.Data.Repository
                     Status = x.Status,
                     Id = x.Id!.Value,
                     AwayParticipantId = x.AwayParticipantId,
-                    HomeParticipantId = x.HomeParticipantId
+                    HomeParticipantId = x.HomeParticipantId,
+                    TournamentId = x.TournamentId
                 })
                 .ToListAsync();
         }

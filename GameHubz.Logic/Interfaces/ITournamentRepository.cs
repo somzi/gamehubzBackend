@@ -10,9 +10,9 @@ namespace GameHubz.Logic.Interfaces
 
         Task<int> GetByHubCount(Guid hubId, TournamentStatus status);
 
-        Task<List<TournamentOverview>> GetByHubsPaged(Guid userId, List<Guid> hubIds, TournamentUserStatus status, int page, int pageSize);
+        Task<List<TournamentOverview>> GetByHubsPaged(Guid userId, List<Guid> hubIds, TournamentUserStatus status, RegionType region, int page, int pageSize);
 
-        Task<int> GetCountByHubs(Guid userId, List<Guid> hubIds, TournamentUserStatus filter);
+        Task<int> GetCountByHubs(Guid userId, List<Guid> hubIds, RegionType region, TournamentUserStatus filter);
 
         Task<TournamentEntity> GetWithPendingRegistration(Guid id);
 
@@ -21,5 +21,7 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentOverview?> GetOverview(Guid tournamentId);
 
         Task<int> GetNumberOfTournamentsWonByUserId(Guid id);
+
+        Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId);
     }
 }

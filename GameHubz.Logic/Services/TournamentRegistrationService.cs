@@ -38,7 +38,7 @@ namespace GameHubz.Logic.Services
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
 
-            if (IsAlreadyFullTournament(tournamentRegistration))
+            if (IsAlreadyFullTournament(tournamentRegistration, 1))
             {
                 throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
             }
@@ -54,7 +54,7 @@ namespace GameHubz.Logic.Services
         {
             List<TournamentRegistrationEntity> tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetByIds(registrationId);
 
-            if (tournamentRegistration.Count > 0 && IsAlreadyFullTournament(tournamentRegistration.First()))
+            if (tournamentRegistration.Count > 0 && IsAlreadyFullTournament(tournamentRegistration.First(), tournamentRegistration.Count))
             {
                 throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
             }
@@ -102,9 +102,11 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRegistrationRepository.UpdateEntity(tournamentRegistration, this.UserContextReader);
         }
 
-        private static bool IsAlreadyFullTournament(TournamentRegistrationEntity tournamentRegistration)
+        private static bool IsAlreadyFullTournament(TournamentRegistrationEntity tournamentRegistration, int numberOfNewParticipient)
         {
-            return tournamentRegistration.Tournament != null && tournamentRegistration.Tournament.TournamentParticipants != null && tournamentRegistration.Tournament!.MaxPlayers >= tournamentRegistration.Tournament.TournamentParticipants.Count;
+            return tournamentRegistration.Tournament != null
+                && tournamentRegistration.Tournament.TournamentParticipants != null
+                && tournamentRegistration.Tournament!.MaxPlayers < (tournamentRegistration.Tournament.TournamentParticipants.Count + numberOfNewParticipient);
         }
 
         protected override IRepository<TournamentRegistrationEntity> GetRepository()

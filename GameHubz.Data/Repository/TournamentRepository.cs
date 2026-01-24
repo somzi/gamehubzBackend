@@ -70,10 +70,11 @@ namespace GameHubz.Data.Repository
             Guid userId,
             List<Guid> hubIds,
             TournamentUserStatus filter,
+            RegionType region,
             int page,
             int pageSize)
         {
-            var query = ApplyFilters(userId, hubIds, filter);
+            var query = ApplyFilters(userId, hubIds, region, filter);
 
             return await query
                 .OrderByDescending(x => x.StartDate)
@@ -96,9 +97,10 @@ namespace GameHubz.Data.Repository
         public async Task<int> GetCountByHubs(
             Guid userId,
             List<Guid> hubIds,
+            RegionType region,
             TournamentUserStatus filter)
         {
-            var query = ApplyFilters(userId, hubIds, filter);
+            var query = ApplyFilters(userId, hubIds, region, filter);
             return await query.CountAsync();
         }
 
@@ -153,18 +155,19 @@ namespace GameHubz.Data.Repository
                       MaxPlayers = x.MaxPlayers!.Value,
                       Description = x.Description ?? string.Empty,
                       Rules = x.Rules ?? string.Empty,
-                      CreatedBy = x.CreatedBy!.Value
+                      CreatedBy = x.CreatedBy!.Value,
                   }).FirstOrDefaultAsync();
         }
 
         private IQueryable<TournamentEntity> ApplyFilters(
             Guid userId,
             List<Guid> hubIds,
+            RegionType region,
             TournamentUserStatus filter)
         {
             var query = this.BaseDbSet()
                 .AsNoTracking()
-                .Where(x => hubIds.Contains(x.HubId!.Value));
+                .Where(x => hubIds.Contains(x.HubId!.Value) && (x.Region == region || x.Region == RegionType.GLOBAL));
 
             switch (filter)
             {
@@ -209,6 +212,14 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                     .CountAsync(t => t.WinnerUserId == userId);
+        }
+
+        public async Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .AnyAsync(t => t.Id == id &&
+                   (t.TournamentParticipants!.Any(tp => tp.UserId == userId) ||
+                    t.TournamentRegistrations!.Any(tr => tr.UserId == userId)));
         }
     }
 }

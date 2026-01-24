@@ -37,6 +37,11 @@ namespace GameHubz.Data.Base
                 .SingleOrDefaultAsync(e => e.Id == id);
         }
 
+        Task IRepository<TEntity>.DetachEntity(TEntity entity)
+        {
+            return this.DetachEntity(entity);
+        }
+
         public async Task<TEntity> GetByIdOrThrowIfNull(Guid id)
         {
             var entity = await this.DbSetForSingle()

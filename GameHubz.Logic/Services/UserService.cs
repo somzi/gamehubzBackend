@@ -289,5 +289,17 @@ namespace GameHubz.Logic.Services
                 throw new Exception(ex.Message);
             }
         }
+
+        public async Task UpdateInfo(UserUpdateInfoRequest request)
+        {
+            var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(request.UserId);
+
+            user.Nickname = request.Nickname;
+            user.Username = request.Username;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+
+            await this.SaveAsync();
+        }
     }
 }

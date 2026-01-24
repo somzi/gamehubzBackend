@@ -22,10 +22,10 @@ namespace GameHubz.Api.Controllers
             this.bracketService = bracketService;
         }
 
-        [HttpPost("{tournamentId}/createBracket")]
-        public async Task<IActionResult> CreateBracket(Guid tournamentId)
+        [HttpPost("createBracket")]
+        public async Task<IActionResult> CreateBracket([FromBody] CreateBracketRequest request)
         {
-            await this.bracketService.CreateBracket(tournamentId);
+            await this.bracketService.CreateBracket(request);
 
             return Ok();
         }
@@ -76,6 +76,14 @@ namespace GameHubz.Api.Controllers
             var data = await this.Service.GetOverview(id);
 
             return Ok(data);
+        }
+
+        [HttpGet("{id}/user/{userId}/registred")]
+        public async Task<IActionResult> CheckIsUserRegistred(Guid id, Guid userId)
+        {
+            var isUserAlreadyRegistred = await this.Service.CheckIsUserRegistred(id, userId);
+
+            return Ok(isUserAlreadyRegistred);
         }
     }
 }

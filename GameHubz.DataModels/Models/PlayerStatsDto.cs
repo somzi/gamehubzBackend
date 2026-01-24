@@ -6,7 +6,7 @@
         public int Wins { get; set; }
         public int Losses { get; set; }
 
-        public int TournamentWon { get; set; }
+        public int TournamentsWon { get; set; }
 
         public int Draws => TotalMatches - Wins - Losses;
 

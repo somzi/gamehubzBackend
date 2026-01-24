@@ -117,7 +117,7 @@ namespace GameHubz.Logic.Services
             //    return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
             //}
 
-            var refreshToken = await this.GenerateAndAddRefreshTokenForUser(user.Id!.Value);
+            var refreshToken = await this.GenerateAndAddRefreshTokenForUser(user!.Id!.Value);
 
             var accessToken = await this.accessTokenFactory.GenerateEncodedToken(CreateTokenUserInfo(user));
 
@@ -207,6 +207,7 @@ namespace GameHubz.Logic.Services
                 UserId = user.Id!.Value,
                 Username = user.FirstName,
                 Role = user.UserRole.SystemName,
+                Region = (int)user.Region
             };
         }
 

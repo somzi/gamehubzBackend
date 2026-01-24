@@ -22,6 +22,8 @@ namespace GameHubz.DataModels.Models
 
         public string Username { get; set; } = string.Empty;
 
+        public string Nickname { get; set; } = string.Empty;
+
         public RegionType Region { get; set; }
 
         public List<UserHubDto>? UserHubs { get; set; } = new();
@@ -32,7 +34,5 @@ namespace GameHubz.DataModels.Models
 
         public List<UserSocialDto>? UserSocials { get; set; } = new();
         public List<TournamentParticipantDto>? TournamentParticipants { get; set; } = new();
-
-
     }
 }

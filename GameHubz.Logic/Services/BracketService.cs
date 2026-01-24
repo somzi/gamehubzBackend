@@ -65,9 +65,9 @@ namespace GameHubz.Logic.Services
         /// <summary>
         /// Main entry point - generates structure based on tournament format
         /// </summary>
-        public async Task CreateBracket(Guid tournamentId, int? groupsCount = null, int? qualifiersPerGroup = null)
+        public async Task CreateBracket(CreateBracketRequest request)
         {
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(request.TournamentId);
 
             if (tournament == null)
                 throw new Exception("Tournament not found");
@@ -79,21 +79,21 @@ namespace GameHubz.Logic.Services
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
-                    await GenerateSingleEliminationBracket(tournamentId);
+                    await GenerateSingleEliminationBracket(request.TournamentId);
                     break;
 
                 case TournamentFormat.League:
-                    await GenerateLeagueTournament(tournamentId, doubleRoundRobin: false);
+                    await GenerateLeagueTournament(request.TournamentId, doubleRoundRobin: false);
                     break;
 
                 case TournamentFormat.DoubleElimination:
-                    await GenerateDoubleEliminationBracket(tournamentId);
+                    await GenerateDoubleEliminationBracket(request.TournamentId);
                     break;
 
                 case TournamentFormat.GroupStageWithKnockout:
-                    if (!groupsCount.HasValue || !qualifiersPerGroup.HasValue)
+                    if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new Exception("Group count and qualifiers count are required for this format.");
-                    await GenerateGroupStageWithKnockout(tournamentId, groupsCount.Value, qualifiersPerGroup.Value);
+                    await GenerateGroupStageWithKnockout(request.TournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value);
                     break;
 
                 default:
@@ -123,9 +123,8 @@ namespace GameHubz.Logic.Services
             // =========================================================================
             // 3. RANDOMIZE (SHUFFLE)
             // =========================================================================
-            var rng = new Random();
             // Shuffle the list randomly
-            var shuffledParticipants = participants.OrderBy(a => rng.Next()).ToList();
+            var shuffledParticipants = participants.OrderBy(a => Guid.NewGuid()).ToList();
 
             // Assign Seeds based on this random order (1, 2, 3, 4...)
             // This ensures "Standard Seeding" logic works on a random set of people
@@ -170,9 +169,8 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             // 1. Load & Shuffle
-            var rng = new Random();
             var participants = tournament!.TournamentParticipants?
-                .OrderBy(x => rng.Next()) // <--- RANDOMIZE HERE
+                .OrderBy(x => Guid.NewGuid()) // <--- RANDOMIZE HERE
                 .ToList();
 
             // Create Stage
@@ -261,6 +259,13 @@ namespace GameHubz.Logic.Services
             // 3. Shuffle & Distribute Players (Snake Draft)
             var seededParticipants = participants.OrderBy(p => p.Seed ?? 999).ToList();
 
+            // ✅ FIX: Create a dictionary to track which participants go to which group
+            var groupParticipants = new Dictionary<Guid, List<TournamentParticipantEntity>>();
+            foreach (var group in groups)
+            {
+                groupParticipants[group.Id!.Value] = new List<TournamentParticipantEntity>();
+            }
+
             for (int i = 0; i < seededParticipants.Count; i++)
             {
                 // Snake draft logic for fair distribution
@@ -273,23 +278,36 @@ namespace GameHubz.Logic.Services
 
                 // Update Participant
                 participant.TournamentGroupId = targetGroup.Id;
-                participant.Points = 0; participant.Wins = 0; participant.Draws = 0;
-                participant.Losses = 0; participant.GoalsFor = 0; participant.GoalsAgainst = 0;
+                participant.Points = 0;
+                participant.Wins = 0;
+                participant.Draws = 0;
+                participant.Losses = 0;
+                participant.GoalsFor = 0;
+                participant.GoalsAgainst = 0;
 
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
-                // Add to local list for match gen
-                if (targetGroup.Participants == null) targetGroup.Participants = new List<TournamentParticipantEntity>();
-                targetGroup.Participants.Add(participant);
+                // ✅ FIX: Add to dictionary instead of group.Participants directly
+                groupParticipants[targetGroup.Id.Value].Add(participant);
             }
 
             // 4. Generate Matches per Group
             var allMatches = new List<MatchEntity>();
             foreach (var group in groups)
             {
-                if (group.Participants == null || group.Participants.Count < 2) continue;
+                // ✅ FIX: Use the dictionary to get participants for this group
+                var participantsInGroup = groupParticipants[group.Id!.Value];
 
-                var groupMatches = GenerateRoundRobinMatches(tournamentId, groupStage.Id.Value, group.Participants, false);
+                if (participantsInGroup.Count < 2)
+                    continue;
+
+                var groupMatches = GenerateRoundRobinMatches(
+                    tournamentId,
+                    groupStage.Id.Value,
+                    participantsInGroup,  // ✅ Pass the correct list
+                    false
+                );
+
                 foreach (var m in groupMatches)
                 {
                     m.TournamentGroupId = group.Id;
@@ -360,18 +378,24 @@ namespace GameHubz.Logic.Services
                 winnerUserId = match.HomeParticipant!.UserId;
             }
             else if (request.AwayScore > request.HomeScore)
-            { 
+            {
                 winnerParticipientId = match.AwayParticipantId;
                 winnerUserId = match.AwayParticipant!.UserId;
             }
 
             match.WinnerParticipantId = winnerParticipientId;
 
-            // 4. Apply Rules
+            // 4. Update match entity
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+
+            // 5. Apply Rules
             if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
             {
                 // League/Group: Update Points
                 await UpdateLeagueStatistics(match, request.HomeScore, request.AwayScore);
+
+                // ✅ CRITICAL: Save changes BEFORE checking if group stage is complete
+                await this.SaveAsync();
 
                 // If Group Stage, check if we need to advance to Knockout
                 if (match.TournamentStage?.Type == StageType.GroupStage)
@@ -388,10 +412,10 @@ namespace GameHubz.Logic.Services
                 // Bracket: Advance Winner
                 if (winnerParticipientId == null) throw new Exception("Draws not allowed in elimination.");
                 await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId);
-            }
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
+                // ✅ Save after advancing winner
+                await this.SaveAsync();
+            }
         }
 
         private async Task CheckAndCompleteLeague(Guid tournamentId)
@@ -416,33 +440,50 @@ namespace GameHubz.Logic.Services
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
         {
-            // 1. Get stage with all data (Assumes Repo method: GetWithGroupsAndMatches)
-            var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetWithGroupsAndMatches(groupStageId);
-            if (groupStage == null) return;
+            // 1. Get ALL matches for this stage to check completion
+            var allGroupMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(groupStageId);
 
             // 2. Check if ALL group matches are completed
-            // If repository didn't load matches, you might need: var allMatches = await _matchRepo.GetByStageId(groupStageId);
-            if (groupStage.Matches == null || groupStage.Matches.Any(m => m.Status != MatchStatus.Completed))
-                return; // Not ready yet
+            if (allGroupMatches == null || !allGroupMatches.Any())
+            {
+                return; // No matches yet
+            }
 
-            // 3. Get knockout stage (Assumes Repo method: GetByOrder(tournamentId, order))
-            // Or use generic Get and filter in memory if necessary, but repo method is better.
+            bool allMatchesComplete = allGroupMatches.All(m => m.Status == MatchStatus.Completed);
+
+            if (!allMatchesComplete)
+            {
+                return; // Still have pending matches
+            }
+
+            // 3. Get knockout stage
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
 
-            if (knockoutStage == null || knockoutStage.Type != StageType.SingleEliminationBracket) return;
+            if (knockoutStage == null || knockoutStage.Type != StageType.SingleEliminationBracket)
+            {
+                return; // No knockout stage configured
+            }
 
             // 4. Check if bracket already generated (prevent duplicates)
-            // Assumes Repo method: HasMatches(stageId)
             bool hasMatches = await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value);
-            if (hasMatches) return;
+            if (hasMatches)
+            {
+                return; // Already generated
+            }
 
-            // 5. Calculate Qualifiers with Ranking
+            // 5. Get the group stage with full data
+            var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetWithGroupsAndMatches(groupStageId);
+            if (groupStage == null || groupStage.TournamentGroups == null)
+            {
+                return;
+            }
+
+            // 6. Calculate Qualifiers with Ranking
             var qualifiers = new List<(TournamentParticipantEntity participant, int groupRank, string groupName)>();
             int qualifiersPerGroup = groupStage.QualifiedPlayersCount ?? 1;
 
-            foreach (var group in groupStage.TournamentGroups!.OrderBy(g => g.Name))
+            foreach (var group in groupStage.TournamentGroups.OrderBy(g => g.Name))
             {
-                // Assumes Repo method: GetByGroupId
                 var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(group.Id!.Value);
 
                 var sorted = groupParticipants
@@ -451,14 +492,20 @@ namespace GameHubz.Logic.Services
                     .ThenByDescending(p => p.GoalsFor)
                     .ToList();
 
-                // Track rank
+                // Track rank - Take top N qualifiers per group
                 for (int rank = 0; rank < Math.Min(qualifiersPerGroup, sorted.Count); rank++)
                 {
                     qualifiers.Add((sorted[rank], rank + 1, group.Name));
                 }
             }
 
-            // 6. Seed Qualifiers: All 1st place finishers first, then all 2nd place
+            // Validate we have enough qualifiers
+            if (qualifiers.Count < 2)
+            {
+                throw new Exception("Not enough qualifiers to create knockout bracket.");
+            }
+
+            // 7. Seed Qualifiers: All 1st place finishers first, then all 2nd place, etc.
             var seededQualifiers = qualifiers
                 .OrderBy(q => q.groupRank)    // 1st place winners first
                 .ThenBy(q => q.groupName)     // Then alphabetically by group
@@ -469,18 +516,26 @@ namespace GameHubz.Logic.Services
                 })
                 .ToList();
 
-            // 7. Update seeds in DB
+            // 8. Update seeds in DB - Detach first to avoid tracking conflicts
             foreach (var p in seededQualifiers)
             {
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
+                // Detach the entity if it's already being tracked
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(p);
+
+                // Re-attach and update
+                var freshParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(p.Id!.Value);
+                freshParticipant.Seed = p.Seed;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(freshParticipant, this.UserContextReader);
             }
 
-            // 8. Generate Bracket
+            // 9. Generate Bracket using standard seeding
             var bracketSeeded = GetStandardBracketSeeding(seededQualifiers);
             var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded);
 
+            // 10. Save all knockout matches
             foreach (var m in matches)
             {
+                m.Status = MatchStatus.Pending; // ✅ Set matches as ready to play
                 await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
             }
 
@@ -616,12 +671,44 @@ namespace GameHubz.Logic.Services
         {
             var allMatches = new List<MatchEntity>();
             int n = participants.Count;
+
+            // Special case: only 2 players - just one match needed
+            if (n == 2)
+            {
+                var m = CreateMatch(tournamentId, stageId, 1, MatchStage.GroupStage, 0);
+                m.HomeParticipantId = participants[0].Id;
+                m.AwayParticipantId = participants[1].Id;
+                allMatches.Add(m);
+
+                if (doubleRoundRobin)
+                {
+                    var ret = CreateMatch(tournamentId, stageId, 2, MatchStage.GroupStage, 1);
+                    ret.HomeParticipantId = participants[1].Id;
+                    ret.AwayParticipantId = participants[0].Id;
+                    allMatches.Add(ret);
+                }
+
+                return allMatches;
+            }
+
+            // Handle odd number of players
             bool hasBye = n % 2 != 0;
             if (hasBye) n++;
 
             int totalRounds = n - 1;
             int matchesPerRound = n / 2;
-            var circle = participants.ToList();
+            var circle = new List<TournamentParticipantEntity>();
+
+            // Create working list (with null for bye if needed)
+            for (int i = 0; i < participants.Count; i++)
+            {
+                circle.Add(participants[i]);
+            }
+            if (hasBye)
+            {
+                circle.Add(null!); // Add placeholder for bye
+            }
+
             int matchOrder = 0;
 
             for (int round = 1; round <= totalRounds; round++)
@@ -630,38 +717,45 @@ namespace GameHubz.Logic.Services
                 {
                     int homeIndex = match;
                     int awayIndex = n - 1 - match;
-                    if (hasBye && (homeIndex >= participants.Count || awayIndex >= participants.Count)) continue;
 
-                    var homeP = homeIndex < participants.Count ? circle[homeIndex] : null;
-                    var awayP = awayIndex < participants.Count ? circle[awayIndex] : null;
+                    var homeP = circle[homeIndex];
+                    var awayP = circle[awayIndex];
 
+                    // Skip if either player is a bye (null)
                     if (homeP != null && awayP != null)
                     {
                         var m = CreateMatch(tournamentId, stageId, round, MatchStage.GroupStage, matchOrder++);
-                        m.HomeParticipantId = homeP.Id; m.AwayParticipantId = awayP.Id;
+                        m.HomeParticipantId = homeP.Id;
+                        m.AwayParticipantId = awayP.Id;
                         allMatches.Add(m);
                     }
                 }
-                // Rotate
+
+                // Rotate for next round (keep first player fixed, rotate others)
                 if (round < totalRounds)
                 {
                     var temp = circle[n - 1];
-                    for (int i = n - 1; i > 1; i--) circle[i] = circle[i - 1];
+                    for (int i = n - 1; i > 1; i--)
+                    {
+                        circle[i] = circle[i - 1];
+                    }
                     circle[1] = temp;
                 }
             }
 
             if (doubleRoundRobin)
             {
-                int count = allMatches.Count;
-                for (int i = 0; i < count; i++)
+                int firstRoundMatchCount = allMatches.Count;
+                for (int i = 0; i < firstRoundMatchCount; i++)
                 {
                     var orig = allMatches[i];
                     var ret = CreateMatch(tournamentId, stageId, orig.RoundNumber!.Value + totalRounds, MatchStage.GroupStage, matchOrder++);
-                    ret.HomeParticipantId = orig.AwayParticipantId; ret.AwayParticipantId = orig.HomeParticipantId;
+                    ret.HomeParticipantId = orig.AwayParticipantId;
+                    ret.AwayParticipantId = orig.HomeParticipantId;
                     allMatches.Add(ret);
                 }
             }
+
             return allMatches;
         }
 

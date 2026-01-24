@@ -40,9 +40,13 @@ namespace GameHubz.Logic.Services
         {
             List<Guid> hubIds = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
 
-            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, request.Page, request.PageSize);
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, request.Status);
+            var userRegion = (RegionType)user.Region!.Value;
+
+            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, request.Page, request.PageSize);
+
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, request.Status);
 
             return new TournamentPagedResponse
             {
@@ -100,5 +104,12 @@ namespace GameHubz.Logic.Services
 
         protected override IRepository<TournamentEntity> GetRepository()
             => this.AppUnitOfWork.TournamentRepository;
+
+        public async Task<bool> CheckIsUserRegistred(Guid id, Guid userId)
+        {
+            var isUserAlreadyRegistred = await this.AppUnitOfWork.TournamentRepository.CheckIsUserIsRegistered(id, userId);
+
+            return isUserAlreadyRegistred;
+        }
     }
 }

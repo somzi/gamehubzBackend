@@ -50,6 +50,8 @@ namespace GameHubz.Logic.Tokens
                  identity.FindFirst(JwtClaimIdentifiers.Rol),
                  identity.FindFirst(JwtClaimIdentifiers.Id),
                  identity.FindFirst(ClaimTypes.Role),
+
+                new Claim("region", ((int)tokenUserInfo.Region).ToString())
             };
 
             // Create the JWT security token and encode it.
@@ -71,6 +73,7 @@ namespace GameHubz.Logic.Tokens
                             new Claim(JwtClaimIdentifiers.Id, tokenUserInfo.UserId.ToString()),
                             new Claim(JwtClaimIdentifiers.Rol, JwtClaims.ApiAccess),
                             new Claim(ClaimTypes.Role, tokenUserInfo.Role),
+                            new Claim("region", ((int)tokenUserInfo.Region).ToString())
                         ]);
         }
 
