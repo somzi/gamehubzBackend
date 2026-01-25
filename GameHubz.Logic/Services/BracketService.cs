@@ -4,12 +4,16 @@ namespace GameHubz.Logic.Services
 {
     public class BracketService : AppBaseService
     {
+        private readonly HubActivityService hubActivityService;
+
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
             IUserContextReader userContextReader,
-            ILocalizationService localizationService)
+            ILocalizationService localizationService,
+            HubActivityService hubActivityService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
+            this.hubActivityService = hubActivityService;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -99,6 +103,8 @@ namespace GameHubz.Logic.Services
                 default:
                     throw new Exception($"Tournament format {tournament.Format} not supported");
             }
+
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
         }
 
         #endregion 1. Tournament Generation Entry Points
@@ -436,6 +442,8 @@ namespace GameHubz.Logic.Services
             tournament.Status = TournamentStatus.Completed;
 
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
         }
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
@@ -630,6 +638,8 @@ namespace GameHubz.Logic.Services
                 tournament.WinnerUserId = winnerUserId;
                 tournament.Status = TournamentStatus.Completed;
                 await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
             }
         }
 

@@ -5,6 +5,8 @@ namespace GameHubz.Logic.Services
 {
     public class TournamentService : AppBaseServiceGeneric<TournamentEntity, TournamentDto, TournamentPost, TournamentEdit>
     {
+        private readonly HubActivityService hubActivityService;
+
         public TournamentService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -12,7 +14,8 @@ namespace GameHubz.Logic.Services
             IValidator<TournamentEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            HubActivityService hubActivityService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -21,6 +24,7 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.hubActivityService = hubActivityService;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -110,6 +114,22 @@ namespace GameHubz.Logic.Services
             var isUserAlreadyRegistred = await this.AppUnitOfWork.TournamentRepository.CheckIsUserIsRegistered(id, userId);
 
             return isUserAlreadyRegistred;
+        }
+
+        public override async Task<TournamentDto> SaveEntity(TournamentPost inputDto, bool doSave = true)
+        {
+            TournamentDto model = await this.ServiceFunctions.SaveEntity(
+                this.GetRepository(),
+                this,
+                this.Validator,
+                inputDto,
+                this.GetEntityById,
+                this.BeforeSave,
+                this.BeforeDtoMapToEntity);
+
+            await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+
+            return model;
         }
     }
 }

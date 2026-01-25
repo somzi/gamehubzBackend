@@ -24,9 +24,11 @@ namespace GameHubz.Logic.Mappings
             mapperConfiguration.AddProfile(new MatchProfile(localizationService));
             mapperConfiguration.AddProfile(new UserSocialProfile(localizationService));
 
-mapperConfiguration.AddProfile(new TournamentStageProfile(localizationService));
-mapperConfiguration.AddProfile(new TournamentGroupProfile(localizationService));
-mapperConfiguration.AddProfile(new TournamentParticipantProfile(localizationService));
+            mapperConfiguration.AddProfile(new TournamentStageProfile(localizationService));
+            mapperConfiguration.AddProfile(new TournamentGroupProfile(localizationService));
+            mapperConfiguration.AddProfile(new TournamentParticipantProfile(localizationService));
+
+            mapperConfiguration.AddProfile(new HubActivityProfile(localizationService));
 
             // DO NOT DELETE - Generated Mappers Tag
         }

@@ -29,6 +29,8 @@ namespace GameHubz.Logic.Interfaces
         ITournamentGroupRepository TournamentGroupRepository { get; }
         ITournamentParticipantRepository TournamentParticipantRepository { get; }
 
+        IHubActivityRepository HubActivityRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

@@ -1,4 +1,4 @@
-﻿using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Domain;
 using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Context
@@ -236,6 +236,8 @@ namespace GameHubz.Data.Context
                 .WithMany()
                 .HasForeignKey(m => m.NextMatchLoserBracketId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<HubActivityEntity>().ToTable("HubActivity").HasQueryFilter(x => x.IsDeleted == false);
 
             // DO NOT DELETE - Generated Configuration Tag
         }
