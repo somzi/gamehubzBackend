@@ -33,5 +33,12 @@ namespace GameHubz.Logic.Services
         {
             await cacheService.RemoveAsync($"user_profile:{inputDto.UserId}");
         }
+
+        protected override async Task BeforeDelete(Guid entityId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            await cacheService.RemoveAsync($"user_profile:{user.UserId}");
+        }
     }
 }
