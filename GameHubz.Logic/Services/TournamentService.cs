@@ -1,11 +1,14 @@
-using FluentValidation;
+﻿using FluentValidation;
+using GameHubz.Common.Interfaces;
 using GameHubz.DataModels.Enums;
+using System;
 
 namespace GameHubz.Logic.Services
 {
     public class TournamentService : AppBaseServiceGeneric<TournamentEntity, TournamentDto, TournamentPost, TournamentEdit>
     {
         private readonly HubActivityService hubActivityService;
+        private readonly ICacheService cacheService;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -15,7 +18,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            HubActivityService hubActivityService) : base(
+            HubActivityService hubActivityService,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -25,38 +29,64 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.hubActivityService = hubActivityService;
+            this.cacheService = cacheService;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
         {
-            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(hubId, request.Status, request.Page, request.PageSize);
+            string statusKey = request.Status.ToString();
+            string cacheKey = $"tournaments:hub:{hubId}:status:{statusKey}:p:{request.Page}:s:{request.PageSize}";
 
+            var cachedResponse = await cacheService.GetAsync<TournamentPagedResponse>(cacheKey);
+            if (cachedResponse != null)
+            {
+                return cachedResponse;
+            }
+
+            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(hubId, request.Status, request.Page, request.PageSize);
             var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetByHubCount(hubId, request.Status);
 
-            return new TournamentPagedResponse
+            var response = new TournamentPagedResponse
             {
                 Count = tournamentsCount,
                 Tournaments = tournaments
             };
+
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(3));
+
+            return response;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentPagedForUser(Guid userId, UserTournamentRequest request)
         {
+            string statusKey = request.Status.ToString();
+
+            string cacheKey = $"user_feed:{userId}:st:{statusKey}:p:{request.Page}:s:{request.PageSize}";
+
+            var cachedResponse = await cacheService.GetAsync<TournamentPagedResponse>(cacheKey);
+            if (cachedResponse != null)
+            {
+                return cachedResponse;
+            }
+
             List<Guid> hubIds = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
 
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-
             var userRegion = (RegionType)user.Region!.Value;
 
             List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, request.Page, request.PageSize);
 
             var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, request.Status);
 
-            return new TournamentPagedResponse
+            var response = new TournamentPagedResponse
             {
                 Count = tournamentsCount,
                 Tournaments = tournaments
             };
+
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(3));
+
+            return response;
         }
 
         public async Task<TournamentDto> GetDetailsById(Guid id)
@@ -128,6 +158,8 @@ namespace GameHubz.Logic.Services
                 this.BeforeDtoMapToEntity);
 
             await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+
+            await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");
 
             return model;
         }

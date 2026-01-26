@@ -5,19 +5,29 @@ namespace GameHubz.Logic.Services
     public class BracketService : AppBaseService
     {
         private readonly HubActivityService hubActivityService;
+        private readonly ICacheService cacheService;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            HubActivityService hubActivityService)
+            HubActivityService hubActivityService,
+            ICacheService cacheService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
+            this.cacheService = cacheService;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
         {
+            string cacheKey = $"bracket:{tournamentId}";
+            var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
+            if (cachedBracket != null)
+            {
+                return cachedBracket; // Vraćamo odmah, baza se ne dira!
+            }
+
             // NOTE: Ensure your Repo has GetWithFullDetails or similar to load Stages -> Groups/Matches -> Participants -> User
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId);
 
@@ -60,6 +70,8 @@ namespace GameHubz.Logic.Services
                     response.Stages.Add(stageDto);
                 }
             }
+
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(30));
 
             return response;
         }
@@ -422,6 +434,14 @@ namespace GameHubz.Logic.Services
                 // ✅ Save after advancing winner
                 await this.SaveAsync();
             }
+
+            if (match.HomeParticipant?.UserId != null)
+                await cacheService.RemoveAsync($"player_stats:{match.HomeParticipant.UserId}");
+
+            if (match.AwayParticipant?.UserId != null)
+                await cacheService.RemoveAsync($"player_stats:{match.AwayParticipant.UserId}");
+
+            await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
         }
 
         private async Task CheckAndCompleteLeague(Guid tournamentId)

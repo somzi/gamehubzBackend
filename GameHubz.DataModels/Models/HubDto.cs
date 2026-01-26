@@ -10,7 +10,6 @@ namespace GameHubz.DataModels.Models
 
         public int NumberOfUsers { get; set; }
 
-
         public List<TournamentDto>? Tournaments { get; set; } = new();
         public int NumberOfTournaments { get; set; }
     }

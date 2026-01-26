@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Services
 {
     public class UserHubService : AppBaseServiceGeneric<UserHubEntity, UserHubDto, UserHubPost, UserHubEdit>
     {
+        private readonly ICacheService cacheService;
+
         public UserHubService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -11,7 +13,8 @@ namespace GameHubz.Logic.Services
             IValidator<UserHubEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -20,6 +23,7 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.cacheService = cacheService;
         }
 
         public async Task Unfollow(Guid userId, Guid hubId)
@@ -29,6 +33,15 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.UserHubRepository.HardDeleteEntity(userHub);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"dashboard_highlights:{userId}");
+            await cacheService.RemoveAsync($"hubs_overview_all");
+        }
+
+        protected override async Task BeforeSave(UserHubEntity entity, UserHubPost inputDto, bool isNew)
+        {
+            await cacheService.RemoveAsync($"dashboard_highlights:{inputDto.UserId}");
+            await cacheService.RemoveAsync($"hubs_overview_all");
         }
 
         protected override IRepository<UserHubEntity> GetRepository()

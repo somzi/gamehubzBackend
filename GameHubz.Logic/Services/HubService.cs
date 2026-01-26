@@ -1,10 +1,11 @@
-using FluentValidation;
+﻿using FluentValidation;
 
 namespace GameHubz.Logic.Services
 {
     public class HubService : AppBaseServiceGeneric<HubEntity, HubDto, HubPost, HubEdit>
     {
         private readonly TournamentService tournamentService;
+        private readonly ICacheService cacheService;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -14,7 +15,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             IUserContextReader userContextReader,
             ServiceFunctions serviceFunctions,
-            TournamentService tournamentService)
+            TournamentService tournamentService,
+            ICacheService cacheService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -25,13 +27,24 @@ namespace GameHubz.Logic.Services
                   serviceFunctions)
         {
             this.tournamentService = tournamentService;
+            this.cacheService = cacheService;
         }
 
         public async Task<List<HubDto>> GetAll()
         {
-            var entities = await this.AppUnitOfWork.HubRepository.GetOverview();
+            string cacheKey = "hubs_overview_all";
 
-            return this.Mapper.Map<List<HubDto>>(entities);
+            var cachedHubs = await cacheService.GetAsync<List<HubDto>>(cacheKey);
+            if (cachedHubs != null)
+            {
+                return cachedHubs;
+            }
+
+            var dtos = await this.AppUnitOfWork.HubRepository.GetOverview();
+
+            await cacheService.SetAsync(cacheKey, dtos, TimeSpan.FromHours(1));
+
+            return dtos;
         }
 
         public async Task<List<HubOverviewDto>> GetByUserOwner(Guid id)

@@ -17,6 +17,7 @@ namespace GameHubz.Logic.Services
         private const int VerifyEmailTokenExpireHours = 48;
         private readonly EmailQueue emailQueue;
         private readonly TournamentService tournamentService;
+        private readonly ICacheService cacheService;
 
         public UserService(
             IUnitOfWorkFactory factory,
@@ -31,7 +32,8 @@ namespace GameHubz.Logic.Services
             DateTimeProvider dateTimeProvider,
             IPasswordHasher pbkdf2Hasher,
             EmailQueue emailQueue,
-            TournamentService tournamentService)
+            TournamentService tournamentService,
+            ICacheService cacheService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -47,6 +49,7 @@ namespace GameHubz.Logic.Services
             this.passwordHasher = pbkdf2Hasher;
             this.emailQueue = emailQueue;
             this.tournamentService = tournamentService;
+            this.cacheService = cacheService;
         }
 
         public async Task AddUpdateUserAnonymously(UserEntity userEntity)
@@ -300,6 +303,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"user_profile:{request.UserId}");
         }
     }
 }

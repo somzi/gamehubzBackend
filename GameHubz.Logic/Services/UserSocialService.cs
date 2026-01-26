@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Services
 {
     public class UserSocialService : AppBaseServiceGeneric<UserSocialEntity, UserSocialDto, UserSocialPost, UserSocialEdit>
     {
+        private readonly ICacheService cacheService;
+
         public UserSocialService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -11,7 +13,8 @@ namespace GameHubz.Logic.Services
             IValidator<UserSocialEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -20,9 +23,15 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.cacheService = cacheService;
         }
 
         protected override IRepository<UserSocialEntity> GetRepository()
             => this.AppUnitOfWork.UserSocialRepository;
+
+        protected override async Task BeforeSave(UserSocialEntity entity, UserSocialPost inputDto, bool isNew)
+        {
+            await cacheService.RemoveAsync($"user_profile:{inputDto.UserId}");
+        }
     }
 }

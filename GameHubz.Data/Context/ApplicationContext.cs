@@ -239,6 +239,27 @@ namespace GameHubz.Data.Context
 
             modelBuilder.Entity<HubActivityEntity>().ToTable("HubActivity").HasQueryFilter(x => x.IsDeleted == false);
 
+            modelBuilder.Entity<HubActivityEntity>()
+                .HasIndex(x => new { x.HubId, x.CreatedOn });
+
+            modelBuilder.Entity<TournamentEntity>()
+                .HasIndex(x => new { x.HubId, x.Status });
+
+            modelBuilder.Entity<TournamentEntity>()
+                .HasIndex(x => x.StartDate);
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasIndex(x => x.TournamentStageId);
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasIndex(x => x.TournamentGroupId);
+
+            modelBuilder.Entity<TournamentParticipantEntity>()
+                .HasIndex(x => x.UserId);
+
+            modelBuilder.Entity<TournamentParticipantEntity>()
+                .HasIndex(x => x.TournamentGroupId);
+
             // DO NOT DELETE - Generated Configuration Tag
         }
 

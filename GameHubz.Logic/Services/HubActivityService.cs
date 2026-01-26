@@ -1,10 +1,12 @@
-using FluentValidation;
+﻿using FluentValidation;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
 {
     public class HubActivityService : AppBaseServiceGeneric<HubActivityEntity, HubActivityDto, HubActivityPost, HubActivityEdit>
     {
+        private readonly ICacheService cacheService;
+
         public HubActivityService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -12,7 +14,8 @@ namespace GameHubz.Logic.Services
             IValidator<HubActivityEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -21,6 +24,7 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.cacheService = cacheService;
         }
 
         protected override IRepository<HubActivityEntity> GetRepository()
@@ -45,9 +49,25 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var userId = user.UserId;
 
-            var userHubs = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+            string cacheKey = $"dashboard_highlights:{userId}";
 
-            var activities = await this.AppUnitOfWork.HubActivityRepository.GetRecentActivity(userHubs, 10);
+            var activities = await cacheService.GetAsync<List<DashboardActivityDto>>(cacheKey);
+
+            if (activities == null)
+            {
+                var userHubs = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+
+                if (userHubs != null && userHubs.Any())
+                {
+                    activities = await this.AppUnitOfWork.HubActivityRepository.GetRecentActivity(userHubs, 10);
+                }
+                else
+                {
+                    activities = new List<DashboardActivityDto>();
+                }
+
+                await cacheService.SetAsync(cacheKey, activities, TimeSpan.FromMinutes(3));
+            }
 
             foreach (var activity in activities)
             {

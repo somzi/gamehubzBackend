@@ -1,20 +1,17 @@
-using FluentMigrator.Runner;
-using FluentMigrator.Runner.Initialization;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using NLog.Web;
-using GameHubz.Api.BackgroundTasks;
+﻿using GameHubz.Api.BackgroundTasks;
 using GameHubz.Api.Middleware;
 using GameHubz.Api.Startup;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.Data.UnitOfWork;
-using GameHubz.DataMigrations;
 using GameHubz.DataModels.Config.RabbitMqConfig;
 using GameHubz.Localization;
 using GameHubz.Logic;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Mappings;
+using GameHubz.Logic.Services;
+using Microsoft.EntityFrameworkCore;
+using NLog.Web;
 
 namespace GameHubz.Api
 {
@@ -44,6 +41,15 @@ namespace GameHubz.Api
             builder.Services.AddHttpContextAccessor();
 
             builder.Services.AddHostedService<SendEmailTask>();
+
+            builder.Services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = builder.Configuration.GetConnectionString("Redis");
+                options.InstanceName = "GameHubz_"; // Ovo dodaje prefix svim ključevima (korisno da se ne pomeša sa drugim aplikacijama)
+            });
+
+            // 2. Registracija tvog servisa
+            builder.Services.AddScoped<ICacheService, RedisCacheService>();
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);

@@ -1,3 +1,4 @@
+﻿using Azure.Core;
 using FluentValidation;
 using GameHubz.DataModels.Enums;
 
@@ -6,6 +7,7 @@ namespace GameHubz.Logic.Services
     public class TournamentRegistrationService : AppBaseServiceGeneric<TournamentRegistrationEntity, TournamentRegistrationDto, TournamentRegistrationPost, TournamentRegistrationEdit>
     {
         private readonly TournamentParticipantService tournamentParticipantService;
+        private readonly ICacheService cacheService;
 
         public TournamentRegistrationService(
             IUnitOfWorkFactory factory,
@@ -15,7 +17,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            TournamentParticipantService tournamentParticipantService) : base(
+            TournamentParticipantService tournamentParticipantService,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -25,6 +28,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.tournamentParticipantService = tournamentParticipantService;
+            this.cacheService = cacheService;
         }
 
         protected override async Task BeforeDtoMapToEntity(TournamentRegistrationPost inputDto, bool isNew)
@@ -44,10 +48,16 @@ namespace GameHubz.Logic.Services
             }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
-
             await CreateTournamentParticipant(tournamentRegistration);
 
             await this.SaveAsync();
+
+            if (tournamentRegistration.UserId.HasValue)
+            {
+                await cacheService.RemoveAsync($"player_tournaments:{tournamentRegistration.UserId}");
+                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:AvailableToJoin:p:0:s:10");
+                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:Upcoming:p:0:s:10");
+            }
         }
 
         public async Task ApproveRegistrations(List<Guid> registrationId)
@@ -66,6 +76,16 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
+
+            foreach (var registration in tournamentRegistration)
+            {
+                if (registration.UserId.HasValue)
+                {
+                    // Ovo je jako brza operacija u Redisu, ne brini za performanse petlje
+                    await cacheService.RemoveAsync($"player_tournaments:{registration.UserId}");
+                    await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
+                }
+            }
         }
 
         public async Task RejectRegistration(Guid registrationId)
