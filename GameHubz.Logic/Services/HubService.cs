@@ -134,6 +134,24 @@ namespace GameHubz.Logic.Services
             return this.Mapper.Map<HubOverviewDto>(hub);
         }
 
+        public async Task Create(HubPost request)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var hub = new HubEntity
+            {
+                Name = request.Name,
+                Description = request.Description,
+                UserId = user.UserId
+            };
+
+            await this.AppUnitOfWork.HubRepository.AddEntity(hub, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"hubs_overview_all");
+        }
+
         protected override IRepository<HubEntity> GetRepository()
         {
             return this.AppUnitOfWork.HubRepository;

@@ -53,5 +53,13 @@ namespace GameHubz.Api.Controllers
 
             return result;
         }
+
+        [HttpPost("create")]
+        public async Task<IActionResult> Create([FromBody] HubPost request)
+        {
+            await hubService.Create(request);
+
+            return Ok();
+        }
     }
 }
