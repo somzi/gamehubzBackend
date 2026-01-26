@@ -1,7 +1,5 @@
 ﻿using FluentValidation;
-using GameHubz.Common.Interfaces;
 using GameHubz.DataModels.Enums;
-using System;
 
 namespace GameHubz.Logic.Services
 {
@@ -160,6 +158,7 @@ namespace GameHubz.Logic.Services
             await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
             await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");
+            await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
         }

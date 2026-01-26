@@ -184,6 +184,8 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.UserHubRepository.AddEntity(entity, UserContextReader);
 
+            await cacheService.RemoveAsync($"user_hubs_list:{userId}");
+
             await this.SaveAsync();
         }
 

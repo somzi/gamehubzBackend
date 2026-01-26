@@ -36,19 +36,33 @@ namespace GameHubz.Data.Repository
                     Description = x.Description,
                     UserId = x.UserId,
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments!= null ? x.Tournaments.Count() : 0,
+                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName
                 })
                 .ToListAsync();
         }
 
-        public async Task<HubEntity> GetWithDetailsById(Guid id)
+        public async Task<HubOverviewDto?> GetOverviewDtoById(Guid hubId)
         {
             return await this.BaseDbSet()
-               .Include(x => x.UserHubs)
-               .Include(x => x.Tournaments)
-               .Where(x => x.Id == id)
-               .SingleAsync();
+                .Where(x => x.Id == hubId)
+                .Select(x => new HubOverviewDto
+                {
+                    Id = x.Id!.Value,
+                    Name = x.Name,
+                    Description = x.Description,
+                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
+                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
+                    UserId = x.UserId
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        public Task<bool> IsUserFollowingHub(Guid userId, Guid id)
+        {
+            return this.BaseDbSet()
+                .Where(x => x.Id == id)
+                .AnyAsync(x => x.UserHubs != null && x.UserHubs.Any(uh => uh.UserId == userId));
         }
     }
 }

@@ -56,18 +56,61 @@ namespace GameHubz.Logic.Services
 
         public async Task<HubOverviewDto> GetOverviewById(Guid id)
         {
-            var entity = await this.AppUnitOfWork.HubRepository.GetWithDetailsById(id);
-
-            var hubOverviewDto = this.Mapper.Map<HubOverviewDto>(entity);
-
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var isUserFollowHub = entity.UserHubs!.Select(x => x.UserId).Any(x => x == user.UserId);
-            var isUserOwner = entity.UserId == user.UserId;
-            hubOverviewDto.IsUserFollowHub = isUserFollowHub;
-            hubOverviewDto.IsUserOwner = isUserOwner;
+            var hubTask = GetCachedHubData(id);
 
-            return hubOverviewDto;
+            var isFollowingTask = IsUserFollowingCached(user.UserId, id);
+
+            await Task.WhenAll(hubTask, isFollowingTask);
+
+            var hubDto = hubTask.Result;
+            var isFollowing = isFollowingTask.Result;
+
+            if (hubDto == null)
+            {
+                throw new Exception("Hub not found");
+            }
+
+            hubDto.IsUserOwner = hubDto.UserId == user.UserId;
+            hubDto.IsUserFollowHub = isFollowing;
+
+            return hubDto;
+        }
+
+        private async Task<HubOverviewDto?> GetCachedHubData(Guid hubId)
+        {
+            string key = $"hub_overview:{hubId}";
+
+            var cached = await cacheService.GetAsync<HubOverviewDto>(key);
+            if (cached != null) return cached;
+
+            var hubDto = await this.AppUnitOfWork.HubRepository.GetOverviewDtoById(hubId);
+
+            if (hubDto != null)
+            {
+                await cacheService.SetAsync(key, hubDto, TimeSpan.FromMinutes(10));
+            }
+
+            return hubDto;
+        }
+
+        private async Task<bool> IsUserFollowingCached(Guid userId, Guid hubId)
+        {
+            string key = $"user_hubs_list:{userId}";
+
+            var userHubs = await cacheService.GetAsync<HashSet<Guid>>(key);
+
+            if (userHubs == null)
+            {
+                var hubIdsList = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+
+                userHubs = new HashSet<Guid>(hubIdsList);
+
+                await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(15));
+            }
+
+            return userHubs.Contains(hubId);
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPaged(Guid id, TournamentRequest request)
@@ -85,6 +128,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"hub_overview:{request.Id}");
 
             return this.Mapper.Map<HubOverviewDto>(hub);
         }

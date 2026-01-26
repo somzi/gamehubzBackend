@@ -70,7 +70,7 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("follow")]
-        public async Task<IActionResult> GetByHubPaged([FromBody] HubFollowRequest request)
+        public async Task<IActionResult> FollowHub([FromBody] HubFollowRequest request)
         {
             await this.Service.FollowHub(request);
 

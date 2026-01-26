@@ -36,12 +36,16 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"dashboard_highlights:{userId}");
             await cacheService.RemoveAsync($"hubs_overview_all");
+            await cacheService.RemoveAsync($"user_hubs_list:{userId}");
+            await cacheService.RemoveAsync($"hub_overview:{hubId}");
         }
 
         protected override async Task BeforeSave(UserHubEntity entity, UserHubPost inputDto, bool isNew)
         {
             await cacheService.RemoveAsync($"dashboard_highlights:{inputDto.UserId}");
             await cacheService.RemoveAsync($"hubs_overview_all");
+            await cacheService.RemoveAsync($"user_hubs_list:{inputDto.UserId}");
+            await cacheService.RemoveAsync($"hub_overview:{inputDto.HubId}");
         }
 
         protected override IRepository<UserHubEntity> GetRepository()
