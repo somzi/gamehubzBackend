@@ -58,14 +58,12 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var hubTask = GetCachedHubData(id);
+            var hubTask = await GetCachedHubData(id);
 
-            var isFollowingTask = IsUserFollowingCached(user.UserId, id);
+            var isFollowingTask = await IsUserFollowingCached(user.UserId, id);
 
-            await Task.WhenAll(hubTask, isFollowingTask);
-
-            var hubDto = hubTask.Result;
-            var isFollowing = isFollowingTask.Result;
+            var hubDto = hubTask;
+            var isFollowing = isFollowingTask;
 
             if (hubDto == null)
             {
@@ -105,7 +103,7 @@ namespace GameHubz.Logic.Services
             {
                 var hubIdsList = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
 
-                userHubs = new HashSet<Guid>(hubIdsList);
+                userHubs = [.. hubIdsList];
 
                 await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(15));
             }
@@ -155,6 +153,42 @@ namespace GameHubz.Logic.Services
         protected override IRepository<HubEntity> GetRepository()
         {
             return this.AppUnitOfWork.HubRepository;
+        }
+
+        public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId)
+        {
+            string cacheKey = $"hubs:user:{userId}:joined";
+
+            var cachedHubs = await cacheService.GetAsync<IEnumerable<HubDto>>(cacheKey);
+
+            if (cachedHubs != null)
+            {
+                return cachedHubs;
+            }
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, true);
+
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+
+            return data;
+        }
+
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId)
+        {
+            string cacheKey = $"hubs:user:{userId}:discovery";
+
+            var cachedHubs = await cacheService.GetAsync<IEnumerable<HubDto>>(cacheKey);
+
+            if (cachedHubs != null)
+            {
+                return cachedHubs;
+            }
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, false);
+
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+
+            return data;
         }
     }
 }

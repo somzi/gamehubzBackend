@@ -156,6 +156,8 @@ namespace GameHubz.Data.Repository
                       Description = x.Description ?? string.Empty,
                       Rules = x.Rules ?? string.Empty,
                       CreatedBy = x.CreatedBy!.Value,
+                      RegistrationDeadLine = x.RegistrationDeadline,
+                      HubId = x.HubId!.Value
                   }).FirstOrDefaultAsync();
         }
 

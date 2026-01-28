@@ -9,5 +9,7 @@ namespace GameHubz.Logic.Interfaces
         Task<HubOverviewDto?> GetOverviewDtoById(Guid hubId);
 
         Task<bool> IsUserFollowingHub(Guid userId, Guid id);
+
+        Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, bool joined);
     }
 }

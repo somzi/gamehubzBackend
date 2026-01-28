@@ -6,6 +6,7 @@ namespace GameHubz.DataModels.Models
     {
         public string Name { get; set; } = string.Empty;
         public Guid Id { get; set; }
+        public Guid HubId { get; set; }
         public RegionType Region { get; set; }
         public DateTime StartDate { get; set; }
         public int NumberOfParticipants { get; set; }
@@ -16,5 +17,6 @@ namespace GameHubz.DataModels.Models
         public string Description { get; set; } = string.Empty;
         public string Rules { get; set; } = string.Empty;
         public Guid CreatedBy { get; set; }
+        public DateTime? RegistrationDeadLine { get; set; }
     }
 }

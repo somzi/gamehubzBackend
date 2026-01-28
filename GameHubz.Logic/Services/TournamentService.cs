@@ -1,4 +1,5 @@
-﻿using FluentValidation;
+﻿using Azure;
+using FluentValidation;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
@@ -120,7 +121,16 @@ namespace GameHubz.Logic.Services
 
         public async Task<TournamentOverview> GetOverview(Guid id)
         {
+            string cacheKey = $"tournament:{id}";
+
+            var cachedTournament = await cacheService.GetAsync<TournamentOverview>(cacheKey);
+            if (cachedTournament != null)
+            {
+                return cachedTournament;
+            }
             var data = await this.AppUnitOfWork.TournamentRepository.GetOverview(id);
+
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(30));
 
             return data!;
         }
@@ -155,7 +165,14 @@ namespace GameHubz.Logic.Services
                 this.BeforeSave,
                 this.BeforeDtoMapToEntity);
 
-            await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+            if (inputDto.Id is null)
+            {
+                await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+            }
+            else
+            {
+                await cacheService.RemoveAsync($"tournament:{model.Id}");
+            }
 
             await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");

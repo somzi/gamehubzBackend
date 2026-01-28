@@ -61,5 +61,17 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpGet("user/{userId}/joined")]
+        public async Task<IEnumerable<HubDto>> GetUserJoinedHubs(Guid userId)
+        {
+            return await hubService.GetJoinedByUser(userId);
+        }
+
+        [HttpGet("user/{userId}/discovery")]
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId)
+        {
+            return await hubService.GetUserNotJoined(userId);
+        }
     }
 }
