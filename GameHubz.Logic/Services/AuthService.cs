@@ -1,9 +1,10 @@
-using System.Security.Claims;
 using FluentValidation;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Tokens;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using System.Security.Claims;
+using AccessToken = GameHubz.DataModels.Tokens.AccessToken;
 
 namespace GameHubz.Logic.Services
 {
@@ -93,17 +94,28 @@ namespace GameHubz.Logic.Services
             return new TokenResponse(accessToken, refreshToken);
         }
 
-        public async Task ChangeUserPassword(string newPassword)
+        public async Task ChangeUserPassword(UserPasswordEdit request)
         {
-            var token = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var userFromContext = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            await this.SetUserNewPassword(token!.UserId, newPassword);
+            UserEntity user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(userFromContext.UserId);
+
+            if (this.HashPassword(request.OldPassword, user.PasswordNonce) != user.Password)
+            {
+                throw new Exception("Invalid password");
+            }
+
+            user.Password = this.HashPassword(request.NewPassword, user.PasswordNonce);
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+
+            await this.SaveAsync();
         }
 
-        public async Task SetUserPassword(UserPasswordEdit userPasswordEditDto)
-        {
-            await this.SetUserNewPassword(userPasswordEditDto.Id, userPasswordEditDto.NewPassword);
-        }
+        //public async Task SetUserPassword(UserPasswordEdit userPasswordEditDto)
+        //{
+        //    await this.SetUserNewPassword(userPasswordEditDto);
+        //}
 
         public async Task<TokenResponse> Login(LoginRequestDto loginRequest)
         {
@@ -209,17 +221,6 @@ namespace GameHubz.Logic.Services
                 Role = user.UserRole.SystemName,
                 Region = (int)user.Region
             };
-        }
-
-        private async Task SetUserNewPassword(Guid userId, string newPassword)
-        {
-            UserEntity user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(userId);
-
-            user.Password = this.HashPassword(newPassword, user.PasswordNonce);
-
-            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
-
-            await this.SaveAsync();
         }
     }
 }

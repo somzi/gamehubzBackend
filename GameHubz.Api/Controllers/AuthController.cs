@@ -129,7 +129,7 @@ namespace GameHubz.Api.Controllers
                 return this.BadRequest("Missing set password data");
             }
 
-            await this.authService.SetUserPassword(userPasswordEdit);
+            await this.authService.ChangeUserPassword(userPasswordEdit);
             return this.Ok();
         }
 
@@ -169,10 +169,10 @@ namespace GameHubz.Api.Controllers
             await this.userService.ResendVerificationEmail(resendVerificationRequestDto);
         }
 
-        [HttpPost("changePassword")]
-        public async Task ChangePassword(string newPassword)
-        {
-            await this.authService.ChangeUserPassword(newPassword);
-        }
+        //[HttpPost("changePassword")]
+        //public async Task ChangePassword(string newPassword)
+        //{
+        //    await this.authService.ChangeUserPassword(newPassword);
+        //}
     }
 }
