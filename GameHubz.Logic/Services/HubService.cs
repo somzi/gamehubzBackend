@@ -190,5 +190,40 @@ namespace GameHubz.Logic.Services
 
             return data;
         }
+
+        public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
+        {
+            string cacheKey = $"hubs:{id}:members";
+
+            var cachedHubs = await cacheService.GetAsync<IEnumerable<UserHubOverview>>(cacheKey);
+
+            if (cachedHubs != null)
+            {
+                return cachedHubs;
+            }
+
+            var data = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(id);
+
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+
+            return data;
+        }
+
+        public async Task KickUserFromHub(Guid hubId, Guid userId)
+        {
+            var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
+
+            await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(userhub, UserContextReader);
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"dashboard_highlights:{userId}");
+            await cacheService.RemoveAsync($"hubs_overview_all");
+            await cacheService.RemoveAsync($"user_hubs_list:{userId}");
+            await cacheService.RemoveAsync($"hub_overview:{hubId}");
+            await cacheService.RemoveAsync($"hubs:user:{userId}:discovery");
+            await cacheService.RemoveAsync($"hubs:user:{userId}:joined");
+            await cacheService.RemoveAsync($"hubs:{hubId}:members");
+        }
     }
 }

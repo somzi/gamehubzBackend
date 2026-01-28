@@ -73,5 +73,17 @@ namespace GameHubz.Api.Controllers
         {
             return await hubService.GetUserNotJoined(userId);
         }
+
+        [HttpGet("{id}/members")]
+        public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
+        {
+            return await hubService.GetMembers(id);
+        }
+
+        [HttpPost("{id}/user/{userId}/kick")]
+        public async Task GetMembers(Guid id, Guid userid)
+        {
+            await hubService.KickUserFromHub(id, userid);
+        }
     }
 }

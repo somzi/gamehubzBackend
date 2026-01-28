@@ -1,6 +1,7 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,18 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .Where(uh => uh.UserId == userId && uh.HubId != null)
                 .Select(x => x.HubId!.Value)
+                .ToListAsync();
+        }
+
+        public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
+        {
+            return await this.BaseDbSet()
+                .Where(uh => uh.HubId == hubId && uh.HubId != null)
+                .Select(x => new UserHubOverview
+                {
+                    UserId = x.UserId!.Value,
+                    Username = x.User!.Username
+                })
                 .ToListAsync();
         }
     }
