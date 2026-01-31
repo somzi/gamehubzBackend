@@ -106,6 +106,9 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
 
             await SaveAsync();
+
+            await cacheService.RemoveAsync($"tournament:{id}");
+            await cacheService.RemoveAsync($"bracket:{id}");
         }
 
         public async Task Publish(Guid id)

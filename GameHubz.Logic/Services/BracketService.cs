@@ -116,6 +116,8 @@ namespace GameHubz.Logic.Services
                     throw new Exception($"Tournament format {tournament.Format} not supported");
             }
 
+            await cacheService.RemoveAsync($"tournament:{request.TournamentId}");
+
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
         }
 

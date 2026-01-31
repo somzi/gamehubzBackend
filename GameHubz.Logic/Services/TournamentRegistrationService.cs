@@ -57,6 +57,8 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveAsync($"player_tournaments:{tournamentRegistration.UserId}");
                 await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:AvailableToJoin:p:0:s:10");
                 await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:Upcoming:p:0:s:10");
+                await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveAsync($"bracket:{tournamentRegistration.TournamentId}");
             }
         }
 
@@ -85,6 +87,9 @@ namespace GameHubz.Logic.Services
                     await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
                 }
             }
+
+            await cacheService.RemoveAsync($"tournament:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveAsync($"bracket:{tournamentRegistration.First().TournamentId}");
         }
 
         public async Task RejectRegistration(Guid registrationId)
@@ -94,6 +99,8 @@ namespace GameHubz.Logic.Services
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Rejected);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
         }
 
         public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId(Guid tournamentId)
