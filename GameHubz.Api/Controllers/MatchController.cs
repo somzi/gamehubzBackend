@@ -44,5 +44,18 @@ namespace GameHubz.Api.Controllers
             var matchAvailabilityDto = await this.Service.GetAvailability(id, userId);
             return matchAvailabilityDto;
         }
+
+        [HttpPost("{id}/evidence")]
+        public async Task<IActionResult> UploadEvidence(Guid id, List<IFormFile> files)
+        {
+            await this.Service.UploadMatchEvidence(id, files);
+            return Ok(new { message = "Screenshot uploaded successfully" });
+        }
+
+        [HttpGet("{id}/details")]
+        public async Task<MatchResultDetailDto> GetDetails(Guid id)
+        {
+            return await this.Service.GetWithEvidence(id);
+        }
     }
 }

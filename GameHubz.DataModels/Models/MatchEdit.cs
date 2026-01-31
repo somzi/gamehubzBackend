@@ -31,6 +31,6 @@ namespace GameHubz.DataModels.Models
         public UserEdit? WinnerUser { get; set; }
         public Guid? TournamentStageId { get; set; }
 
-
+        public List<MatchEvidenceEdit>? MatchEvidences { get; set; } = new();
     }
 }

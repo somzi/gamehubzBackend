@@ -135,6 +135,9 @@ namespace GameHubz.Data.Repository
                     .ThenInclude(s => s.Matches!)
                         .ThenInclude(m => m.AwayParticipant)
                             .ThenInclude(p => p!.User)
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.Matches!)
+                        .ThenInclude(m => m.MatchEvidences)
                 .FirstOrDefaultAsync(t => t.Id == tournamentId);
         }
 

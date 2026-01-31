@@ -12,5 +12,6 @@ namespace GameHubz.DataModels.Models
 
         public MatchParticipantDto? Home { get; set; }
         public MatchParticipantDto? Away { get; set; }
+        public List<string> Evidences { get; set; }
     }
 }

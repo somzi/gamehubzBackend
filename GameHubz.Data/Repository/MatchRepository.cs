@@ -119,6 +119,21 @@ namespace GameHubz.Data.Repository
             return stats ?? new PlayerStatsDto();
         }
 
+        public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.Id == id)
+                .Select(x => new MatchResultDetailDto
+                {
+                    AwayUser = x.AwayParticipant!.User!.Nickname,
+                    HomeUser = x.HomeParticipant!.User!.Nickname,
+                    AwayUserScore = x.AwayUserScore ?? 0,
+                    HomeUserScore = x.HomeUserScore ?? 0,
+                    Evidences = x.MatchEvidences.Select(e => e.Url!).ToList()
+                })
+                .FirstAsync();
+        }
+
         public async Task<MatchEntity?> GetWithParticipants(Guid matchId)
         {
             return await this.BaseDbSet()

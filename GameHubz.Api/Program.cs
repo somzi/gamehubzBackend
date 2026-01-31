@@ -69,6 +69,7 @@ namespace GameHubz.Api
             services.AddSingleton<ILocalizationService, LocalizationService>();
             services.AddTransient<IUserContextReader, UserContextReader>();
             services.AddScoped<IUnitOfWorkFactory, UnitOfWorkFactory>();
+            services.AddScoped<CloudinaryStorageService>();
         }
 
         private static void ConfigureAutomapper(IServiceCollection services)

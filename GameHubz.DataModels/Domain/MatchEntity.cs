@@ -48,5 +48,7 @@ namespace GameHubz.DataModels.Domain
             get => string.IsNullOrEmpty(AwaySlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(AwaySlotsJson)!;
             set => AwaySlotsJson = JsonSerializer.Serialize(value);
         }
+
+        public List<MatchEvidenceEntity>? MatchEvidences { get; set; } = new();
     }
 }

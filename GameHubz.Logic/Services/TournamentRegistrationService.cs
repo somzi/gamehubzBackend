@@ -81,7 +81,6 @@ namespace GameHubz.Logic.Services
             {
                 if (registration.UserId.HasValue)
                 {
-                    // Ovo je jako brza operacija u Redisu, ne brini za performanse petlje
                     await cacheService.RemoveAsync($"player_tournaments:{registration.UserId}");
                     await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
                 }

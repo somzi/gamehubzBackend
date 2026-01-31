@@ -896,6 +896,7 @@ namespace GameHubz.Logic.Services
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,
                 NextMatchId = m.NextMatchId,
+                Evidences = m.MatchEvidences != null ? m.MatchEvidences.Select(x => x.Url!).ToList() : new List<string>(),
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,

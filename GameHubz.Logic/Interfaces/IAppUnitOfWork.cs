@@ -31,6 +31,8 @@ namespace GameHubz.Logic.Interfaces
 
         IHubActivityRepository HubActivityRepository { get; }
 
+        IMatchEvidenceRepository MatchEvidenceRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

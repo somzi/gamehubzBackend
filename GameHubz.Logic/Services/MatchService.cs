@@ -1,10 +1,13 @@
-using FluentValidation;
+﻿using FluentValidation;
 using GameHubz.DataModels.Enums;
+using Microsoft.AspNetCore.Http;
 
 namespace GameHubz.Logic.Services
 {
     public class MatchService : AppBaseServiceGeneric<MatchEntity, MatchDto, MatchPost, MatchEdit>
     {
+        private readonly CloudinaryStorageService storageService;
+
         public MatchService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -12,7 +15,8 @@ namespace GameHubz.Logic.Services
             IValidator<MatchEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            CloudinaryStorageService storageService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -21,6 +25,7 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.storageService = storageService;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -31,6 +36,11 @@ namespace GameHubz.Logic.Services
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             return await this.AppUnitOfWork.MatchRepository.GetByUser(userId);
+        }
+
+        public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)
+        {
+            return await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
         }
 
         public async Task<MatchAvailabilityDto> SetAvailability(Guid matchId, List<DateTime> selectedSlots)
@@ -83,6 +93,39 @@ namespace GameHubz.Logic.Services
                 OpponentSlots = opponentSlots,
                 ConfirmedTime = match.ScheduledStartTime
             };
+        }
+
+        public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetById(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var userId = user.UserId;
+
+            foreach (var file in files)
+            {
+                if (file.Length > 0)
+                {
+                    string fileName = $"evidence_{matchId}_{DateTime.UtcNow.Ticks}";
+                    string folderPath = $"matches/{matchId}";
+
+                    string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+
+                    var screenshot = new MatchEvidenceEntity
+                    {
+                        MatchId = matchId,
+                        Url = url,
+                    };
+
+                    await this.AppUnitOfWork.MatchEvidenceRepository.AddEntity(screenshot, this.UserContextReader);
+                }
+            }
+
+            await this.SaveAsync();
+
+            // 4. Obriši keš (jer se meč promenio)
+            // await _cacheService.RemoveAsync($"match:{matchId}");
         }
 
         protected override IRepository<MatchEntity> GetRepository()

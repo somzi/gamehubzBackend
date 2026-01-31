@@ -260,6 +260,26 @@ namespace GameHubz.Data.Context
             modelBuilder.Entity<TournamentParticipantEntity>()
                 .HasIndex(x => x.TournamentGroupId);
 
+
+            modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence")
+                .HasOne(x => x.Match)
+                .WithMany(x => x.MatchEvidences)
+                .HasForeignKey(x => x.MatchId)
+                .HasPrincipalKey(x => x.Id);
+
+
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasMany(x => x.MatchEvidences)
+                .WithOne(x => x.Match)
+                .HasForeignKey(x => x.MatchId)
+                .HasPrincipalKey(x => x.Id);
+
+
             // DO NOT DELETE - Generated Configuration Tag
         }
 
