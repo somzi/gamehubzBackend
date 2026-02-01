@@ -32,6 +32,8 @@ namespace GameHubz.Logic.Mappings
 
             mapperConfiguration.AddProfile(new MatchEvidenceProfile(localizationService));
 
+            mapperConfiguration.AddProfile(new HubSocialProfile(localizationService));
+
             // DO NOT DELETE - Generated Mappers Tag
         }
     }

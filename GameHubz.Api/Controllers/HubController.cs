@@ -25,7 +25,7 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("{id}")]
-        public async Task<HubOverviewDto> GetAll(Guid id)
+        public async Task<HubOverviewDto> GetById(Guid id)
         {
             return await hubService.GetOverviewById(id);
         }

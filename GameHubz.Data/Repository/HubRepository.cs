@@ -51,9 +51,18 @@ namespace GameHubz.Data.Repository
                     Id = x.Id!.Value,
                     Name = x.Name,
                     Description = x.Description,
-                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
-                    UserId = x.UserId
+                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count : 0,
+                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count : 0,
+                    UserId = x.UserId,
+                    HubSocials = x.HubSocials != null
+                            ? x.HubSocials.Select(s => new HubSocialDto
+                            {
+                                Id = s.Id,
+                                HubId = s.HubId,
+                                Type = s.Type,
+                                Username = s.Username
+                            }).ToList()
+                            : new List<HubSocialDto>()
                 })
                 .FirstOrDefaultAsync();
         }

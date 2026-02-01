@@ -280,6 +280,26 @@ namespace GameHubz.Data.Context
                 .HasPrincipalKey(x => x.Id);
 
 
+
+            modelBuilder.Entity<HubSocialEntity>().ToTable("HubSocial").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<HubSocialEntity>().ToTable("HubSocial")
+                .HasOne(x => x.Hub)
+                .WithMany(x => x.HubSocials)
+                .HasForeignKey(x => x.HubId)
+                .HasPrincipalKey(x => x.Id);
+
+
+
+            modelBuilder.Entity<HubEntity>().ToTable("Hub").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<HubEntity>().ToTable("Hub")
+                .HasMany(x => x.HubSocials)
+                .WithOne(x => x.Hub)
+                .HasForeignKey(x => x.HubId)
+                .HasPrincipalKey(x => x.Id);
+
+
             // DO NOT DELETE - Generated Configuration Tag
         }
 

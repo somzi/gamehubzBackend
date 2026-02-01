@@ -10,5 +10,6 @@ namespace GameHubz.DataModels.Models
         public List<UserHubEdit>? UserHubs { get; set; } = new();
 
         public List<TournamentEdit>? Tournaments { get; set; } = new();
+        public List<HubSocialEdit>? HubSocials { get; set; } = new();
     }
 }

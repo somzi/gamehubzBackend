@@ -41,6 +41,8 @@ namespace GameHubz.Data.UnitOfWork
 
         public IMatchEvidenceRepository MatchEvidenceRepository => this.GetRepository<MatchEvidenceRepository>();
 
+        public IHubSocialRepository HubSocialRepository => this.GetRepository<HubSocialRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }
