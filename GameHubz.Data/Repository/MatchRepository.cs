@@ -77,6 +77,19 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public Task<MatchUploadDto> GetForMatchEvidence(Guid matchId)
+        {
+            return this.BaseDbSet()
+                                .Where(x => x.Id == matchId)
+                .Select(x => new MatchUploadDto
+                {
+                    Id = x.Id!.Value,
+                    HubName = x.Tournament!.Hub!.Name,
+                    TournamentName = x.Tournament!.Name
+                })
+                .FirstAsync();
+        }
+
         public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId)
         {
             return await this.BaseDbSet()

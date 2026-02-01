@@ -87,8 +87,8 @@ namespace GameHubz.Logic.Services
             var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(
                 (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId);
 
-            string fileName = $"{user!.Username}";
-            string folderPath = $"users";
+            string fileName = $"avatar";
+            string folderPath = $"users/{user!.Username}";
 
             string url = await storageService.UploadFileAsync(file, folderPath, fileName);
 

@@ -97,18 +97,15 @@ namespace GameHubz.Logic.Services
 
         public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
         {
-            var match = await this.AppUnitOfWork.MatchRepository.GetById(matchId);
+            var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
             if (match == null) throw new Exception("Match not found");
-
-            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var userId = user.UserId;
 
             foreach (var file in files)
             {
                 if (file.Length > 0)
                 {
                     string fileName = $"evidence_{matchId}_{DateTime.UtcNow.Ticks}";
-                    string folderPath = $"matches/{matchId}";
+                    string folderPath = $"hub/{match.HubName}/tournaments/{match.TournamentName}/matches/{matchId}";
 
                     string url = await storageService.UploadFileAsync(file, folderPath, fileName);
 
