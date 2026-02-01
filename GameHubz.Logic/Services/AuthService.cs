@@ -217,7 +217,7 @@ namespace GameHubz.Logic.Services
             return new TokenUserInfo()
             {
                 UserId = user.Id!.Value,
-                Username = user.FirstName,
+                Username = user.Username,
                 Role = user.UserRole.SystemName,
                 Region = (int)user.Region
             };

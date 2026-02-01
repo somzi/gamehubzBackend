@@ -28,6 +28,7 @@ namespace GameHubz.Logic.Tokens
             Claim? emailFromToken = claimsPrincipal.FindFirst(ClaimTypes.Email);
             Claim? roleClaim = claimsPrincipal.FindFirst(ClaimTypes.Role);
             Claim? regionClaim = claimsPrincipal.FindFirst("region");
+            Claim? userNickNameClaim = claimsPrincipal.FindFirst("userNickName");
 
             if (roleClaim == null)
             {
@@ -46,6 +47,13 @@ namespace GameHubz.Logic.Tokens
                 region = regionInt;
             }
 
+            string userNickname = string.Empty;
+
+            if (userNickNameClaim != null)
+            {
+                userNickname = userNickNameClaim.Value;
+            }
+
             if (Enum.TryParse(roleClaim.Value, true, out UserRoleEnum userRole) == false)
             {
                 throw new InvalidTokenException("Role cannot be parsed.");
@@ -61,7 +69,7 @@ namespace GameHubz.Logic.Tokens
                 return new TokenUserInfo()
                 {
                     UserId = userId,
-                    Username = username?.Value ?? "",
+                    Username = userNickname,
                     Role = userRole.ToString(),
                     RoleEnum = userRole,
                     Region = region

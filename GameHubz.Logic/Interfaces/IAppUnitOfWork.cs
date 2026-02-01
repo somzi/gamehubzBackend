@@ -35,6 +35,8 @@ namespace GameHubz.Logic.Interfaces
 
         IHubSocialRepository HubSocialRepository { get; }
 
+        IMatchChatRepository MatchChatRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

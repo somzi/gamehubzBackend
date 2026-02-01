@@ -32,5 +32,6 @@ namespace GameHubz.DataModels.Models
         public Guid? TournamentStageId { get; set; }
 
         public List<MatchEvidenceEdit>? MatchEvidences { get; set; } = new();
+        public List<MatchChatEdit>? MatchChats { get; set; } = new();
     }
 }

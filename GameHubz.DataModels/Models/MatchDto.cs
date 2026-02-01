@@ -33,5 +33,6 @@ namespace GameHubz.DataModels.Models
         public UserDto? WinnerUser { get; set; }
         public Guid? TournamentStageId { get; set; }
         public List<MatchEvidenceDto>? MatchEvidences { get; set; } = new();
+        public List<MatchChatDto>? MatchChats { get; set; } = new();
     }
 }

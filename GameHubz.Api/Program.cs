@@ -10,6 +10,7 @@ using GameHubz.Logic;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Mappings;
 using GameHubz.Logic.Services;
+using GameHubz.Logic.SignalR;
 using Microsoft.EntityFrameworkCore;
 using NLog.Web;
 
@@ -53,12 +54,14 @@ namespace GameHubz.Api
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);
-
+            builder.Services.AddSignalR();
             WebApplication app = builder.Build();
 
             RabbitMqStartup.ConfigureRabbitMqConsumers(app.Services);
 
             ConfigurePipeline(app, builder.Configuration);
+
+            app.MapHub<MatchChatHub>("/hubs/chat");
 
             app.Run();
         }

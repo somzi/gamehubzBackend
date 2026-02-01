@@ -85,6 +85,8 @@ namespace GameHubz.Logic
 
             services.AddTransient<HubSocialService>();
 
+            services.AddTransient<MatchChatService>();
+
             // DO NOT DELETE - Generated Service Tag
 
             ConfigureValidators(services);
@@ -120,6 +122,8 @@ namespace GameHubz.Logic
             services.AddTransient<IValidator<MatchEvidenceEntity>, MatchEvidenceValidator>();
 
             services.AddTransient<IValidator<HubSocialEntity>, HubSocialValidator>();
+
+            services.AddTransient<IValidator<MatchChatEntity>, MatchChatValidator>();
 
             // DO NOT DELETE - Generated Validator Tag
         }

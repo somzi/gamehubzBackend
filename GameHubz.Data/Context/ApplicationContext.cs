@@ -260,7 +260,6 @@ namespace GameHubz.Data.Context
             modelBuilder.Entity<TournamentParticipantEntity>()
                 .HasIndex(x => x.TournamentGroupId);
 
-
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
 
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence")
@@ -268,8 +267,6 @@ namespace GameHubz.Data.Context
                 .WithMany(x => x.MatchEvidences)
                 .HasForeignKey(x => x.MatchId)
                 .HasPrincipalKey(x => x.Id);
-
-
 
             modelBuilder.Entity<MatchEntity>().ToTable("Match").HasQueryFilter(x => x.IsDeleted == false);
 
@@ -279,8 +276,6 @@ namespace GameHubz.Data.Context
                 .HasForeignKey(x => x.MatchId)
                 .HasPrincipalKey(x => x.Id);
 
-
-
             modelBuilder.Entity<HubSocialEntity>().ToTable("HubSocial").HasQueryFilter(x => x.IsDeleted == false);
 
             modelBuilder.Entity<HubSocialEntity>().ToTable("HubSocial")
@@ -288,8 +283,6 @@ namespace GameHubz.Data.Context
                 .WithMany(x => x.HubSocials)
                 .HasForeignKey(x => x.HubId)
                 .HasPrincipalKey(x => x.Id);
-
-
 
             modelBuilder.Entity<HubEntity>().ToTable("Hub").HasQueryFilter(x => x.IsDeleted == false);
 
@@ -299,6 +292,21 @@ namespace GameHubz.Data.Context
                 .HasForeignKey(x => x.HubId)
                 .HasPrincipalKey(x => x.Id);
 
+            modelBuilder.Entity<MatchChatEntity>().ToTable("MatchChat").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchChatEntity>().ToTable("MatchChat")
+                .HasOne(x => x.Match)
+                .WithMany(x => x.MatchChats)
+                .HasForeignKey(x => x.MatchId)
+                .HasPrincipalKey(x => x.Id);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchEntity>().ToTable("Match")
+                .HasMany(x => x.MatchChats)
+                .WithOne(x => x.Match)
+                .HasForeignKey(x => x.MatchId)
+                .HasPrincipalKey(x => x.Id);
 
             // DO NOT DELETE - Generated Configuration Tag
         }
