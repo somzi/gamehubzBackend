@@ -25,7 +25,7 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .Where(x => hubIds.Contains(x.HubId!.Value))
                 .OrderByDescending(x => x.CreatedOn)
-                .Take(count)
+                .Take(100)
                 .Select(x => new DashboardActivityDto
                 {
                     HubName = x.Hub!.Name,
