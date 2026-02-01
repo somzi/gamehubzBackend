@@ -34,5 +34,7 @@ namespace GameHubz.DataModels.Models
 
         public List<UserSocialDto>? UserSocials { get; set; } = new();
         public List<TournamentParticipantDto>? TournamentParticipants { get; set; } = new();
+
+        public string? AvatarUrl { get; set; }
     }
 }

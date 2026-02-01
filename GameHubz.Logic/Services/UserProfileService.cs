@@ -1,20 +1,25 @@
-﻿namespace GameHubz.Logic.Services
+﻿using Microsoft.AspNetCore.Http;
+
+namespace GameHubz.Logic.Services
 {
     public class UserProfileService : AppBaseService
     {
         private readonly IMapper mapper;
         private readonly ICacheService cacheService;
+        private readonly CloudinaryStorageService storageService;
 
         public UserProfileService(
             IMapper mapper,
             IUnitOfWorkFactory unitOfWorkFactory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            CloudinaryStorageService storageService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.mapper = mapper;
             this.cacheService = cacheService;
+            this.storageService = storageService;
         }
 
         public async Task<PlayerMatchesDto> GetStats(Guid id)
@@ -75,6 +80,25 @@
             await cacheService.SetAsync(key, userProfileDto, TimeSpan.FromHours(1));
 
             return userProfileDto;
+        }
+
+        public async Task UploadAvatar(IFormFile file)
+        {
+            var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(
+                (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId);
+
+            string fileName = $"{user!.Username}";
+            string folderPath = $"users";
+
+            string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+
+            user.AvatarUrl = url;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"user_profile:{user.Id}");
         }
     }
 }

@@ -9,5 +9,6 @@ namespace GameHubz.DataModels.Models
         public string Nickname { get; set; } = string.Empty;
         public RegionType Region { get; set; }
         public List<UserSocialDto>? UserSocials { get; set; } = new();
+        public string? AvatarUrl { get; set; }
     }
 }

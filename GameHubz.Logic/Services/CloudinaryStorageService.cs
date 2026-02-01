@@ -7,7 +7,7 @@ namespace GameHubz.Logic.Services
 {
     public class CloudinaryStorageService
     {
-        private readonly Cloudinary _cloudinary;
+        private readonly Cloudinary cloudinary;
 
         public CloudinaryStorageService(IConfiguration config)
         {
@@ -17,8 +17,8 @@ namespace GameHubz.Logic.Services
                 config["Cloudinary:ApiSecret"]
             );
 
-            _cloudinary = new Cloudinary(account);
-            _cloudinary.Api.Secure = true;
+            cloudinary = new Cloudinary(account);
+            cloudinary.Api.Secure = true;
         }
 
         public async Task<string> UploadFileAsync(IFormFile file, string folderName, string fileName)
@@ -35,7 +35,7 @@ namespace GameHubz.Logic.Services
                 Overwrite = true
             };
 
-            var uploadResult = await _cloudinary.UploadAsync(uploadParams);
+            var uploadResult = await cloudinary.UploadAsync(uploadParams);
 
             return uploadResult.SecureUrl.ToString();
         }

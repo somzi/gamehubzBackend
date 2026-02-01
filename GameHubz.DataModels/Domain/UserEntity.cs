@@ -58,5 +58,7 @@ namespace GameHubz.DataModels.Domain
         public List<UserSocialEntity>? UserSocials { get; set; } = new();
 
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();
+
+        public string? AvatarUrl { get; set; }
     }
 }

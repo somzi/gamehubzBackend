@@ -22,5 +22,7 @@ namespace GameHubz.DataModels.Models
         public string Username { get; set; } = string.Empty;
 
         public RegionType Region { get; set; }
+
+        public string? AvatarUrl { get; set; }
     }
 }
