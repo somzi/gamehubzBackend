@@ -124,6 +124,7 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .AsNoTracking() // Read-only speed boost
+                .Include(t => t.Hub)
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.TournamentGroups)
                 // Load Matches for every stage
