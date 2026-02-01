@@ -169,6 +169,12 @@ namespace GameHubz.Api.Controllers
             await this.userService.ResendVerificationEmail(resendVerificationRequestDto);
         }
 
+        [HttpDelete()]
+        public async Task DeleteAccount()
+        {
+            await this.userService.DeleteAccount();
+        }
+
         //[HttpPost("changePassword")]
         //public async Task ChangePassword(string newPassword)
         //{

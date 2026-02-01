@@ -1,3 +1,4 @@
+using Azure.Core;
 using FluentValidation;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Api;
@@ -307,6 +308,19 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"user_profile:{request.UserId}");
+        }
+
+        public async Task DeleteAccount()
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var userEntity = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(user.UserId);
+
+            userEntity.IsActive = false;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(userEntity, this.UserContextReader);
+
+            await this.SaveAsync();
         }
     }
 }

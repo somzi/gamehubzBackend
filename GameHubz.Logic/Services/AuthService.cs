@@ -123,6 +123,11 @@ namespace GameHubz.Logic.Services
 
             UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail($"{loginRequest.Email}@gmail.com");
 
+            if (user != null && !user.IsActive)
+            {
+                return new TokenResponse(false, null, this.LocalizationService["This account is deleted"]);
+            }
+
             //if (user == null
             //    || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
             //{

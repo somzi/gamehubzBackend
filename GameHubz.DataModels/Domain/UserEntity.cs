@@ -60,5 +60,7 @@ namespace GameHubz.DataModels.Domain
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();
 
         public string? AvatarUrl { get; set; }
+
+        public bool IsActive { get; set; } = true;
     }
 }
