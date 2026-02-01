@@ -109,6 +109,7 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.RemoveAsync($"tournament:{request.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
         }
 
