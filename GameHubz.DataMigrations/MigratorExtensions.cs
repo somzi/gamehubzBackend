@@ -6,7 +6,7 @@ namespace GameHubz.DataMigrations
 {
     public static class MigratorExtensions
     {
-        private const string MaxStringType = "nvarchar(max)";
+        private const string MaxStringType = "text";
 
         public static ICreateTableWithColumnSyntax TableWithCommonColumns(this ICreateExpressionRoot create, string tableName)
         {

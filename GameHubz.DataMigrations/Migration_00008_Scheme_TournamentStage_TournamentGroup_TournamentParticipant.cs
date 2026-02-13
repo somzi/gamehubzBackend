@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 
 namespace GameHubz.DataMigrations
 {
@@ -7,6 +7,7 @@ namespace GameHubz.DataMigrations
     {
         public override void Up()
         {
+            // 1. Postojeće tabele koje kreiraš (TournamentStage, Group, Participant)
             this.Create.TableWithCommonColumns("TournamentStage")
                 .WithColumn("Type").AsInt32().NotNullable()
                 .WithColumn("Order").AsInt32().NotNullable()
@@ -35,6 +36,14 @@ namespace GameHubz.DataMigrations
                 .WithColumn("TournamentGroupId").AsGuid().Nullable()
                     .ForeignKey("TournamentGroup", "Id").OnDeleteOrUpdate(Rule.None);
 
+            // 2. Popravka za Status (Postgres fix)
+            Execute.Sql("ALTER TABLE \"Tournament\" ALTER COLUMN \"Status\" TYPE integer USING (\"Status\"::integer)");
+            Execute.Sql("ALTER TABLE \"Match\" ALTER COLUMN \"Status\" TYPE integer USING (\"Status\"::integer)");
+
+            Alter.Column("Status").OnTable("Tournament").AsInt32().NotNullable().WithDefaultValue(1);
+            Alter.Column("Status").OnTable("Match").AsInt32().NotNullable().WithDefaultValue(1);
+
+            // 3. Izmene na Match tabeli
             this.Alter.Table("Match")
                 .AddColumn("TournamentStageId").AsGuid().Nullable()
                     .ForeignKey("TournamentStage", "Id").OnDeleteOrUpdate(Rule.None)
@@ -46,13 +55,7 @@ namespace GameHubz.DataMigrations
                     .ForeignKey("Match", "Id").OnDeleteOrUpdate(Rule.None)
                 .AddColumn("NextMatchLoserBracketId").AsGuid().Nullable()
                     .ForeignKey("Match", "Id").OnDeleteOrUpdate(Rule.None)
-                .AddColumn("IsUpperBracket").AsBoolean().NotNullable().WithDefaultValue(true);
-
-            this.Delete.Column("MaxPlayers").FromTable("Tournament");
-            Alter.Table("Tournament").AddColumn("MaxPlayers").AsInt32().NotNullable();
-            Alter.Table("Tournament").AddColumn("Format").AsInt32().NotNullable();
-
-            this.Alter.Table("Match")
+                .AddColumn("IsUpperBracket").AsBoolean().NotNullable().WithDefaultValue(true)
                 .AddColumn("HomeParticipantId").AsGuid().Nullable()
                     .ForeignKey("TournamentParticipant", "Id").OnDeleteOrUpdate(Rule.None)
                 .AddColumn("WinnerParticipantId").AsGuid().Nullable()
@@ -60,6 +63,7 @@ namespace GameHubz.DataMigrations
                 .AddColumn("AwayParticipantId").AsGuid().Nullable()
                     .ForeignKey("TournamentParticipant", "Id").OnDeleteOrUpdate(Rule.None);
 
+            // 4. Brisanje starih kolona na Match (ako postoje)
             this.Delete.ForeignKey("FK_Match_HomeUserId_User_Id").OnTable("Match");
             this.Delete.ForeignKey("FK_Match_AwayUserId_User_Id").OnTable("Match");
             this.Delete.ForeignKey("FK_Match_WinnerUserId_User_Id").OnTable("Match");
@@ -67,7 +71,13 @@ namespace GameHubz.DataMigrations
             this.Delete.Column("AwayUserId").FromTable("Match");
             this.Delete.Column("WinnerUserId").FromTable("Match");
 
-            Alter.Table("Tournament").AddColumn("Format").AsInt32().NotNullable().WithDefaultValue(3);
+            // 5. Izmene na Tournament tabeli (BEZ DUPLIRANJA)
+            if (Schema.Table("Tournament").Column("MaxPlayers").Exists())
+                this.Delete.Column("MaxPlayers").FromTable("Tournament");
+
+            this.Alter.Table("Tournament")
+                .AddColumn("MaxPlayers").AsInt32().NotNullable().WithDefaultValue(0)
+                .AddColumn("Format").AsInt32().NotNullable().WithDefaultValue(3);
         }
     }
 }

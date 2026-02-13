@@ -6,7 +6,7 @@
         public override void Up()
         {
             this.Alter.Table("Tournament")
-             .AddColumn("WinnerUserid").AsGuid().Nullable();
+             .AddColumn("WinnerUserId").AsGuid().Nullable();
         }
     }
 }

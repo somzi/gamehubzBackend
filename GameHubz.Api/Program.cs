@@ -92,7 +92,7 @@ namespace GameHubz.Api
         {
             ConfigurationManager configuration = builder.Configuration;
             builder.Services.AddDbContext<ApplicationContext>(
-                options => options.UseSqlServer(configuration.GetConnectionString("DatabaseConnection")!),
+                options => options.UseNpgsql(configuration.GetConnectionString("DatabaseConnection")!),
                 ServiceLifetime.Transient,
                 ServiceLifetime.Transient);
         }

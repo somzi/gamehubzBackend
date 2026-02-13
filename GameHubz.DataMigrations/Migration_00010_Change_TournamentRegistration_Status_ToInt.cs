@@ -7,8 +7,13 @@ namespace GameHubz.DataMigrations
     {
         public override void Up()
         {
+            Execute.Sql("ALTER TABLE \"TournamentRegistration\" ALTER COLUMN \"Status\" TYPE integer USING (\"Status\"::integer)");
+
+            // 2. Sada FluentMigrator može da preuzme postavljanje NOT NULL i ostalih pravila
             this.Alter.Table("TournamentRegistration")
-                .AlterColumn("Status").AsInt32().NotNullable();
+                .AlterColumn("Status")
+                .AsInt32()
+                .NotNullable();
         }
     }
 }

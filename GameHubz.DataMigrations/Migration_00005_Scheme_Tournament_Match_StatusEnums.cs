@@ -5,17 +5,21 @@ namespace GameHubz.DataMigrations
     {
         public override void Up()
         {
+            Execute.Sql("ALTER TABLE \"Tournament\" ALTER COLUMN \"Status\" TYPE integer USING (\"Status\"::integer)");
+            Execute.Sql("ALTER TABLE \"Match\" ALTER COLUMN \"Status\" TYPE integer USING (\"Status\"::integer)");
+
+            // Zatim postaviš NotNullable i DefaultValue preko Fluent interfejsa
             Alter.Column("Status")
-                .OnTable("Tournament")
-                .AsInt32()
-                .NotNullable()
-                .WithDefaultValue(1);
+                 .OnTable("Tournament")
+                 .AsInt32()
+                 .NotNullable()
+                 .WithDefaultValue(1);
 
             Alter.Column("Status")
-                .OnTable("Match")
-                .AsInt32()
-                .NotNullable()
-                .WithDefaultValue(1);
+                 .OnTable("Match")
+                 .AsInt32()
+                 .NotNullable()
+                 .WithDefaultValue(1);
         }
     }
 }
