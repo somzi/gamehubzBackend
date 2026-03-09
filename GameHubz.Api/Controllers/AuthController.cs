@@ -1,11 +1,11 @@
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Models;
 using GameHubz.DataModels.Tokens;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Api.Controllers
 {
@@ -133,20 +133,26 @@ namespace GameHubz.Api.Controllers
             return this.Ok();
         }
 
-        [HttpPost("forgotPassword")]
-        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequestDto forgotPasswordRequest)
-        {
-            await this.passwordManagementService.CreateForgotPasswordToken(forgotPasswordRequest);
+        //[HttpPost("forgotPassword")]
+        //public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequestDto forgotPasswordRequest)
+        //{
+        //    await this.passwordManagementService.CreateForgotPasswordToken(forgotPasswordRequest);
 
-            return Ok(this.localizationService["Password.ForgotPassword"]);
+        //    return Ok(this.localizationService["Password.ForgotPassword"]);
+        //}
+
+        [HttpPost("forgotPassword")]
+        public async Task<IActionResult> ForgotPassword([FromBody] string email)
+        {
+            var otpCode = await this.passwordManagementService.SendEmailWithForgotPasswordToken(email);
+
+            return Ok(otpCode);
         }
 
         [HttpPost("resetPassword")]
-        public async Task ResetPassword([FromBody] ResetPasswordRequestDto resetPasswordRequest)
+        public async Task ResetPassword([FromBody] ResetPasswordOtpRequestDto resetPasswordRequest)
         {
-            await this.passwordManagementService.ResetPassword(resetPasswordRequest);
-
-            this.Response.Redirect($"{configuration.GetStringThrowIfNull("Frontend:BaseUrl")}{loginRoute}");
+            await this.passwordManagementService.ResetPasswordWithOtp(resetPasswordRequest);
         }
 
         [HttpPost("registerUser")]

@@ -7,5 +7,6 @@
         public int HomeUserScore { get; set; }
         public int AwayUserScore { get; set; }
         public List<string> Evidences { get; set; } = [];
+        public DateTime? ScheduledTime { get; set; }
     }
 }
