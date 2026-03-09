@@ -168,7 +168,7 @@ namespace GameHubz.Logic.Services
 
             var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, true);
 
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
 
             return data;
         }
@@ -186,7 +186,7 @@ namespace GameHubz.Logic.Services
 
             var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, false);
 
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
 
             return data;
         }
@@ -212,6 +212,7 @@ namespace GameHubz.Logic.Services
         public async Task KickUserFromHub(Guid hubId, Guid userId)
         {
             var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
+            var userAdmin = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(userhub, UserContextReader);
 
@@ -223,6 +224,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
             await cacheService.RemoveAsync($"hubs:user:{userId}:discovery");
             await cacheService.RemoveAsync($"hubs:user:{userId}:joined");
+            await cacheService.RemoveAsync($"hubs:user:{userAdmin.UserId}:joined");
             await cacheService.RemoveAsync($"hubs:{hubId}:members");
         }
     }

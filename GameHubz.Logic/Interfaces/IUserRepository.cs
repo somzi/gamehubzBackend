@@ -35,5 +35,7 @@ namespace GameHubz.Logic.Interfaces
         Task<UserEntity> GetWithSocials(Guid id);
 
         Task<UserEntity> GetWithSocialsAndStats(Guid id);
+
+        Task<UserEntity?> GetByOtpAndMail(ResetPasswordOtpRequestDto resetPasswordRequestDto);
     }
 }

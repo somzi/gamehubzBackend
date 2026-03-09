@@ -62,5 +62,7 @@ namespace GameHubz.DataModels.Domain
         public string? AvatarUrl { get; set; }
 
         public bool IsActive { get; set; } = true;
+
+        public string? ForgotPasswordOtp { get; set; }
     }
 }
