@@ -5,6 +5,7 @@ namespace GameHubz.DataModels.Models
     public class DashboardActivityDto
     {
         public string HubName { get; set; } = string.Empty;
+        public string? HubAvatarUrl { get; set; }
         public string Message { get; set; } = string.Empty;
         public string TournamentName { get; set; } = string.Empty;
         public string TimeAgo { get; set; } = string.Empty;

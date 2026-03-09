@@ -90,7 +90,8 @@ namespace GameHubz.Data.Repository
                     Status = x.Status,
                     PrizeCurrency = x.PrizeCurrency,
                     Id = x.Id!.Value,
-                    HubName = x.Hub!.Name
+                    HubName = x.Hub!.Name,
+                    HubAvatarUrl = x.Hub.AvatarUrl
                 })
                 .ToListAsync();
         }

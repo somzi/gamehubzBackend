@@ -85,5 +85,17 @@ namespace GameHubz.Api.Controllers
         {
             await hubService.KickUserFromHub(id, userid);
         }
+
+        [HttpPost("{id}/avatar")]
+        public async Task<IActionResult> UploadAvatar(Guid id, [FromForm] IFormFile avatar)
+        {
+            if (avatar == null || avatar.Length == 0)
+            {
+                return BadRequest("No file uploaded.");
+            }
+            await hubService.UploadAvatar(id, avatar);
+
+            return Ok("Avatar uploaded successfully.");
+        }
     }
 }

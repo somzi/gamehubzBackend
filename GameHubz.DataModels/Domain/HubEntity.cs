@@ -11,5 +11,6 @@ namespace GameHubz.DataModels.Domain
         public List<UserHubEntity>? UserHubs { get; set; } = new();
         public List<TournamentEntity>? Tournaments { get; set; } = new();
         public List<HubSocialEntity>? HubSocials { get; set; } = new();
+        public string? AvatarUrl { get; set; }
     }
 }

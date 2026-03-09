@@ -29,6 +29,7 @@ namespace GameHubz.Data.Repository
                 .Select(x => new DashboardActivityDto
                 {
                     HubName = x.Hub!.Name,
+                    HubAvatarUrl = x.Hub!.AvatarUrl,
                     TournamentName = x.Tournament!.Name,
                     Type = x.Type,
                     CreatedOn = x.CreatedOn!.Value
@@ -50,6 +51,7 @@ namespace GameHubz.Data.Repository
                 .Select(x => new DashboardActivityDto
                 {
                     HubName = x.Hub!.Name,
+                    HubAvatarUrl = x.Hub!.AvatarUrl,
                     TournamentName = x.Tournament!.Name,
                     Type = x.Type,
                     CreatedOn = x.CreatedOn!.Value

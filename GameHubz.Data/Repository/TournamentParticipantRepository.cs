@@ -79,7 +79,9 @@ namespace GameHubz.Data.Repository
                     PrizeCurrency = x.Tournament.PrizeCurrency,
                     Status = x.Tournament.Status,
                     Region = x.Tournament.Region,
-                    StartDate = x.Tournament.StartDate!.Value
+                    StartDate = x.Tournament.StartDate!.Value,
+                    HubAvatarUrl = x.Tournament.Hub!.AvatarUrl,
+                    HubName = x.Tournament.Hub.Name
                 })
                 .ToListAsync();
 

@@ -1,4 +1,6 @@
 ﻿using FluentValidation;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.SignalR;
 
 namespace GameHubz.Logic.Services
 {
@@ -6,6 +8,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly TournamentService tournamentService;
         private readonly ICacheService cacheService;
+        private readonly CloudinaryStorageService storageService;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -16,7 +19,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             ServiceFunctions serviceFunctions,
             TournamentService tournamentService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            CloudinaryStorageService storageService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -28,6 +32,7 @@ namespace GameHubz.Logic.Services
         {
             this.tournamentService = tournamentService;
             this.cacheService = cacheService;
+            this.storageService = storageService;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -201,6 +206,24 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
             await cacheService.RemoveAsync($"hubs:{hubId}:members");
+        }
+
+        public async Task UploadAvatar(Guid id, IFormFile file)
+        {
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
+
+            string fileName = $"avatar";
+            string folderPath = $"hubs/{hub!.Name}";
+
+            string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+
+            hub.AvatarUrl = url;
+
+            await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"hub_overview:{id}");
         }
     }
 }
