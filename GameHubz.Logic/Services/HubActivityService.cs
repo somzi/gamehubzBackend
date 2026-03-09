@@ -59,14 +59,14 @@ namespace GameHubz.Logic.Services
 
                 if (userHubs != null && userHubs.Any())
                 {
-                    activities = await this.AppUnitOfWork.HubActivityRepository.GetRecentActivity(userHubs, 10);
+                    activities = await this.AppUnitOfWork.HubActivityRepository.GetRecentActivity(userHubs, 3);
                 }
                 else
                 {
                     activities = new List<DashboardActivityDto>();
                 }
 
-                await cacheService.SetAsync(cacheKey, activities, TimeSpan.FromMinutes(3));
+                await cacheService.SetAsync(cacheKey, activities, TimeSpan.FromMinutes(1));
             }
 
             foreach (var activity in activities)
@@ -76,6 +76,31 @@ namespace GameHubz.Logic.Services
             }
 
             return activities;
+        }
+
+        public async Task<EntityListDto<DashboardActivityDto>> GetAllDashboardHighlights(int pageNumber)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var userId = user.UserId;
+
+            var userHubs = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+            if (userHubs == null || !userHubs.Any())
+            {
+                return EntityListDto<DashboardActivityDto>.Empty;
+            }
+
+            var safePageNumber = pageNumber < 1 ? 1 : pageNumber;
+            const int pageSize = 10;
+
+            var result = await this.AppUnitOfWork.HubActivityRepository.GetRecentActivityPaged(userHubs, safePageNumber, pageSize);
+
+            foreach (var activity in result.Items)
+            {
+                activity.TimeAgo = GetTimeAgo(activity.CreatedOn);
+                activity.Message = GetMessageForType(activity.Type);
+            }
+
+            return result;
         }
 
         private static string GetMessageForType(HubActivityType type)

@@ -25,7 +25,7 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .Where(x => hubIds.Contains(x.HubId!.Value))
                 .OrderByDescending(x => x.CreatedOn)
-                .Take(100)
+                .Take(count)
                 .Select(x => new DashboardActivityDto
                 {
                     HubName = x.Hub!.Name,
@@ -34,6 +34,29 @@ namespace GameHubz.Data.Repository
                     CreatedOn = x.CreatedOn!.Value
                 })
                 .ToListAsync();
+        }
+
+        public async Task<EntityListDto<DashboardActivityDto>> GetRecentActivityPaged(List<Guid> hubIds, int pageNumber, int pageSize)
+        {
+            var query = this.BaseDbSet()
+                .Where(x => hubIds.Contains(x.HubId!.Value));
+
+            var count = await query.CountAsync();
+
+            var items = await query
+                .OrderByDescending(x => x.CreatedOn)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(x => new DashboardActivityDto
+                {
+                    HubName = x.Hub!.Name,
+                    TournamentName = x.Tournament!.Name,
+                    Type = x.Type,
+                    CreatedOn = x.CreatedOn!.Value
+                })
+                .ToListAsync();
+
+            return new EntityListDto<DashboardActivityDto>(items, count);
         }
     }
 }
