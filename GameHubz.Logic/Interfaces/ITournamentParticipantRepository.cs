@@ -7,5 +7,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<TournamentParticipantOverview>?> GetByTournamentId(Guid tournamentId);
 
         Task<List<TournamentOverview>> GetByUserId(Guid userid);
+
+        Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize);
     }
 }

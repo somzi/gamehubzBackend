@@ -34,9 +34,9 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("{id}/tournaments")]
-        public async Task<List<TournamentOverview>> GetTournaments(Guid id)
+        public async Task<EntityListDto<TournamentOverview>> GetTournaments(Guid id, [FromQuery] int pageNumber)
         {
-            var userProfile = await userProfileService.GetTournaments(id);
+            var userProfile = await userProfileService.GetTournaments(id, pageNumber);
 
             return userProfile;
         }

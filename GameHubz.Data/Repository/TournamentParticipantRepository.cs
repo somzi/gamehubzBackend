@@ -57,5 +57,33 @@ namespace GameHubz.Data.Repository
                 })
                 .ToListAsync();
         }
+
+        public async Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize)
+        {
+            var query = this.BaseDbSet()
+                .Where(x => x.UserId == userid);
+
+            var count = await query.CountAsync();
+
+            var items = await query
+                .OrderByDescending(x => x.Tournament!.StartDate)
+                .Skip(pageNumber * pageSize)
+                .Take(pageSize)
+                .Select(x => new TournamentOverview
+                {
+                    Id = x.Tournament!.Id!.Value,
+                    MaxPlayers = x.Tournament.MaxPlayers ?? 0,
+                    Name = x.Tournament.Name,
+                    NumberOfParticipants = x.Tournament.TournamentParticipants!.Count(),
+                    Prize = x.Tournament.Prize,
+                    PrizeCurrency = x.Tournament.PrizeCurrency,
+                    Status = x.Tournament.Status,
+                    Region = x.Tournament.Region,
+                    StartDate = x.Tournament.StartDate!.Value
+                })
+                .ToListAsync();
+
+            return new EntityListDto<TournamentOverview>(items, count);
+        }
     }
 }

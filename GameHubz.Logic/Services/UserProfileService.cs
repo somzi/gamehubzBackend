@@ -46,16 +46,10 @@ namespace GameHubz.Logic.Services
             return result;
         }
 
-        public async Task<List<TournamentOverview>> GetTournaments(Guid id)
+        public async Task<EntityListDto<TournamentOverview>> GetTournaments(Guid id, int pageNumber)
         {
-            string key = $"player_tournaments:{id}";
-
-            var cachedList = await cacheService.GetAsync<List<TournamentOverview>>(key);
-            if (cachedList != null) return cachedList;
-
-            var tournaments = await this.AppUnitOfWork.TournamentParticipantRepository.GetByUserId(id);
-
-            await cacheService.SetAsync(key, tournaments, TimeSpan.FromMinutes(5));
+            const int pageSize = 10;
+            var tournaments = await this.AppUnitOfWork.TournamentParticipantRepository.GetByUserIdPaged(id, pageNumber, pageSize);
 
             return tournaments;
         }
