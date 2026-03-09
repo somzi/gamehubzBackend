@@ -8,5 +8,6 @@
         TikTok = 4,
         YouTube = 5,
         Discord = 6,
+        Telegram = 7
     }
 }
