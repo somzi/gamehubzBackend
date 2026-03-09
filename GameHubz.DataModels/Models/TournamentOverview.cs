@@ -18,5 +18,6 @@ namespace GameHubz.DataModels.Models
         public string Rules { get; set; } = string.Empty;
         public Guid CreatedBy { get; set; }
         public DateTime? RegistrationDeadLine { get; set; }
+        public string HubName { get; set; }
     }
 }
