@@ -38,8 +38,6 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"hubs:user:{userId}:discovery");
-            await cacheService.RemoveAsync($"hubs:user:{userId}:joined");
             await cacheService.RemoveAsync($"hubs:{hubId}:members");
         }
 
@@ -49,8 +47,6 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{inputDto.UserId}");
             await cacheService.RemoveAsync($"hub_overview:{inputDto.HubId}");
-            await cacheService.RemoveAsync($"hubs:user:{inputDto.UserId}:discovery");
-            await cacheService.RemoveAsync($"hubs:user:{inputDto.UserId}:joined");
             await cacheService.RemoveAsync($"hubs:{inputDto.HubId}:members");
         }
 

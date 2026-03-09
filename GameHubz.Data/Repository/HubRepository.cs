@@ -74,12 +74,14 @@ namespace GameHubz.Data.Repository
                 .AnyAsync(x => x.UserHubs != null && x.UserHubs.Any(uh => uh.UserId == userId));
         }
 
-        public async Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, bool joined)
+        public async Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, int pageNumber, bool joined)
         {
             return await this.BaseDbSet()
                 .Where(x => joined
                     ? x.UserHubs!.Any(uh => uh.UserId == userId) || x.UserId == userId
                     : !x.UserHubs!.Any(uh => uh.UserId == userId) && x.UserId != userId)
+                .Skip(pageNumber * 10)
+                .Take(10)
                 .Select(x => new HubDto
                 {
                     Id = x.Id!.Value,
