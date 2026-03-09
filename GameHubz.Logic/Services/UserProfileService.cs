@@ -22,6 +22,14 @@ namespace GameHubz.Logic.Services
             this.storageService = storageService;
         }
 
+        public async Task<List<MatchListItemDto>> GetMatches(Guid id, int pageNumber)
+        {
+            const int pageSize = 10;
+            var matches = await this.AppUnitOfWork.MatchRepository.GetLastMatchesByUserId(id, pageSize, pageNumber);
+
+            return matches;
+        }
+
         public async Task<PlayerMatchesDto> GetStats(Guid id)
         {
             string key = $"player_stats:{id}";
@@ -33,12 +41,12 @@ namespace GameHubz.Logic.Services
             var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
             stats.TournamentsWon = numberOfTournamentsWon;
 
-            var lastMatches = await this.AppUnitOfWork.MatchRepository.GetLastMatchesByUserId(id);
+            var perforamance = await this.AppUnitOfWork.MatchRepository.GetPerformanceByUserId(id);
 
             var result = new PlayerMatchesDto
             {
                 Stats = stats,
-                LastMatches = lastMatches
+                Performance = perforamance
             };
 
             await cacheService.SetAsync(key, result, TimeSpan.FromMinutes(3));

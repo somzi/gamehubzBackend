@@ -3,6 +3,6 @@
     public class PlayerMatchesDto
     {
         public PlayerStatsDto? Stats { get; set; }
-        public List<MatchListItemDto> LastMatches { get; set; } = new();
+        public List<PerformanceDto> Performance { get; set; } = new();
     }
 }

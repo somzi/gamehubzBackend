@@ -90,13 +90,14 @@ namespace GameHubz.Data.Repository
                 .FirstAsync();
         }
 
-        public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId)
+        public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId, int pageSize, int pageNumber)
         {
             return await this.BaseDbSet()
                 .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
                             && m.Status == MatchStatus.Completed)
                 .OrderByDescending(m => m.ScheduledStartTime)
-                .Take(10)
+                .Skip(pageNumber * pageSize)
+                .Take(pageSize)
                 .Select(m => new MatchListItemDto
                 {
                     HubName = m.Tournament!.Hub!.Name,
@@ -111,6 +112,20 @@ namespace GameHubz.Data.Repository
                     UserScore = m.HomeParticipant!.UserId == userId
                         ? m.HomeUserScore
                         : m.AwayUserScore,
+                    IsWin = m.WinnerParticipant!.UserId == userId,
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<PerformanceDto>> GetPerformanceByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
+                            && m.Status == MatchStatus.Completed)
+                .OrderByDescending(m => m.ScheduledStartTime)
+                .Take(10)
+                .Select(m => new PerformanceDto
+                {
                     IsWin = m.WinnerParticipant!.UserId == userId,
                 })
                 .ToListAsync();
