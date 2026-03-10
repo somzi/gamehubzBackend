@@ -51,7 +51,7 @@ namespace GameHubz.Logic.Services
                 Tournaments = tournaments
             };
 
-            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(3));
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(1));
 
             return response;
         }
@@ -133,7 +133,7 @@ namespace GameHubz.Logic.Services
             }
             var data = await this.AppUnitOfWork.TournamentRepository.GetOverview(id);
 
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(30));
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(1));
 
             return data!;
         }

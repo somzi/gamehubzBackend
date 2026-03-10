@@ -110,7 +110,7 @@ namespace GameHubz.Logic.Services
 
                 userHubs = [.. hubIdsList];
 
-                await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(15));
+                await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(2));
             }
 
             return userHubs.Contains(hubId);
