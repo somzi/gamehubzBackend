@@ -9,5 +9,8 @@
         public string OpponentName { get; set; } = string.Empty;
         public int? OpponentScore { get; set; }
         public int? UserScore { get; set; }
+        public string? OpponentAvatarUrl { get; set; }
+        public string? UserAvatarUrl { get; set; }
+        public string? Username { get; set; }
     }
 }

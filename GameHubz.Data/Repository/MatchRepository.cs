@@ -66,6 +66,10 @@ namespace GameHubz.Data.Repository
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.Username
                             : x.HomeParticipant!.User!.Username,
+                    OpponentAvatarUrl =
+                        x.HomeParticipant!.UserId == userId
+                            ? x.AwayParticipant!.User!.AvatarUrl
+                            : x.HomeParticipant!.User!.AvatarUrl,
                     ScheduledTime = x.ScheduledStartTime,
                     TournamentName = x.Tournament!.Name,
                     Status = x.Status,
@@ -106,12 +110,21 @@ namespace GameHubz.Data.Repository
                     OpponentName = m.HomeParticipant!.UserId == userId
                         ? m.AwayParticipant!.User!.Username
                         : m.HomeParticipant!.User!.Username,
+                    OpponentAvatarUrl = m.HomeParticipant!.UserId == userId
+                        ? m.AwayParticipant!.User!.AvatarUrl
+                        : m.HomeParticipant!.User!.AvatarUrl,
                     OpponentScore = m.HomeParticipant!.UserId == userId
                         ? m.AwayUserScore
                         : m.HomeUserScore,
                     UserScore = m.HomeParticipant!.UserId == userId
                         ? m.HomeUserScore
                         : m.AwayUserScore,
+                    UserAvatarUrl = m.HomeParticipant!.UserId == userId
+                        ? m.HomeParticipant!.User!.AvatarUrl
+                        : m.AwayParticipant!.User!.AvatarUrl,
+                    Username = m.HomeParticipant!.UserId == userId
+                        ? m.HomeParticipant!.User!.Username
+                        : m.AwayParticipant!.User!.Username,
                     IsWin = m.WinnerParticipant!.UserId == userId,
                 })
                 .ToListAsync();
