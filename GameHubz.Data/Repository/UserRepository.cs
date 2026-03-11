@@ -133,12 +133,26 @@ namespace GameHubz.Data.Repository
 
         public bool IsEmailUnique(UserEntity entity, string email)
         {
-            return this.IsUnique(entity, email, x => x.Email);
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return true;
+            }
+
+            return entity.IsNew
+                ? !this.BaseDbSet().Any(x => x.Email == email)
+                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.Email == email);
         }
 
         public bool IsObjectIdUnique(UserEntity entity, string? objectId)
         {
-            return this.IsUnique(entity, objectId, x => x.ObjectId);
+            if (string.IsNullOrWhiteSpace(objectId))
+            {
+                return true;
+            }
+
+            return entity.IsNew
+                ? !this.BaseDbSet().Any(x => x.ObjectId == objectId)
+                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.ObjectId == objectId);
         }
 
         protected override IQueryable<UserEntity> DbSetForSingleAndList()

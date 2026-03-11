@@ -1,0 +1,17 @@
+version: '3.4'
+
+services:
+  gamehubz.api:
+    image: ${DOCKER_REGISTRY-}gamehubzapi
+    build:
+      context: .
+      dockerfile: GameHubz.Api/Dockerfile
+    ports:
+      - "5057:8080"
+    depends_on:
+      - redis
+
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"

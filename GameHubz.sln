@@ -1,7 +1,6 @@
-
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.1.32210.238
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11605.240 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GameHubz.Api", "GameHubz.Api\GameHubz.Api.csproj", "{E579C48D-C8E1-4D5C-8D5C-0E35C0D1E091}"
 EndProject
@@ -26,6 +25,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameHubz.DataMigrations.Api", "GameHubz.DataMigrations.Api\GameHubz.DataMigrations.Api.csproj", "{B71CEAEC-DB98-4FC5-B919-936EFBAB014F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameHubz.Api.Common", "GameHubz.Api.Common\GameHubz.Api.Common.csproj", "{CE493543-5E7C-4BED-B67B-FD69348B469C}"
+EndProject
+Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{81DDED9D-158B-E303-5F62-77A2896D2A5A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -73,6 +74,10 @@ Global
 		{CE493543-5E7C-4BED-B67B-FD69348B469C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CE493543-5E7C-4BED-B67B-FD69348B469C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CE493543-5E7C-4BED-B67B-FD69348B469C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
