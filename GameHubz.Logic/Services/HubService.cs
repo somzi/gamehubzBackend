@@ -106,7 +106,7 @@ namespace GameHubz.Logic.Services
 
             if (userHubs == null)
             {
-                var hubIdsList = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+                var hubIdsList = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
                 userHubs = [.. hubIdsList];
 

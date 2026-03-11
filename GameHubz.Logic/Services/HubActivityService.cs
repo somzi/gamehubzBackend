@@ -55,7 +55,7 @@ namespace GameHubz.Logic.Services
 
             if (activities == null)
             {
-                var userHubs = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+                var userHubs = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
                 if (userHubs != null && userHubs.Any())
                 {
@@ -83,7 +83,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var userId = user.UserId;
 
-            var userHubs = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+            var userHubs = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
             if (userHubs == null || !userHubs.Any())
             {
                 return EntityListDto<DashboardActivityDto>.Empty;

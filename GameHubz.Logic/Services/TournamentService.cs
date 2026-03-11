@@ -68,7 +68,7 @@ namespace GameHubz.Logic.Services
                 return cachedResponse;
             }
 
-            List<Guid> hubIds = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+            List<Guid> hubIds = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var userRegion = (RegionType)user.Region!.Value;
