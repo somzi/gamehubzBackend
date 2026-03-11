@@ -31,5 +31,14 @@ namespace GameHubz.Logic.Services
 
             return this.Mapper.Map<List<TournamentParticipantOverview>>(participants);
         }
+
+        public async Task RemoveUser(Guid tournamentId, Guid userId)
+        {
+            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetUserByTournamentId(tournamentId, userId);
+
+            await this.AppUnitOfWork.TournamentParticipantRepository.HardDeleteEntity(participant);
+
+            await this.SaveAsync();
+        }
     }
 }

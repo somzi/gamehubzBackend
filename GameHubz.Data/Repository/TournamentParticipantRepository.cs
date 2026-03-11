@@ -88,5 +88,11 @@ namespace GameHubz.Data.Repository
 
             return new EntityListDto<TournamentOverview>(items, count);
         }
+
+        public Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId)
+        {
+            return this.BaseDbSet()
+                .FirstAsync(tp => tp.TournamentId == tournamentId && tp.UserId == userId);
+        }
     }
 }
