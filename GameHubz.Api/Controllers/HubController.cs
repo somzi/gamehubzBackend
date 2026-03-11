@@ -63,15 +63,15 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("user/{userId}/joined")]
-        public async Task<IEnumerable<HubDto>> GetUserJoinedHubs(Guid userId)
+        public async Task<IEnumerable<HubDto>> GetUserJoinedHubs(Guid userId, [FromQuery] int pageNumber)
         {
-            return await hubService.GetJoinedByUser(userId);
+            return await hubService.GetJoinedByUser(userId, pageNumber);
         }
 
         [HttpGet("user/{userId}/discovery")]
-        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId)
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, [FromQuery] int pageNumber)
         {
-            return await hubService.GetUserNotJoined(userId);
+            return await hubService.GetUserNotJoined(userId, pageNumber);
         }
 
         [HttpGet("{id}/members")]
@@ -84,6 +84,18 @@ namespace GameHubz.Api.Controllers
         public async Task GetMembers(Guid id, Guid userid)
         {
             await hubService.KickUserFromHub(id, userid);
+        }
+
+        [HttpPost("{id}/avatar")]
+        public async Task<IActionResult> UploadAvatar(Guid id, [FromForm] IFormFile avatar)
+        {
+            if (avatar == null || avatar.Length == 0)
+            {
+                return BadRequest("No file uploaded.");
+            }
+            await hubService.UploadAvatar(id, avatar);
+
+            return Ok("Avatar uploaded successfully.");
         }
     }
 }

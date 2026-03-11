@@ -124,9 +124,6 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
             if (participants == null || participants.Count == 0) throw new Exception("No participants");
 
-            if (!IsPowerOfTwo(participants.Count))
-                throw new Exception($"Player count must be power of 2. Got {participants.Count}.");
-
             var shuffledParticipants = participants.OrderBy(a => Guid.NewGuid()).ToList();
 
             for (int i = 0; i < shuffledParticipants.Count; i++)
@@ -134,6 +131,16 @@ namespace GameHubz.Logic.Services
                 shuffledParticipants[i].Seed = i + 1;
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffledParticipants[i], this.UserContextReader);
             }
+
+            int bracketSize = GetNextPowerOfTwo(shuffledParticipants.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+            var participantsBySeed = shuffledParticipants
+                .Where(p => p.Seed.HasValue)
+                .ToDictionary(p => p.Seed!.Value, p => p);
+
+            var bracketSlots = seedOrder
+                .Select(seed => participantsBySeed.TryGetValue(seed, out var participant) ? participant : null)
+                .ToList();
 
             var stage = new TournamentStageEntity
             {
@@ -145,8 +152,7 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
 
-            var seededParticipants = GetStandardBracketSeeding(shuffledParticipants);
-            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, seededParticipants);
+            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, bracketSlots);
 
             foreach (var match in allMatches)
             {
@@ -642,7 +648,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity> participants)
+        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity?> participants)
         {
             int playerCount = participants.Count;
             int totalRounds = (int)Math.Log2(playerCount);
@@ -653,8 +659,8 @@ namespace GameHubz.Logic.Services
             for (int i = 0; i < matchesInRound; i++)
             {
                 var match = CreateMatch(tournamentId, stageId, 1, GetMatchStage(playerCount, 1), i);
-                match.HomeParticipantId = participants[i * 2].Id;
-                match.AwayParticipantId = participants[i * 2 + 1].Id;
+                match.HomeParticipantId = participants[i * 2]?.Id;
+                match.AwayParticipantId = participants[i * 2 + 1]?.Id;
                 currentRoundMatches.Add(match);
                 allMatches.Add(match);
             }
@@ -673,6 +679,9 @@ namespace GameHubz.Logic.Services
                 }
                 currentRoundMatches = nextRoundMatches;
             }
+
+            AutoAdvanceByes(allMatches);
+
             return allMatches;
         }
 
@@ -807,6 +816,83 @@ namespace GameHubz.Logic.Services
 
         private static bool IsPowerOfTwo(int n) => n > 0 && (n & (n - 1)) == 0;
 
+        private static int GetNextPowerOfTwo(int n)
+        {
+            int power = 1;
+            while (power < n)
+            {
+                power <<= 1;
+            }
+
+            return power;
+        }
+
+        private static List<int> GetStandardSeedOrder(int bracketSize)
+        {
+            var order = new List<int> { 1 };
+            int count = 1;
+
+            while (count < bracketSize)
+            {
+                var next = new List<int>();
+                for (int i = 0; i < count; i++)
+                {
+                    next.Add(order[i]);
+                    next.Add((count * 2) + 1 - order[i]);
+                }
+
+                order = next;
+                count *= 2;
+            }
+
+            return order;
+        }
+
+        private static void AutoAdvanceByes(List<MatchEntity> allMatches)
+        {
+            var matchesById = allMatches
+                .Where(m => m.Id.HasValue)
+                .ToDictionary(m => m.Id!.Value, m => m);
+
+            var firstRound = allMatches
+                .Where(m => (m.RoundNumber ?? 1) == 1)
+                .OrderBy(m => m.MatchOrder)
+                .ToList();
+
+            foreach (var match in firstRound)
+            {
+                bool hasHome = match.HomeParticipantId.HasValue;
+                bool hasAway = match.AwayParticipantId.HasValue;
+
+                if (hasHome == hasAway)
+                {
+                    if (!hasHome)
+                    {
+                        match.Status = MatchStatus.Completed;
+                    }
+
+                    continue;
+                }
+
+                var winnerId = match.HomeParticipantId ?? match.AwayParticipantId;
+                match.WinnerParticipantId = winnerId;
+                match.Status = MatchStatus.Completed;
+
+                if (winnerId.HasValue && match.NextMatchId.HasValue && matchesById.TryGetValue(match.NextMatchId.Value, out var nextMatch))
+                {
+                    bool isHomeSlot = (match.MatchOrder % 2) == 0;
+                    if (isHomeSlot)
+                    {
+                        nextMatch.HomeParticipantId = winnerId;
+                    }
+                    else
+                    {
+                        nextMatch.AwayParticipantId = winnerId;
+                    }
+                }
+            }
+        }
+
         private bool IsElimination(StageType? type) => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
 
         private string GetGroupName(int index)
@@ -825,6 +911,7 @@ namespace GameHubz.Logic.Services
                 {
                     RoundNumber = grp.Key,
                     Name = $"Round {grp.Key}",
+                    RoundDeadline = grp.Max(m => m.RoundDeadline),
                     Matches = grp.OrderBy(m => m.MatchOrder)
                                  .Select(m => MapMatchToDto(m))
                                  .ToList()
@@ -840,16 +927,25 @@ namespace GameHubz.Logic.Services
 
             foreach (var group in groups)
             {
+                var groupMatches = stage.Matches?
+                    .Where(m => m.TournamentGroupId == group.Id)
+                    .OrderBy(m => m.RoundNumber)
+                    .ThenBy(m => m.MatchOrder)
+                    .ToList() ?? new List<MatchEntity>();
+
                 var dto = new GroupDto
                 {
                     GroupId = group.Id!.Value,
                     Name = group.Name,
-                    Matches = stage.Matches?
-                        .Where(m => m.TournamentGroupId == group.Id)
-                        .OrderBy(m => m.RoundNumber)
-                        .ThenBy(m => m.MatchOrder)
+                    Matches = groupMatches
                         .Select(m => MapMatchToDto(m))
-                        .ToList() ?? new List<MatchStructureDto>()
+                        .ToList(),
+                    RoundDeadlines = groupMatches
+                        .GroupBy(m => m.RoundNumber ?? 1)
+                        .OrderBy(g => g.Key)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.Max(m => m.RoundDeadline))
                 };
 
                 dto.Standings = await GetGroupStandings(group.Id.Value);
@@ -866,6 +962,7 @@ namespace GameHubz.Logic.Services
                 Order = m.MatchOrder ?? 0,
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,
+                RoundDeadline = m.RoundDeadline,
                 NextMatchId = m.NextMatchId,
                 Evidences = m.MatchEvidences != null ? m.MatchEvidences.Select(x => x.Url!).ToList() : new List<string>(),
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto

@@ -91,7 +91,8 @@ namespace GameHubz.Logic.Services
                 MatchId = match.Id!.Value,
                 MySlots = mySlots,
                 OpponentSlots = opponentSlots,
-                ConfirmedTime = match.ScheduledStartTime
+                ConfirmedTime = match.ScheduledStartTime,
+                MatchDeadline = match.RoundDeadline
             };
         }
 

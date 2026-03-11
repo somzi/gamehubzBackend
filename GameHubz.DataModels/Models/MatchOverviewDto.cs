@@ -20,5 +20,6 @@ namespace GameHubz.DataModels.Models
 
         public Guid? HomeParticipantId { get; set; }
         public Guid? AwayParticipantId { get; set; }
+        public string? OpponentAvatarUrl { get; set; }
     }
 }

@@ -89,7 +89,9 @@ namespace GameHubz.Data.Repository
                     Prize = x.Prize,
                     Status = x.Status,
                     PrizeCurrency = x.PrizeCurrency,
-                    Id = x.Id!.Value
+                    Id = x.Id!.Value,
+                    HubName = x.Hub!.Name,
+                    HubAvatarUrl = x.Hub.AvatarUrl
                 })
                 .ToListAsync();
         }
@@ -226,6 +228,13 @@ namespace GameHubz.Data.Repository
                 .AnyAsync(t => t.Id == id &&
                    (t.TournamentParticipants!.Any(tp => tp.UserId == userId) ||
                     t.TournamentRegistrations!.Any(tr => tr.UserId == userId)));
+        }
+
+        public async Task<TournamentEntity> GetWithHubById(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.Hub)
+                .FirstAsync(x => x.Id == id);
         }
     }
 }

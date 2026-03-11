@@ -25,5 +25,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok(highlights);
         }
+
+        [HttpGet("all")]
+        public async Task<IActionResult> GetAllDashboardHighlights([FromQuery] int pageNumber)
+        {
+            var highlights = await this.Service.GetAllDashboardHighlights(pageNumber);
+
+            return Ok(highlights);
+        }
     }
 }

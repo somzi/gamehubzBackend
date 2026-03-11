@@ -1,4 +1,6 @@
 ﻿using FluentValidation;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.SignalR;
 
 namespace GameHubz.Logic.Services
 {
@@ -6,6 +8,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly TournamentService tournamentService;
         private readonly ICacheService cacheService;
+        private readonly CloudinaryStorageService storageService;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -16,7 +19,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             ServiceFunctions serviceFunctions,
             TournamentService tournamentService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            CloudinaryStorageService storageService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -28,6 +32,7 @@ namespace GameHubz.Logic.Services
         {
             this.tournamentService = tournamentService;
             this.cacheService = cacheService;
+            this.storageService = storageService;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -101,11 +106,11 @@ namespace GameHubz.Logic.Services
 
             if (userHubs == null)
             {
-                var hubIdsList = await this.AppUnitOfWork.UserHubRepository.GetHubIdsByUserId(userId);
+                var hubIdsList = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
                 userHubs = [.. hubIdsList];
 
-                await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(15));
+                await cacheService.SetAsync(key, userHubs, TimeSpan.FromMinutes(2));
             }
 
             return userHubs.Contains(hubId);
@@ -155,38 +160,16 @@ namespace GameHubz.Logic.Services
             return this.AppUnitOfWork.HubRepository;
         }
 
-        public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId)
+        public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber)
         {
-            string cacheKey = $"hubs:user:{userId}:joined";
-
-            var cachedHubs = await cacheService.GetAsync<IEnumerable<HubDto>>(cacheKey);
-
-            if (cachedHubs != null)
-            {
-                return cachedHubs;
-            }
-
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, true);
-
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true);
 
             return data;
         }
 
-        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId)
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, int pageNumber)
         {
-            string cacheKey = $"hubs:user:{userId}:discovery";
-
-            var cachedHubs = await cacheService.GetAsync<IEnumerable<HubDto>>(cacheKey);
-
-            if (cachedHubs != null)
-            {
-                return cachedHubs;
-            }
-
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, false);
-
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false);
 
             return data;
         }
@@ -222,10 +205,25 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"hubs:user:{userId}:discovery");
-            await cacheService.RemoveAsync($"hubs:user:{userId}:joined");
-            await cacheService.RemoveAsync($"hubs:user:{userAdmin.UserId}:joined");
             await cacheService.RemoveAsync($"hubs:{hubId}:members");
+        }
+
+        public async Task UploadAvatar(Guid id, IFormFile file)
+        {
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
+
+            string fileName = $"avatar";
+            string folderPath = $"hubs/{hub!.Name}";
+
+            string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+
+            hub.AvatarUrl = url;
+
+            await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"hub_overview:{id}");
         }
     }
 }

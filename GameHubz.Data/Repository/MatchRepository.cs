@@ -39,7 +39,8 @@ namespace GameHubz.Data.Repository
                          : x.AwaySlotsJson,
                     OpponentSlotsJson = x.HomeParticipant!.UserId == userId
                          ? x.AwaySlotsJson
-                         : x.HomeSlotsJson
+                         : x.HomeSlotsJson,
+                    MatchDeadline = x.RoundDeadline
                 })
                 .FirstAsync();
         }
@@ -51,12 +52,20 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentId == tournamentId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             return await this.BaseDbSet()
                 .Where(x =>
                     (x.HomeParticipant!.UserId == userId ||
                      x.AwayParticipant!.UserId == userId) &&
+                     (x.HomeParticipantId != null && x.AwayParticipantId != null) &&
                     (x.Status == MatchStatus.Pending ||
                      (x.Status == MatchStatus.Scheduled && x.ScheduledStartTime != null)))
                 .Select(x => new MatchOverviewDto
@@ -66,6 +75,10 @@ namespace GameHubz.Data.Repository
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.Username
                             : x.HomeParticipant!.User!.Username,
+                    OpponentAvatarUrl =
+                        x.HomeParticipant!.UserId == userId
+                            ? x.AwayParticipant!.User!.AvatarUrl
+                            : x.HomeParticipant!.User!.AvatarUrl,
                     ScheduledTime = x.ScheduledStartTime,
                     TournamentName = x.Tournament!.Name,
                     Status = x.Status,
@@ -90,13 +103,14 @@ namespace GameHubz.Data.Repository
                 .FirstAsync();
         }
 
-        public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId)
+        public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId, int pageSize, int pageNumber)
         {
             return await this.BaseDbSet()
                 .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
                             && m.Status == MatchStatus.Completed)
                 .OrderByDescending(m => m.ScheduledStartTime)
-                .Take(10)
+                .Skip(pageNumber * pageSize)
+                .Take(pageSize)
                 .Select(m => new MatchListItemDto
                 {
                     HubName = m.Tournament!.Hub!.Name,
@@ -105,12 +119,35 @@ namespace GameHubz.Data.Repository
                     OpponentName = m.HomeParticipant!.UserId == userId
                         ? m.AwayParticipant!.User!.Username
                         : m.HomeParticipant!.User!.Username,
+                    OpponentAvatarUrl = m.HomeParticipant!.UserId == userId
+                        ? m.AwayParticipant!.User!.AvatarUrl
+                        : m.HomeParticipant!.User!.AvatarUrl,
                     OpponentScore = m.HomeParticipant!.UserId == userId
                         ? m.AwayUserScore
                         : m.HomeUserScore,
                     UserScore = m.HomeParticipant!.UserId == userId
                         ? m.HomeUserScore
                         : m.AwayUserScore,
+                    UserAvatarUrl = m.HomeParticipant!.UserId == userId
+                        ? m.HomeParticipant!.User!.AvatarUrl
+                        : m.AwayParticipant!.User!.AvatarUrl,
+                    Username = m.HomeParticipant!.UserId == userId
+                        ? m.HomeParticipant!.User!.Username
+                        : m.AwayParticipant!.User!.Username,
+                    IsWin = m.WinnerParticipant!.UserId == userId,
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<PerformanceDto>> GetPerformanceByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(m => (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId)
+                            && m.Status == MatchStatus.Completed)
+                .OrderByDescending(m => m.ScheduledStartTime)
+                .Take(10)
+                .Select(m => new PerformanceDto
+                {
                     IsWin = m.WinnerParticipant!.UserId == userId,
                 })
                 .ToListAsync();

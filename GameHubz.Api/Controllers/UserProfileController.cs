@@ -33,10 +33,18 @@ namespace GameHubz.Api.Controllers
             return userProfile;
         }
 
-        [HttpGet("{id}/tournaments")]
-        public async Task<List<TournamentOverview>> GetTournaments(Guid id)
+        [HttpGet("{id}/matches")]
+        public async Task<List<MatchListItemDto>> GetMatches(Guid id, int pageNumber)
         {
-            var userProfile = await userProfileService.GetTournaments(id);
+            var matches = await userProfileService.GetMatches(id, pageNumber);
+
+            return matches;
+        }
+
+        [HttpGet("{id}/tournaments")]
+        public async Task<EntityListDto<TournamentOverview>> GetTournaments(Guid id, [FromQuery] int pageNumber)
+        {
+            var userProfile = await userProfileService.GetTournaments(id, pageNumber);
 
             return userProfile;
         }

@@ -38,7 +38,8 @@ namespace GameHubz.Data.Repository
                {
                    Id = x.Id!.Value,
                    UserId = x.UserId!.Value,
-                   Username = x.User!.Username
+                   Username = x.User!.Username,
+                   AvatarUrl =  x.User.AvatarUrl
                })
                .ToListAsync();
         }

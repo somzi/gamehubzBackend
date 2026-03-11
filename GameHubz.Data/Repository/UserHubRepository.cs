@@ -26,14 +26,6 @@ namespace GameHubz.Data.Repository
                 .FirstAsync(uh => uh.UserId == userId && uh.HubId == hubId)!;
         }
 
-        public async Task<List<Guid>> GetHubIdsByUserId(Guid userId)
-        {
-            return await this.BaseDbSet()
-                .Where(uh => uh.UserId == userId && uh.HubId != null)
-                .Select(x => x.HubId!.Value)
-                .ToListAsync();
-        }
-
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()

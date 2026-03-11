@@ -54,7 +54,6 @@ namespace GameHubz.Logic.Services
 
             if (tournamentRegistration.UserId.HasValue)
             {
-                await cacheService.RemoveAsync($"player_tournaments:{tournamentRegistration.UserId}");
                 await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:AvailableToJoin:p:0:s:10");
                 await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:Upcoming:p:0:s:10");
                 await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
@@ -83,7 +82,6 @@ namespace GameHubz.Logic.Services
             {
                 if (registration.UserId.HasValue)
                 {
-                    await cacheService.RemoveAsync($"player_tournaments:{registration.UserId}");
                     await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
                 }
             }

@@ -54,6 +54,7 @@ namespace GameHubz.Data.Repository
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count : 0,
                     NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count : 0,
                     UserId = x.UserId,
+                    AvatarUrl = x.AvatarUrl,
                     HubSocials = x.HubSocials != null
                             ? x.HubSocials.Select(s => new HubSocialDto
                             {
@@ -74,12 +75,14 @@ namespace GameHubz.Data.Repository
                 .AnyAsync(x => x.UserHubs != null && x.UserHubs.Any(uh => uh.UserId == userId));
         }
 
-        public async Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, bool joined)
+        public async Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, int pageNumber, bool joined)
         {
             return await this.BaseDbSet()
                 .Where(x => joined
                     ? x.UserHubs!.Any(uh => uh.UserId == userId) || x.UserId == userId
                     : !x.UserHubs!.Any(uh => uh.UserId == userId) && x.UserId != userId)
+                .Skip(pageNumber * 10)
+                .Take(10)
                 .Select(x => new HubDto
                 {
                     Id = x.Id!.Value,
@@ -88,8 +91,17 @@ namespace GameHubz.Data.Repository
                     UserId = x.UserId,
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
                     NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
-                    UserDisplayName = x.User.FirstName + " " + x.User.LastName
+                    UserDisplayName = x.User.FirstName + " " + x.User.LastName,
+                    AvatarUrl = x.AvatarUrl
                 })
+                .ToListAsync();
+        }
+
+        public async Task<List<Guid>> GetHubIdsByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(h => h.UserId == userId || (h.UserHubs != null && h.UserHubs.Any(uh => uh.UserId == userId)))
+                .Select(h => h.Id!.Value)
                 .ToListAsync();
         }
     }
