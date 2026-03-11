@@ -65,6 +65,7 @@ namespace GameHubz.Data.Repository
                 .Where(x =>
                     (x.HomeParticipant!.UserId == userId ||
                      x.AwayParticipant!.UserId == userId) &&
+                     (x.HomeParticipantId != null && x.AwayParticipantId != null) &&
                     (x.Status == MatchStatus.Pending ||
                      (x.Status == MatchStatus.Scheduled && x.ScheduledStartTime != null)))
                 .Select(x => new MatchOverviewDto
