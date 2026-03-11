@@ -50,6 +50,18 @@ namespace GameHubz.Api.Controllers
             };
         }
 
+        [HttpGet("/health")]
+        public async Task<ContentResult> Health()
+        {
+            string output = "Server is ON!!!";
+
+            return new ContentResult
+            {
+                ContentType = "text/html",
+                Content = output
+            };
+        }
+
         private Task TestLogging()
         {
             logger.LogError("Test error log");
