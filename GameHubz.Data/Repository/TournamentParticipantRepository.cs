@@ -34,7 +34,8 @@ namespace GameHubz.Data.Repository
                 .Select(x => new TournamentParticipantOverview
                 {
                     Username = x.User!.Username,
-                    UserId = x.User!.Id!.Value
+                    UserId = x.User!.Id!.Value,
+                    AvatarUrl = x.User.AvatarUrl
                 })
                 .ToListAsync();
         }
