@@ -39,7 +39,8 @@ namespace GameHubz.Data.Repository
                          : x.AwaySlotsJson,
                     OpponentSlotsJson = x.HomeParticipant!.UserId == userId
                          ? x.AwaySlotsJson
-                         : x.HomeSlotsJson
+                         : x.HomeSlotsJson,
+                    MatchDeadline = x.RoundDeadline
                 })
                 .FirstAsync();
         }
@@ -48,6 +49,13 @@ namespace GameHubz.Data.Repository
         {
             return this.BaseDbSet()
                 .Where(m => m.TournamentStageId == groupStageId)
+                .ToListAsync();
+        }
+
+        public Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentId == tournamentId && m.RoundNumber == roundNumber)
                 .ToListAsync();
         }
 

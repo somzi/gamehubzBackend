@@ -911,6 +911,7 @@ namespace GameHubz.Logic.Services
                 {
                     RoundNumber = grp.Key,
                     Name = $"Round {grp.Key}",
+                    RoundDeadline = grp.Max(m => m.RoundDeadline),
                     Matches = grp.OrderBy(m => m.MatchOrder)
                                  .Select(m => MapMatchToDto(m))
                                  .ToList()
@@ -926,16 +927,25 @@ namespace GameHubz.Logic.Services
 
             foreach (var group in groups)
             {
+                var groupMatches = stage.Matches?
+                    .Where(m => m.TournamentGroupId == group.Id)
+                    .OrderBy(m => m.RoundNumber)
+                    .ThenBy(m => m.MatchOrder)
+                    .ToList() ?? new List<MatchEntity>();
+
                 var dto = new GroupDto
                 {
                     GroupId = group.Id!.Value,
                     Name = group.Name,
-                    Matches = stage.Matches?
-                        .Where(m => m.TournamentGroupId == group.Id)
-                        .OrderBy(m => m.RoundNumber)
-                        .ThenBy(m => m.MatchOrder)
+                    Matches = groupMatches
                         .Select(m => MapMatchToDto(m))
-                        .ToList() ?? new List<MatchStructureDto>()
+                        .ToList(),
+                    RoundDeadlines = groupMatches
+                        .GroupBy(m => m.RoundNumber ?? 1)
+                        .OrderBy(g => g.Key)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.Max(m => m.RoundDeadline))
                 };
 
                 dto.Standings = await GetGroupStandings(group.Id.Value);
@@ -952,6 +962,7 @@ namespace GameHubz.Logic.Services
                 Order = m.MatchOrder ?? 0,
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,
+                RoundDeadline = m.RoundDeadline,
                 NextMatchId = m.NextMatchId,
                 Evidences = m.MatchEvidences != null ? m.MatchEvidences.Select(x => x.Url!).ToList() : new List<string>(),
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto

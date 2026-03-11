@@ -1,4 +1,4 @@
-﻿using Azure;
+using Azure;
 using FluentValidation;
 using GameHubz.DataModels.Enums;
 
@@ -155,6 +155,40 @@ namespace GameHubz.Logic.Services
             var isUserAlreadyRegistred = await this.AppUnitOfWork.TournamentRepository.CheckIsUserIsRegistered(id, userId);
 
             return isUserAlreadyRegistred;
+        }
+
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline)
+        {
+            if (roundNumber < 1)
+            {
+                throw new Exception("Round number must be greater than 0.");
+            }
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
+            var hub = tournament.Hub!;
+
+            if (hub.UserId != currentUser.UserId)
+            {
+                throw new Exception("Only tournament admin can manage round deadlines.");
+            }
+
+            var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
+            if (roundMatches.Count == 0)
+            {
+                throw new Exception("Round not found.");
+            }
+
+            foreach (var match in roundMatches)
+            {
+                match.RoundDeadline = deadline;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            }
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
         public override async Task<TournamentDto> SaveEntity(TournamentPost inputDto, bool doSave = true)

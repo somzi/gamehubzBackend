@@ -229,5 +229,12 @@ namespace GameHubz.Data.Repository
                    (t.TournamentParticipants!.Any(tp => tp.UserId == userId) ||
                     t.TournamentRegistrations!.Any(tr => tr.UserId == userId)));
         }
+
+        public async Task<TournamentEntity> GetWithHubById(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Include(x => x.Hub)
+                .FirstAsync(x => x.Id == id);
+        }
     }
 }

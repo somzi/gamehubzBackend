@@ -12,6 +12,8 @@ namespace GameHubz.DataModels.Models
 
         public string? OpponentSlotsJson { get; set; }
 
+        public DateTime? MatchDeadline { get; set; }
+
         public List<DateTime> MySlots
         {
             get => string.IsNullOrEmpty(MySlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(MySlotsJson)!;

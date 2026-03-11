@@ -14,6 +14,7 @@ namespace GameHubz.DataModels.Domain
         public int? HomeUserScore { get; set; }
         public int? AwayUserScore { get; set; }
         public DateTime? ScheduledStartTime { get; set; }
+        public DateTime? RoundDeadline { get; set; }
         public MatchStatus Status { get; set; }
         public Guid? WinnerParticipantId { get; set; }
         public TournamentEntity? Tournament { get; set; }

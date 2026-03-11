@@ -85,5 +85,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok(isUserAlreadyRegistred);
         }
+
+        [HttpPut("{id}/roundDeadline")]
+        public async Task<IActionResult> SetRoundDeadline([FromRoute] Guid id, [FromBody] SetRoundDeadlineRequest request)
+        {
+            await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline);
+
+            return Ok();
+        }
     }
 }

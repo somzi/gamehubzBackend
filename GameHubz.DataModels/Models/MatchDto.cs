@@ -20,6 +20,8 @@ namespace GameHubz.DataModels.Models
 
         public DateTime? ScheduledStartTime { get; set; }
 
+        public DateTime? RoundDeadline { get; set; }
+
         public MatchStatus Status { get; set; }
 
         public Guid? WinnerParticipantId { get; set; }
