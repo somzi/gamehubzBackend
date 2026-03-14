@@ -84,6 +84,10 @@ namespace GameHubz.Logic.Services
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
                 throw new Exception("Not enough participants to start tournament.");
 
+            TimeSpan? roundDuration = tournament.RoundDurationMinutes.HasValue
+                ? TimeSpan.FromMinutes(tournament.RoundDurationMinutes.Value)
+                : null;
+
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
@@ -91,7 +95,7 @@ namespace GameHubz.Logic.Services
                     break;
 
                 case TournamentFormat.League:
-                    await GenerateLeagueTournament(request.TournamentId, doubleRoundRobin: false);
+                    await GenerateLeagueTournament(request.TournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
                     break;
 
                 case TournamentFormat.DoubleElimination:
@@ -101,7 +105,7 @@ namespace GameHubz.Logic.Services
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new Exception("Group count and qualifiers count are required for this format.");
-                    await GenerateGroupStageWithKnockout(request.TournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value);
+                    await GenerateGroupStageWithKnockout(request.TournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
                     break;
 
                 default:
@@ -164,7 +168,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateLeagueTournament(Guid tournamentId, bool doubleRoundRobin = false)
+        public async Task GenerateLeagueTournament(Guid tournamentId, bool doubleRoundRobin = false, TimeSpan? roundDuration = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
@@ -198,6 +202,9 @@ namespace GameHubz.Logic.Services
 
             var allMatches = GenerateRoundRobinMatches(tournamentId, stage.Id.Value, participants!, doubleRoundRobin);
 
+            // Assign RoundOpenAt and RoundDeadline for all rounds
+            AssignAllRoundSchedules(allMatches, roundDuration);
+
             foreach (var match in allMatches)
             {
                 match.TournamentGroupId = group.Id;
@@ -209,7 +216,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup)
+        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -295,6 +302,9 @@ namespace GameHubz.Logic.Services
                     allMatches.Add(m);
                 }
             }
+
+            // Assign RoundOpenAt and RoundDeadline for all rounds
+            AssignAllRoundSchedules(allMatches, roundDuration);
 
             foreach (var match in allMatches)
             {
@@ -398,12 +408,12 @@ namespace GameHubz.Logic.Services
                 if (match.TournamentStage?.Type == StageType.GroupStage)
                 {
                     await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
-                    await CheckAndUnlockNextRound(match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
                 }
                 if (match.TournamentStage?.Type == StageType.League)
                 {
                     await CheckAndCompleteLeague(match.TournamentId);
-                    await CheckAndUnlockNextRound(match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
                 }
             }
             else if (IsElimination(match.TournamentStage?.Type))
@@ -696,14 +706,14 @@ namespace GameHubz.Logic.Services
 
             if (n == 2)
             {
-                var m = CreateMatch(tournamentId, stageId, 1, MatchStage.GroupStage, 0, DateTime.UtcNow);
+                var m = CreateMatch(tournamentId, stageId, 1, MatchStage.GroupStage, 0);
                 m.HomeParticipantId = participants[0].Id;
                 m.AwayParticipantId = participants[1].Id;
                 allMatches.Add(m);
 
                 if (doubleRoundRobin)
                 {
-                    var ret = CreateMatch(tournamentId, stageId, 2, MatchStage.GroupStage, 1, DateTime.MaxValue);
+                    var ret = CreateMatch(tournamentId, stageId, 2, MatchStage.GroupStage, 1);
                     ret.HomeParticipantId = participants[1].Id;
                     ret.AwayParticipantId = participants[0].Id;
                     allMatches.Add(ret);
@@ -742,7 +752,7 @@ namespace GameHubz.Logic.Services
 
                     if (homeP != null && awayP != null)
                     {
-                        var m = CreateMatch(tournamentId, stageId, round, MatchStage.GroupStage, matchOrder++, round == 1 ? DateTime.UtcNow : DateTime.MaxValue);
+                        var m = CreateMatch(tournamentId, stageId, round, MatchStage.GroupStage, matchOrder++);
                         m.HomeParticipantId = homeP.Id;
                         m.AwayParticipantId = awayP.Id;
                         allMatches.Add(m);
@@ -766,7 +776,7 @@ namespace GameHubz.Logic.Services
                 for (int i = 0; i < firstRoundMatchCount; i++)
                 {
                     var orig = allMatches[i];
-                    var ret = CreateMatch(tournamentId, stageId, orig.RoundNumber!.Value + totalRounds, MatchStage.GroupStage, matchOrder++, DateTime.MaxValue);
+                    var ret = CreateMatch(tournamentId, stageId, orig.RoundNumber!.Value + totalRounds, MatchStage.GroupStage, matchOrder++);
                     ret.HomeParticipantId = orig.AwayParticipantId;
                     ret.AwayParticipantId = orig.HomeParticipantId;
                     allMatches.Add(ret);
@@ -824,11 +834,7 @@ namespace GameHubz.Logic.Services
         private static int GetNextPowerOfTwo(int n)
         {
             int power = 1;
-            while (power < n)
-            {
-                power <<= 1;
-            }
-
+            while (power < n) power <<= 1;
             return power;
         }
 
@@ -845,7 +851,6 @@ namespace GameHubz.Logic.Services
                     next.Add(order[i]);
                     next.Add((count * 2) + 1 - order[i]);
                 }
-
                 order = next;
                 count *= 2;
             }
@@ -871,11 +876,7 @@ namespace GameHubz.Logic.Services
 
                 if (hasHome == hasAway)
                 {
-                    if (!hasHome)
-                    {
-                        match.Status = MatchStatus.Completed;
-                    }
-
+                    if (!hasHome) match.Status = MatchStatus.Completed;
                     continue;
                 }
 
@@ -886,19 +887,13 @@ namespace GameHubz.Logic.Services
                 if (winnerId.HasValue && match.NextMatchId.HasValue && matchesById.TryGetValue(match.NextMatchId.Value, out var nextMatch))
                 {
                     bool isHomeSlot = (match.MatchOrder % 2) == 0;
-                    if (isHomeSlot)
-                    {
-                        nextMatch.HomeParticipantId = winnerId;
-                    }
-                    else
-                    {
-                        nextMatch.AwayParticipantId = winnerId;
-                    }
+                    if (isHomeSlot) nextMatch.HomeParticipantId = winnerId;
+                    else nextMatch.AwayParticipantId = winnerId;
                 }
             }
         }
 
-        private async Task CheckAndUnlockNextRound(Guid stageId, int completedRound)
+        private async Task CheckAndUnlockNextRound(Guid tournamentId, Guid stageId, int completedRound)
         {
             var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
 
@@ -914,13 +909,58 @@ namespace GameHubz.Logic.Services
 
             if (nextRoundMatches.Count == 0) return;
 
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+            var roundDuration = CalculateRoundDuration(tournament.RoundDurationMinutes);
+
             foreach (var m in nextRoundMatches)
             {
+                // Always unlock immediately when previous round finishes early
                 m.RoundOpenAt = DateTime.UtcNow;
+
+                // Only set deadline if duration is configured and deadline not already set
+                if (roundDuration.HasValue && !m.RoundDeadline.HasValue)
+                    m.RoundDeadline = DateTime.UtcNow + roundDuration.Value;
+
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(m, this.UserContextReader);
             }
 
             await this.SaveAsync();
+        }
+
+        private static TimeSpan? CalculateRoundDuration(int? minutes)
+            => minutes.HasValue ? TimeSpan.FromMinutes(minutes.Value) : null;
+
+        /// <summary>
+        /// Assigns RoundOpenAt and RoundDeadline for all rounds upfront at generation time.
+        /// If roundDuration is null: Round 1 opens immediately, all other rounds are locked (DateTime.MaxValue).
+        /// If roundDuration has value: Each round opens sequentially based on duration * roundIndex.
+        /// </summary>
+        private static void AssignAllRoundSchedules(List<MatchEntity> matches, TimeSpan? roundDuration)
+        {
+            if (!roundDuration.HasValue)
+            {
+                // No duration configured - round 1 open immediately, rest locked
+                foreach (var m in matches)
+                    m.RoundOpenAt = (m.RoundNumber ?? 1) == 1 ? DateTime.UtcNow : DateTime.MaxValue;
+                return;
+            }
+
+            var roundGroups = matches
+                .GroupBy(m => m.RoundNumber ?? 1)
+                .OrderBy(g => g.Key);
+
+            foreach (var group in roundGroups)
+            {
+                int roundIndex = group.Key - 1;
+                DateTime openAt = DateTime.UtcNow.AddMinutes(roundDuration.Value.TotalMinutes * roundIndex);
+                DateTime deadline = openAt + roundDuration.Value;
+
+                foreach (var m in group)
+                {
+                    m.RoundOpenAt = openAt;
+                    m.RoundDeadline = deadline;
+                }
+            }
         }
 
         private bool IsElimination(StageType? type) => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
@@ -996,6 +1036,7 @@ namespace GameHubz.Logic.Services
                 RoundDeadline = m.RoundDeadline,
                 NextMatchId = m.NextMatchId,
                 IsRoundLocked = m.RoundOpenAt.HasValue && m.RoundOpenAt.Value > DateTime.UtcNow,
+                MatchOpensAt = m.RoundOpenAt,
                 Evidences = m.MatchEvidences != null ? m.MatchEvidences.Select(x => x.Url!).ToList() : new List<string>(),
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {

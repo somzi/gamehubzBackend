@@ -92,7 +92,8 @@ namespace GameHubz.Data.Repository
                     Id = x.Id!.Value,
                     HubName = x.Hub!.Name,
                     HubAvatarUrl = x.Hub.AvatarUrl,
-                    Format = x.Format
+                    Format = x.Format,
+                    RoundDurationMinutes = x.RoundDurationMinutes
                 })
                 .ToListAsync();
         }
@@ -165,7 +166,8 @@ namespace GameHubz.Data.Repository
                       CreatedBy = x.CreatedBy!.Value,
                       RegistrationDeadLine = x.RegistrationDeadline,
                       HubId = x.HubId!.Value,
-                      Format = x.Format
+                      Format = x.Format,
+                      RoundDurationMinutes = x.RoundDurationMinutes
                   }).FirstOrDefaultAsync();
         }
 

@@ -23,6 +23,7 @@ namespace GameHubz.DataModels.Domain
 
         public int? QualifiersPerGroup { get; set; }
         public int? GroupsCount { get; set; }
+        public int? RoundDurationMinutes { get; set; }
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

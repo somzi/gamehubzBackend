@@ -83,7 +83,8 @@ namespace GameHubz.Data.Repository
                     StartDate = x.Tournament.StartDate!.Value,
                     HubAvatarUrl = x.Tournament.Hub!.AvatarUrl,
                     HubName = x.Tournament.Hub.Name,
-                    Format = x.Tournament.Format
+                    Format = x.Tournament.Format,
+                    RoundDurationMinutes = x.Tournament.RoundDurationMinutes
                 })
                 .ToListAsync();
 

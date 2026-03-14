@@ -16,5 +16,6 @@ namespace GameHubz.DataModels.Models
         public MatchParticipantDto? Away { get; set; }
         public List<string> Evidences { get; set; }
         public bool IsRoundLocked { get; set; }
+        public DateTime? MatchOpensAt { get; set; }
     }
 }

@@ -25,6 +25,7 @@ namespace GameHubz.DataModels.Models
 
         public int? QualifiersPerGroup { get; set; }
         public int? GroupsCount { get; set; }
+        public int? RoundDurationMinutes { get; set; }
 
         public DateTime? RegistrationDeadline { get; set; }
         public int Prize { get; set; }

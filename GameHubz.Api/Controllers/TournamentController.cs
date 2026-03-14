@@ -102,6 +102,14 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPut("{id}/roundStart")]
+        public async Task<IActionResult> SetRoundStart([FromRoute] Guid id, [FromBody] SetRoundDeadlineRequest request)
+        {
+            await this.Service.SetRoundStart(id, request.RoundNumber, request.Deadline);
+
+            return Ok();
+        }
+
         [HttpPost("{id}/cancel")]
         public async Task<IActionResult> CancelTournament([FromRoute] Guid id)
         {
