@@ -23,8 +23,10 @@ namespace GameHubz.Data.Repository
 
         public async Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId)
         {
-            return await this.BaseDbSet()
+            var hasUnfinished = await this.BaseDbSet()
                 .AnyAsync(m => m.TournamentId == tournamentId && m.Status != MatchStatus.Completed);
+
+            return !hasUnfinished;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
