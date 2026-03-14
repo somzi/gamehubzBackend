@@ -162,12 +162,32 @@ namespace GameHubz.Logic.Services
             return isUserAlreadyRegistred;
         }
 
-        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline)
-             => await UpdateRoundSchedule(tournamentId, roundNumber, deadline: deadline);
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart)
+        {
+            if (roundNumber < 1)
+                throw new Exception("Round number must be greater than 0.");
 
-        public async Task SetRoundStart(Guid tournamentId, int roundNumber, DateTime? roundOpensAt)
-            => await UpdateRoundSchedule(tournamentId, roundNumber, opensAt: roundOpensAt);
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
 
+            if (tournament.Hub!.UserId != currentUser.UserId)
+                throw new Exception("Only tournament admin can manage round deadlines.");
+
+            var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
+            if (roundMatches.Count == 0)
+                throw new Exception("Round not found.");
+
+            foreach (var match in roundMatches)
+            {
+                if (roundStart != null) match.RoundOpenAt = roundStart;
+                if (deadline != null) match.RoundDeadline = deadline;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            }
+
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+        }
 
         public async Task CancelTournament(Guid id)
         {

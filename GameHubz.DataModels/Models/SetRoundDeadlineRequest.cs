@@ -4,5 +4,6 @@ namespace GameHubz.DataModels.Models
     {
         public int RoundNumber { get; set; }
         public DateTime? Deadline { get; set; }
+        public DateTime? RoundStart { get; set; }
     }
 }
