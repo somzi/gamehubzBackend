@@ -1,5 +1,6 @@
 using GameHubz.DataModels.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace GameHubz.Data.Context
 {
@@ -12,6 +13,30 @@ namespace GameHubz.Data.Context
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            var utcConverter = new ValueConverter<DateTime, DateTime>(
+                v => DateTime.SpecifyKind(v, DateTimeKind.Utc),
+                v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+            var nullableUtcConverter = new ValueConverter<DateTime?, DateTime?>(
+                v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v,
+                v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var property in entityType.GetProperties()
+                    .Where(p => p.ClrType == typeof(DateTime) || p.ClrType == typeof(DateTime?)))
+                {
+                    if (property.ClrType == typeof(DateTime))
+                    {
+                        property.SetValueConverter(utcConverter);
+                    }
+                    else
+                    {
+                        property.SetValueConverter(nullableUtcConverter);
+                    }
+                }
+            }
+
             UserConfigurator(modelBuilder);
             UserRoleConfigurator(modelBuilder);
             AssetsConfigurator(modelBuilder);

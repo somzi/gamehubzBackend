@@ -67,7 +67,8 @@ namespace GameHubz.Logic.Services
                 inputDto,
                 this.GetEntityById,
                 this.BeforeSave,
-                this.BeforeDtoMapToEntity);
+                this.BeforeDtoMapToEntity,
+                doSave);
 
             return model;
         }

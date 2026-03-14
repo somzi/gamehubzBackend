@@ -36,7 +36,10 @@ namespace GameHubz.Logic.Services
         {
             var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetUserByTournamentId(tournamentId, userId);
 
+            var registration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetUserByTournamentId(tournamentId, userId);
+
             await this.AppUnitOfWork.TournamentParticipantRepository.HardDeleteEntity(participant);
+            await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
 
             await this.SaveAsync();
         }

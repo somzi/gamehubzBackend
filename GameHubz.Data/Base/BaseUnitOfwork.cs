@@ -41,6 +41,8 @@ namespace GameHubz.Data
                 this.SetTimestamps();
             }
 
+            this.NormalizeDateTimesToUtc();
+
             this.Context.SaveChanges();
         }
 
@@ -50,6 +52,8 @@ namespace GameHubz.Data
             {
                 this.SetTimestamps();
             }
+
+            this.NormalizeDateTimesToUtc();
 
             await this.Context.SaveChangesAsync();
         }
@@ -134,6 +138,42 @@ namespace GameHubz.Data
                     affectedEntity.CreatedOn = now;
                 }
             }
+        }
+
+        protected virtual void NormalizeDateTimesToUtc()
+        {
+            foreach (EntityEntry entry in this.Context.ChangeTracker.Entries()
+                         .Where(x => x.State == EntityState.Added || x.State == EntityState.Modified))
+            {
+                foreach (PropertyEntry property in entry.Properties)
+                {
+                    Type propertyType = property.Metadata.ClrType;
+
+                    if (propertyType == typeof(DateTime) && property.CurrentValue is DateTime dateTimeValue)
+                    {
+                        property.CurrentValue = EnsureUtc(dateTimeValue);
+                    }
+                    else if (propertyType == typeof(DateTime?) && property.CurrentValue is DateTime nullableDateTimeValue)
+                    {
+                        property.CurrentValue = EnsureUtc(nullableDateTimeValue);
+                    }
+                }
+            }
+        }
+
+        private static DateTime EnsureUtc(DateTime value)
+        {
+            if (value.Kind == DateTimeKind.Utc)
+            {
+                return value;
+            }
+
+            if (value.Kind == DateTimeKind.Unspecified)
+            {
+                return DateTime.SpecifyKind(value, DateTimeKind.Utc);
+            }
+
+            return value.ToUniversalTime();
         }
 
         protected virtual void Dispose(bool disposing)

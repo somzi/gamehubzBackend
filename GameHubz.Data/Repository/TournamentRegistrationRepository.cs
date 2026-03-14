@@ -44,6 +44,12 @@ namespace GameHubz.Data.Repository
                .ToListAsync();
         }
 
+        public Task<TournamentRegistrationEntity> GetUserByTournamentId(Guid tournamentId, Guid userId)
+        {
+            return this.BaseDbSet()
+                .FirstAsync(tp => tp.TournamentId == tournamentId && tp.UserId == userId);
+        }
+
         public Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId)
         {
             return this.BaseDbSet()

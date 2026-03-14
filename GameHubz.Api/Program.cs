@@ -20,6 +20,8 @@ namespace GameHubz.Api
     {
         public static void Main(params string[] args)
         {
+            AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
             WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
             builder.WebHost.UseNLog();
@@ -44,6 +46,8 @@ namespace GameHubz.Api
             builder.Services.AddHttpContextAccessor();
 
             builder.Services.AddHostedService<SendEmailTask>();
+
+            var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "localhost:6379";
 
             builder.Services.AddStackExchangeRedisCache(options =>
             {

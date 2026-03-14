@@ -116,7 +116,7 @@ namespace GameHubz.Logic.Services
                 UserId = tournamentRegistration.UserId
             };
 
-            await this.tournamentParticipantService.SaveEntity(tournamentParticipants, false);
+            await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
         }
 
         private async Task SetRegistrationStatus(TournamentRegistrationEntity tournamentRegistration, TournamentRegistrationStatus status)
