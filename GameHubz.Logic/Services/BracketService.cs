@@ -959,6 +959,7 @@ namespace GameHubz.Logic.Services
             return new MatchStructureDto
             {
                 Id = m.Id!.Value,
+                Round = m.RoundNumber ?? 1,
                 Order = m.MatchOrder ?? 0,
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,

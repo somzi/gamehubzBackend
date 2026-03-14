@@ -5,6 +5,7 @@ namespace GameHubz.DataModels.Models
     public class MatchStructureDto
     {
         public Guid Id { get; set; }
+        public int Round { get; set; }
         public int Order { get; set; }
         public MatchStatus Status { get; set; }
         public DateTime? StartTime { get; set; }
