@@ -112,13 +112,19 @@ namespace GameHubz.Logic.Services
 
         public async Task Publish(Guid id)
         {
-            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetByIdOrThrowIfNull(id);
+            await OpenRegistration(id);
+        }
 
-            tournament.Status = TournamentStatus.RegistrationOpen;
+        public async Task OpenRegistration(Guid id)
+        {
+            var tournament = await ChangeTournamentStatus(
+                id,
+                TournamentStatus.RegistrationOpen,
+                ShouldOpenRegistration,
+                "Tournament registration can be opened only when it is closed."
+            );
 
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-
-            await SaveAsync();
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.RegistrationOpen);
         }
 
         public async Task<TournamentOverview> GetOverview(Guid id)
@@ -283,6 +289,11 @@ namespace GameHubz.Logic.Services
         private static bool ShouldCancelTournament(TournamentEntity tournament)
         {
             return tournament.Status == TournamentStatus.InProgress;
+        }
+
+        private static bool ShouldOpenRegistration(TournamentEntity tournament)
+        {
+            return tournament.Status == TournamentStatus.RegistrationClosed;
         }
 
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)

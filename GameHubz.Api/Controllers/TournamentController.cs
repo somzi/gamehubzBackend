@@ -62,6 +62,14 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("{id}/openRegistration")]
+        public async Task<IActionResult> OpenRegistration([FromRoute] Guid id)
+        {
+            await this.Service.OpenRegistration(id);
+
+            return Ok();
+        }
+
         [HttpPost("{id}/publish")]
         public async Task<IActionResult> Publish([FromRoute] Guid id)
         {
