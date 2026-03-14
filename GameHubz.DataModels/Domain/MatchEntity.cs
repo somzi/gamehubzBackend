@@ -53,5 +53,6 @@ namespace GameHubz.DataModels.Domain
         public List<MatchEvidenceEntity>? MatchEvidences { get; set; } = new();
 
         public List<MatchChatEntity>? MatchChats { get; set; } = new();
+        public DateTime? RoundOpenAt { get; set; }
     }
 }
