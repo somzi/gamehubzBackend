@@ -82,7 +82,7 @@ namespace GameHubz.Logic.Services
                 Tournaments = tournaments
             };
 
-            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(3));
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromSeconds(30));
 
             return response;
         }

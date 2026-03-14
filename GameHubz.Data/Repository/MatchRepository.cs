@@ -63,6 +63,7 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Where(x =>
+                    x.Tournament!.Status == TournamentStatus.InProgress &&
                     (x.HomeParticipant!.UserId == userId ||
                      x.AwayParticipant!.UserId == userId) &&
                      (x.HomeParticipantId != null && x.AwayParticipantId != null) &&
