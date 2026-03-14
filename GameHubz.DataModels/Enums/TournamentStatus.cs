@@ -7,6 +7,7 @@ namespace GameHubz.DataModels.Enums
         RegistrationClosed = 2,
         InProgress = 3,
         Completed = 4,
-        Cancelled = 5
+        Cancelled = 5,
+        Deleted = 6
     }
 }

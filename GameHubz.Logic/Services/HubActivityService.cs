@@ -109,8 +109,10 @@ namespace GameHubz.Logic.Services
             {
                 HubActivityType.TournamentAnnounced => "announced a new tournament",
                 HubActivityType.RegistrationOpen => "registration is now open",
+                HubActivityType.TournamentCanceled => "tournament has been cancelled",
                 HubActivityType.TournamentLive => "started a live tournament",
                 HubActivityType.TournamentCompleted => "tournament concluded",
+                HubActivityType.TournamentDeleted => "tournament deleted",
                 _ => "updated a tournament"
             };
         }

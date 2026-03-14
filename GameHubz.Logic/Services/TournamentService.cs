@@ -1,4 +1,3 @@
-using Azure;
 using FluentValidation;
 using GameHubz.DataModels.Enums;
 
@@ -51,7 +50,7 @@ namespace GameHubz.Logic.Services
                 Tournaments = tournaments
             };
 
-            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(1));
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromSeconds(30));
 
             return response;
         }
@@ -191,6 +190,64 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
+        public async Task CancelTournament(Guid id)
+        {
+            var tournament = await ChangeTournamentStatus(
+                id,
+                TournamentStatus.Cancelled,
+                ShouldCancelTournament,
+                "Tournament can be cancelled only when it is in progress."
+            );
+
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCanceled);
+        }
+
+        public async Task HardDeleteTournament(Guid id)
+        {
+            var tournament = await ChangeTournamentStatus(
+                id,
+                TournamentStatus.Deleted,
+                ShouldDeleteTournament,
+                "Tournament can be deleted only when it is in progress or completed."
+            );
+
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentDeleted);
+        }
+
+        private async Task<TournamentEntity> ChangeTournamentStatus(
+            Guid id,
+            TournamentStatus newStatus,
+            Func<TournamentEntity, bool> validator,
+            string errorMessage)
+        {
+            var tournament = await GetHubOwnedTournamentOrThrow(id);
+
+            if (!validator(tournament))
+                throw new Exception(errorMessage);
+
+            tournament.Status = newStatus;
+
+            await AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, UserContextReader);
+            await SaveAsync();
+
+            await InvalidateTournamentCache(id, tournament.HubId!.Value);
+
+            return tournament;
+        }
+
+        private async Task<TournamentEntity> GetHubOwnedTournamentOrThrow(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
+
+            if (tournament.Hub?.UserId != currentUser.UserId)
+            {
+                throw new Exception("Only hub owner can manage this tournament.");
+            }
+
+            return tournament;
+        }
+
         public override async Task<TournamentDto> SaveEntity(TournamentPost inputDto, bool doSave = true)
         {
             TournamentDto model = await this.ServiceFunctions.SaveEntity(
@@ -215,6 +272,29 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
+        }
+
+        private static bool ShouldDeleteTournament(TournamentEntity tournament)
+        {
+            return tournament.Status == TournamentStatus.RegistrationClosed || tournament.Status == TournamentStatus.RegistrationOpen;
+        }
+
+        private static bool ShouldCancelTournament(TournamentEntity tournament)
+        {
+            return tournament.Status == TournamentStatus.InProgress;
+        }
+
+        private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
+        {
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+            await cacheService.RemoveAsync($"hub_overview:{hubId}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{0}:s:{10}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{1}:s:{10}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{0}:s:{10}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{1}:s:{10}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{0}:s:{10}");
+            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{1}:s:{10}");
         }
     }
 }
