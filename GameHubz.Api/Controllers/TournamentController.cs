@@ -93,5 +93,21 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        [HttpPost("{id}/cancel")]
+        public async Task<IActionResult> CancelTournament([FromRoute] Guid id)
+        {
+            await this.Service.CancelTournament(id);
+
+            return Ok();
+        }
+
+        [HttpDelete("{id}/hardDelete")]
+        public async Task<IActionResult> HardDeleteTournament([FromRoute] Guid id)
+        {
+            await this.Service.HardDeleteTournament(id);
+
+            return Ok();
+        }
     }
 }
