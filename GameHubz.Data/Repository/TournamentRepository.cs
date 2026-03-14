@@ -91,7 +91,8 @@ namespace GameHubz.Data.Repository
                     PrizeCurrency = x.PrizeCurrency,
                     Id = x.Id!.Value,
                     HubName = x.Hub!.Name,
-                    HubAvatarUrl = x.Hub.AvatarUrl
+                    HubAvatarUrl = x.Hub.AvatarUrl,
+                    Format = x.Format
                 })
                 .ToListAsync();
         }
@@ -163,7 +164,8 @@ namespace GameHubz.Data.Repository
                       Rules = x.Rules ?? string.Empty,
                       CreatedBy = x.CreatedBy!.Value,
                       RegistrationDeadLine = x.RegistrationDeadline,
-                      HubId = x.HubId!.Value
+                      HubId = x.HubId!.Value,
+                      Format = x.Format
                   }).FirstOrDefaultAsync();
         }
 

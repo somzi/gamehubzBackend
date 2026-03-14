@@ -67,7 +67,7 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(30));
+            await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
 
             return response;
         }

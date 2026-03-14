@@ -20,5 +20,6 @@ namespace GameHubz.DataModels.Models
         public DateTime? RegistrationDeadLine { get; set; }
         public string HubName { get; set; } = string.Empty;
         public string? HubAvatarUrl { get; set; }
+        public TournamentFormat? Format { get; set; }
     }
 }
