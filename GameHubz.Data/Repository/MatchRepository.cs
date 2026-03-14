@@ -61,17 +61,28 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
+            var now = DateTime.UtcNow;
+
             return await this.BaseDbSet()
                 .Where(x =>
                     x.Tournament!.Status == TournamentStatus.InProgress &&
-                    (x.HomeParticipant!.UserId == userId ||
-                     x.AwayParticipant!.UserId == userId) &&
-                     (x.HomeParticipantId != null && x.AwayParticipantId != null) &&
+                    (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId) &&
+                    x.HomeParticipantId != null && x.AwayParticipantId != null &&
                     (x.Status == MatchStatus.Pending ||
-                     (x.Status == MatchStatus.Scheduled && x.ScheduledStartTime != null)))
+                     (x.Status == MatchStatus.Scheduled && x.ScheduledStartTime != null)) &&
+                    (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
+                    (x.RoundDeadline == null || x.RoundDeadline >= now)
+                )
                 .Select(x => new MatchOverviewDto
                 {
+                    Id = x.Id!.Value,
                     HubName = x.Tournament!.Hub!.Name,
+                    TournamentName = x.Tournament!.Name,
+                    TournamentId = x.TournamentId,
+                    HomeParticipantId = x.HomeParticipantId,
+                    AwayParticipantId = x.AwayParticipantId,
+                    Status = x.Status,
+                    ScheduledTime = x.ScheduledStartTime,
                     OpponentName =
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.Username
@@ -80,13 +91,6 @@ namespace GameHubz.Data.Repository
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.AvatarUrl
                             : x.HomeParticipant!.User!.AvatarUrl,
-                    ScheduledTime = x.ScheduledStartTime,
-                    TournamentName = x.Tournament!.Name,
-                    Status = x.Status,
-                    Id = x.Id!.Value,
-                    AwayParticipantId = x.AwayParticipantId,
-                    HomeParticipantId = x.HomeParticipantId,
-                    TournamentId = x.TournamentId
                 })
                 .ToListAsync();
         }
