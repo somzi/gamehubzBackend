@@ -121,7 +121,7 @@ namespace GameHubz.Logic.Services
         {
             this.validator.ValidateAndThrow(loginRequest);
 
-            UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail($"{loginRequest.Email}@gmail.com");
+            UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail($"{loginRequest.Email}");
 
             if (user != null && !user.IsActive)
             {
