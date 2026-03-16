@@ -125,7 +125,7 @@ namespace GameHubz.Logic.Services
 
             if (user != null && !user.IsActive)
             {
-                return new TokenResponse(false, null, this.LocalizationService["This account is deleted"]);
+                return new TokenResponse(false, null, this.LocalizationService["AuthService.DeletedAccount"]);
             }
 
             if (user == null
