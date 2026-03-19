@@ -37,7 +37,7 @@ namespace GameHubz.Data.Repository
         public async Task<bool> AnyByEmail(string email)
         {
             return await this.BaseDbSet()
-                .Where(x => x.Email == email)
+                .Where(x => x.Email == email && x.IsActive)
                 .AnyAsync();
         }
 
@@ -139,8 +139,8 @@ namespace GameHubz.Data.Repository
             }
 
             return entity.IsNew
-                ? !this.BaseDbSet().Any(x => x.Email == email)
-                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.Email == email);
+                ? !this.BaseDbSet().Any(x => x.Email == email && x.IsActive)
+                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.Email == email && x.IsActive);
         }
 
         public bool IsObjectIdUnique(UserEntity entity, string? objectId)

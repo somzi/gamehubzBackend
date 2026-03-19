@@ -38,7 +38,6 @@ namespace GameHubz.Api
 
             builder.Configuration.AddEnvironmentVariables();
 
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
 
             builder.Services.AddHttpContextAccessor();
@@ -48,15 +47,26 @@ namespace GameHubz.Api
             builder.Services.AddStackExchangeRedisCache(options =>
             {
                 options.Configuration = builder.Configuration.GetConnectionString("Redis");
-                options.InstanceName = "GameHubz_"; // Ovo dodaje prefix svim ključevima (korisno da se ne pomeša sa drugim aplikacijama)
+                options.InstanceName = "GameHubz_";
             });
 
-            // 2. Registracija tvog servisa
             builder.Services.AddScoped<ICacheService, RedisCacheService>();
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);
             builder.Services.AddSignalR();
+
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy("AllowAll",
+                    policy =>
+                    {
+                        policy.AllowAnyOrigin()
+                              .AllowAnyMethod()
+                              .AllowAnyHeader();
+                    });
+            });
+
             WebApplication app = builder.Build();
 
             RabbitMqStartup.ConfigureRabbitMqConsumers(app.Services);
@@ -68,8 +78,7 @@ namespace GameHubz.Api
             app.Run();
         }
 
-        private static void ConfigureServices(
-            IServiceCollection services)
+        private static void ConfigureServices(IServiceCollection services)
         {
             services.AddSingleton<ILocalizationService, LocalizationService>();
             services.AddTransient<IUserContextReader, UserContextReader>();
@@ -99,10 +108,7 @@ namespace GameHubz.Api
                 ServiceLifetime.Transient);
         }
 
-#pragma warning disable IDE0060 // Remove unused parameter
-
         private static void ConfigurePipeline(WebApplication app, ConfigurationManager configurationManager)
-#pragma warning restore IDE0060 // Remove unused parameter
         {
             if (app.Environment.IsDevelopment())
             {
@@ -111,14 +117,17 @@ namespace GameHubz.Api
 
             app.UseMiddleware<ExceptionHandlingMiddlware>();
 
-            app.UseCors(x => x.AllowAnyMethod().WithOrigins("*").AllowAnyHeader());
+            // PRAVILAN REDOSLED ZA CORS
+            app.UseRouting();
+
+            // Aktiviramo CORS polisu koju smo gore definisali
+            app.UseCors("AllowAll");
 
             app.UseSwagger();
             app.UseSwaggerUI(c =>
             {
                 c.SwaggerEndpoint("/swagger/v1/swagger.json", "GameHubz API");
 
-                // TODO: refactor
                 if (configurationManager.GetValue<bool>("IsAzureLoginEnabled"))
                 {
                     var secret = configurationManager.GetValue<string>("AzureAd:ClientSecret");
@@ -129,10 +138,11 @@ namespace GameHubz.Api
                 }
             });
 
-            //app.UseHttpsRedirection();
-            app.UseRouting();
+            // app.UseHttpsRedirection(); // Isključeno za rad preko IP adrese
+
             app.UseAuthentication();
             app.UseAuthorization();
+
             app.MapControllers();
         }
     }
