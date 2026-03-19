@@ -92,7 +92,7 @@ namespace GameHubz.Logic.Services
 
             if (hubDto != null)
             {
-                await cacheService.SetAsync(key, hubDto, TimeSpan.FromMinutes(10));
+                await cacheService.SetAsync(key, hubDto, TimeSpan.FromMinutes(1));
             }
 
             return hubDto;

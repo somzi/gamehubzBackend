@@ -167,7 +167,8 @@ namespace GameHubz.Data.Repository
                       RegistrationDeadLine = x.RegistrationDeadline,
                       HubId = x.HubId!.Value,
                       Format = x.Format,
-                      RoundDurationMinutes = x.RoundDurationMinutes
+                      RoundDurationMinutes = x.RoundDurationMinutes,
+                      HubName =x.Hub!.Name
                   }).FirstOrDefaultAsync();
         }
 

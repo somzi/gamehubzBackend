@@ -17,5 +17,6 @@
         public List<HubSocialDto> HubSocials { get; set; } = [];
         public Guid UserId { get; set; }
         public string? AvatarUrl { get; set; }
+        public string OwnerName { get; set; }
     }
 }

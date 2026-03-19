@@ -55,6 +55,7 @@ namespace GameHubz.Data.Repository
                     NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count : 0,
                     UserId = x.UserId,
                     AvatarUrl = x.AvatarUrl,
+                    OwnerName = x.User.Username,
                     HubSocials = x.HubSocials != null
                             ? x.HubSocials.Select(s => new HubSocialDto
                             {
