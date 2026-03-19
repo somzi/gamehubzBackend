@@ -89,6 +89,14 @@ namespace GameHubz.Data.Repository
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.Username
                             : x.HomeParticipant!.User!.Username,
+                    OpponentNickname =
+                        x.HomeParticipant!.UserId == userId
+                            ? x.AwayParticipant!.User!.Nickname
+                            : x.HomeParticipant!.User!.Nickname,
+                    UserNickname =
+                        x.HomeParticipant!.UserId == userId
+                            ? x.HomeParticipant!.User!.Nickname
+                            : x.AwayParticipant!.User!.Nickname,
                     OpponentAvatarUrl =
                         x.HomeParticipant!.UserId == userId
                             ? x.AwayParticipant!.User!.AvatarUrl

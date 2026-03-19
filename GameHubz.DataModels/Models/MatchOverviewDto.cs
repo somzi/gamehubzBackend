@@ -13,6 +13,8 @@ namespace GameHubz.DataModels.Models
         public DateTime? ScheduledTime { get; set; }
 
         public string OpponentName { get; set; } = string.Empty;
+        public string? OpponentNickname { get; set; } = string.Empty;
+        public string? UserNickname { get; set; } = string.Empty;
 
         public MatchStatus Status { get; set; }
 
