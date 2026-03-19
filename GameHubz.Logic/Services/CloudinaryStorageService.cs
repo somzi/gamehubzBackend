@@ -25,6 +25,13 @@ namespace GameHubz.Logic.Services
         {
             if (file == null || file.Length == 0) return null;
 
+            const long maxFileSize = 20 * 1024 * 1024;
+
+            if (file.Length > maxFileSize)
+            {
+                throw new BadHttpRequestException("File is too large. Maximum allowed size is 20MB.");
+            }
+
             using var stream = file.OpenReadStream();
 
             var uploadParams = new ImageUploadParams
@@ -32,7 +39,8 @@ namespace GameHubz.Logic.Services
                 File = new FileDescription(fileName, stream),
                 Folder = folderName,
                 PublicId = fileName,
-                Overwrite = true
+                Overwrite = true,
+                Transformation = new Transformation().Width(800).Height(800).Crop("limit").Quality("auto").FetchFormat("auto")
             };
 
             var uploadResult = await cloudinary.UploadAsync(uploadParams);
