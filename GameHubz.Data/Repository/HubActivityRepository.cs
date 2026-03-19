@@ -60,5 +60,12 @@ namespace GameHubz.Data.Repository
 
             return new EntityListDto<DashboardActivityDto>(items, count);
         }
+
+        public async Task<IEnumerable<HubActivityEntity>> GetByHubId(Guid entityId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.HubId == entityId)
+                .ToListAsync();
+        }
     }
 }

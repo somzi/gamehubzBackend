@@ -97,5 +97,13 @@ namespace GameHubz.Api.Controllers
 
             return Ok("Avatar uploaded successfully.");
         }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(Guid id)
+        {
+            await hubService.DeleteEntity(id);
+
+            return Ok();
+        }
     }
 }

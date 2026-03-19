@@ -160,6 +160,18 @@ namespace GameHubz.Logic.Services
             return this.AppUnitOfWork.HubRepository;
         }
 
+        protected override async Task BeforeDelete(Guid entityId)
+        {
+            var activities = await this.AppUnitOfWork.HubActivityRepository.GetByHubId(entityId);
+
+            foreach (var act in activities)
+            {
+                await this.AppUnitOfWork.HubActivityRepository.HardDeleteEntity(act);
+            }
+
+            await this.SaveAsync();
+        }
+
         public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber)
         {
             var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true);
