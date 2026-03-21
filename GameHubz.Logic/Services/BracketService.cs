@@ -386,7 +386,7 @@ namespace GameHubz.Logic.Services
             // 5. Apply Rules & Advance
             if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
             {
-                await UpdateLeagueStatistics(match, request.HomeScore, request.AwayScore);
+                await UpdateLeagueStatistics(match.HomeParticipant, match.AwayParticipant, request.HomeScore, request.AwayScore);
                 await this.SaveAsync();
 
                 if (match.TournamentStage?.Type == StageType.GroupStage)
@@ -457,11 +457,8 @@ namespace GameHubz.Logic.Services
 
         #region 5. Private Helpers (Core Logic)
 
-        private async Task UpdateLeagueStatistics(MatchEntity match, int homeScore, int awayScore)
+        private async Task UpdateLeagueStatistics(TournamentParticipantEntity? homePart, TournamentParticipantEntity? awayPart, int homeScore, int awayScore)
         {
-            var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.HomeParticipantId!.Value);
-            var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.AwayParticipantId!.Value);
-
             homePart.GoalsFor += homeScore; homePart.GoalsAgainst += awayScore;
             awayPart.GoalsFor += awayScore; awayPart.GoalsAgainst += homeScore;
 
@@ -475,8 +472,8 @@ namespace GameHubz.Logic.Services
 
         private async Task RevertLeagueStatistics(MatchEntity match)
         {
-            var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.HomeParticipantId!.Value);
-            var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.AwayParticipantId!.Value);
+            var homePart = match.HomeParticipant ?? await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.HomeParticipantId!.Value);
+            var awayPart = match.AwayParticipant ?? await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.AwayParticipantId!.Value);
 
             homePart.GoalsFor -= match.HomeUserScore ?? 0; homePart.GoalsAgainst -= match.AwayUserScore ?? 0;
             awayPart.GoalsFor -= match.AwayUserScore ?? 0; awayPart.GoalsAgainst -= match.HomeUserScore ?? 0;

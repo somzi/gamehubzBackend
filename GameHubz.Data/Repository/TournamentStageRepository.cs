@@ -37,7 +37,7 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                  .Include(ts => ts.TournamentGroups!)
                  .Include(ts => ts.Matches!)
-                 .FirstOrDefaultAsync();
+                 .FirstOrDefaultAsync(t => t.Id == Id);
         }
     }
 }
