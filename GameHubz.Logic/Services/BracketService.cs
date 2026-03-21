@@ -24,13 +24,12 @@ namespace GameHubz.Logic.Services
             string cacheKey = $"bracket:{tournamentId}";
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
             if (cachedBracket != null)
-            {
                 return cachedBracket;
-            }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId);
 
-            if (tournament == null) throw new Exception("Tournament not found");
+            if (tournament == null)
+                throw new Exception("Tournament not found");
 
             var response = new TournamentStructureDto
             {
@@ -42,29 +41,26 @@ namespace GameHubz.Logic.Services
                 HubOwnerId = tournament.Hub!.UserId
             };
 
-            if (tournament.TournamentStages != null)
+            foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
             {
-                foreach (var stageEntity in tournament.TournamentStages.OrderBy(s => s.Order))
+                var stageDto = new TournamentStageStructureDto
                 {
-                    var stageDto = new TournamentStageStructureDto
-                    {
-                        StageId = stageEntity.Id!.Value,
-                        Type = stageEntity.Type,
-                        Order = stageEntity.Order,
-                        Name = stageEntity.Name ?? stageEntity.Type.ToString()
-                    };
+                    StageId = stageEntity.Id!.Value,
+                    Type = stageEntity.Type,
+                    Order = stageEntity.Order,
+                    Name = stageEntity.Name ?? stageEntity.Type.ToString()
+                };
 
-                    if (stageEntity.Type == StageType.SingleEliminationBracket)
-                    {
-                        stageDto.Rounds = MapBracketRounds(stageEntity.Matches);
-                    }
-                    else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
-                    {
-                        stageDto.Groups = await MapGroups(stageEntity);
-                    }
-
-                    response.Stages.Add(stageDto);
+                if (stageEntity.Type == StageType.SingleEliminationBracket)
+                {
+                    stageDto.Rounds = MapBracketRounds(stageEntity.Matches);
                 }
+                else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
+                {
+                    stageDto.Groups = await MapGroups(stageEntity);
+                }
+
+                response.Stages.Add(stageDto);
             }
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
@@ -84,6 +80,8 @@ namespace GameHubz.Logic.Services
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
                 throw new Exception("Not enough participants to start tournament.");
 
+            var tournamentId = request.TournamentId;
+
             TimeSpan? roundDuration = tournament.RoundDurationMinutes.HasValue
                 ? TimeSpan.FromMinutes(tournament.RoundDurationMinutes.Value)
                 : null;
@@ -91,29 +89,29 @@ namespace GameHubz.Logic.Services
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
-                    await GenerateSingleEliminationBracket(request.TournamentId);
+                    await GenerateSingleEliminationBracket(tournamentId);
                     break;
 
                 case TournamentFormat.League:
-                    await GenerateLeagueTournament(request.TournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
+                    await GenerateLeagueTournament(tournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
                     break;
 
                 case TournamentFormat.DoubleElimination:
-                    await GenerateDoubleEliminationBracket(request.TournamentId);
+                    await GenerateDoubleEliminationBracket(tournamentId);
                     break;
 
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new Exception("Group count and qualifiers count are required for this format.");
-                    await GenerateGroupStageWithKnockout(request.TournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
+                    await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
                     break;
 
                 default:
                     throw new Exception($"Tournament format {tournament.Format} not supported");
             }
 
-            await cacheService.RemoveAsync($"tournament:{request.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
         }
 
@@ -126,7 +124,8 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             var participants = tournament!.TournamentParticipants?.ToList();
-            if (participants == null || participants.Count == 0) throw new Exception("No participants");
+            if (participants == null || participants.Count == 0)
+                throw new Exception("No participants");
 
             var shuffledParticipants = participants.OrderBy(a => Guid.NewGuid()).ToList();
 
@@ -202,7 +201,6 @@ namespace GameHubz.Logic.Services
 
             var allMatches = GenerateRoundRobinMatches(tournamentId, stage.Id.Value, participants!, doubleRoundRobin);
 
-            // Assign RoundOpenAt and RoundDeadline for all rounds
             AssignAllRoundSchedules(allMatches, roundDuration);
 
             foreach (var match in allMatches)
@@ -253,11 +251,7 @@ namespace GameHubz.Logic.Services
             }
 
             var seededParticipants = participants.OrderBy(p => p.Seed ?? 999).ToList();
-            var groupParticipants = new Dictionary<Guid, List<TournamentParticipantEntity>>();
-            foreach (var group in groups)
-            {
-                groupParticipants[group.Id!.Value] = new List<TournamentParticipantEntity>();
-            }
+            var groupParticipants = groups.ToDictionary(g => g.Id!.Value, _ => new List<TournamentParticipantEntity>());
 
             for (int i = 0; i < seededParticipants.Count; i++)
             {
@@ -277,7 +271,7 @@ namespace GameHubz.Logic.Services
                 participant.GoalsAgainst = 0;
 
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
-                groupParticipants[targetGroup.Id.Value].Add(participant);
+                groupParticipants[targetGroup.Id!.Value].Add(participant);
             }
 
             var allMatches = new List<MatchEntity>();
@@ -303,7 +297,6 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            // Assign RoundOpenAt and RoundDeadline for all rounds
             AssignAllRoundSchedules(allMatches, roundDuration);
 
             foreach (var match in allMatches)
@@ -345,19 +338,11 @@ namespace GameHubz.Logic.Services
             if (match.RoundOpenAt.HasValue && match.RoundOpenAt.Value > DateTime.UtcNow)
                 throw new Exception("This round is not open yet.");
 
-            // ✅ FIX: Load NextMatch only once here to avoid EF Tracking errors
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
             {
-                // Try to use navigation property if loaded, otherwise fetch
-                if (match.NextMatch != null)
-                {
-                    nextMatch = match.NextMatch;
-                }
-                else
-                {
-                    nextMatch = await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
-                }
+                nextMatch = match.NextMatch
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
             }
 
             // 1. REVERT LOGIC
@@ -369,7 +354,6 @@ namespace GameHubz.Logic.Services
                 }
                 else if (IsElimination(match.TournamentStage?.Type))
                 {
-                    // Pass nextMatch to avoid double tracking
                     await RevertEliminationResult(match, nextMatch);
                 }
             }
@@ -421,18 +405,17 @@ namespace GameHubz.Logic.Services
                 if (winnerParticipientId == null)
                     throw new Exception("Draws not allowed in elimination matches. Someone must win!");
 
-                // Pass nextMatch to avoid double tracking
                 await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
-
                 await this.SaveAsync();
             }
 
             // Clear Cache
-            if (match.HomeParticipant?.UserId != null)
-                await cacheService.RemoveAsync($"player_stats:{match.HomeParticipant.UserId}");
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+            if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
 
-            if (match.AwayParticipant?.UserId != null)
-                await cacheService.RemoveAsync($"player_stats:{match.AwayParticipant.UserId}");
+            foreach (var userId in affectedUserIds)
+                await cacheService.RemoveAsync($"player_stats:{userId}");
 
             await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
         }
@@ -506,7 +489,6 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
         }
 
-        // ✅ FIX: Uses passed nextMatch to check winner reversal
         private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch)
         {
             if (nextMatch == null) return;
@@ -527,7 +509,6 @@ namespace GameHubz.Logic.Services
 
                 if (changed)
                 {
-                    // Reset completed next match if necessary
                     if (nextMatch.Status == MatchStatus.Completed)
                     {
                         nextMatch.Status = MatchStatus.Pending;
@@ -540,28 +521,21 @@ namespace GameHubz.Logic.Services
             }
         }
 
-        // ✅ FIX: Uses passed nextMatch to advance winner
         private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId, Guid? winnerUserId, MatchEntity? nextMatch)
         {
             if (nextMatch != null)
             {
-                // Logic based on parity of match order
                 bool isHomeSlot = (match.MatchOrder % 2) == 0;
 
                 if (isHomeSlot)
-                {
                     nextMatch.HomeParticipantId = winnerId;
-                }
                 else
-                {
                     nextMatch.AwayParticipantId = winnerId;
-                }
 
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
             }
             else
             {
-                // Final Match - Tournament Winner
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
 
                 tournament.WinnerUserId = winnerUserId;
@@ -596,10 +570,7 @@ namespace GameHubz.Logic.Services
             var allGroupMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(groupStageId);
 
             if (allGroupMatches == null || !allGroupMatches.Any()) return;
-
-            bool allMatchesComplete = allGroupMatches.All(m => m.Status == MatchStatus.Completed);
-
-            if (!allMatchesComplete) return;
+            if (!allGroupMatches.All(m => m.Status == MatchStatus.Completed)) return;
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
 
@@ -727,16 +698,10 @@ namespace GameHubz.Logic.Services
 
             int totalRounds = n - 1;
             int matchesPerRound = n / 2;
-            var circle = new List<TournamentParticipantEntity>();
 
-            for (int i = 0; i < participants.Count; i++)
-            {
-                circle.Add(participants[i]);
-            }
-            if (hasBye)
-            {
-                circle.Add(null!);
-            }
+            // Cleaner initialization of circle list
+            var circle = new List<TournamentParticipantEntity>(participants);
+            if (hasBye) circle.Add(null!);
 
             int matchOrder = 0;
 
@@ -744,11 +709,8 @@ namespace GameHubz.Logic.Services
             {
                 for (int match = 0; match < matchesPerRound; match++)
                 {
-                    int homeIndex = match;
-                    int awayIndex = n - 1 - match;
-
-                    var homeP = circle[homeIndex];
-                    var awayP = circle[awayIndex];
+                    var homeP = circle[match];
+                    var awayP = circle[n - 1 - match];
 
                     if (homeP != null && awayP != null)
                     {
@@ -763,9 +725,7 @@ namespace GameHubz.Logic.Services
                 {
                     var temp = circle[n - 1];
                     for (int i = n - 1; i > 1; i--)
-                    {
                         circle[i] = circle[i - 1];
-                    }
                     circle[1] = temp;
                 }
             }
@@ -826,7 +786,19 @@ namespace GameHubz.Logic.Services
         {
             int totalRounds = (int)Math.Log2(totalPlayers);
             int roundsFromEnd = totalRounds - roundNumber + 1;
-            return roundsFromEnd switch { 1 => MatchStage.Final, 2 => MatchStage.SemiFinal, 3 => MatchStage.QuarterFinal, 4 => MatchStage.RoundOf16, _ => MatchStage.QuarterFinal };
+            return roundsFromEnd switch
+            {
+                1 => MatchStage.Final,
+                2 => MatchStage.SemiFinal,
+                3 => MatchStage.QuarterFinal,
+                4 => MatchStage.RoundOf16,
+                5 => MatchStage.RoundOf32,
+                6 => MatchStage.RoundOf64,
+                7 => MatchStage.RoundOf128,
+                8 => MatchStage.RoundOf256,
+                9 => MatchStage.RoundOf512,
+                _ => MatchStage.RoundOf1024
+            };
         }
 
         private static bool IsPowerOfTwo(int n) => n > 0 && (n & (n - 1)) == 0;
@@ -897,16 +869,10 @@ namespace GameHubz.Logic.Services
         {
             var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
 
-            bool allDone = stageMatches
-                .Where(m => m.RoundNumber == completedRound)
-                .All(m => m.Status == MatchStatus.Completed);
+            var currentRound = stageMatches.Where(m => m.RoundNumber == completedRound).ToList();
+            if (!currentRound.All(m => m.Status == MatchStatus.Completed)) return;
 
-            if (!allDone) return;
-
-            var nextRoundMatches = stageMatches
-                .Where(m => m.RoundNumber == completedRound + 1)
-                .ToList();
-
+            var nextRoundMatches = stageMatches.Where(m => m.RoundNumber == completedRound + 1).ToList();
             if (nextRoundMatches.Count == 0) return;
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
@@ -914,10 +880,8 @@ namespace GameHubz.Logic.Services
 
             foreach (var m in nextRoundMatches)
             {
-                // Always unlock immediately when previous round finishes early
                 m.RoundOpenAt = DateTime.UtcNow;
 
-                // Only set deadline if duration is configured and deadline not already set
                 if (roundDuration.HasValue && !m.RoundDeadline.HasValue)
                     m.RoundDeadline = DateTime.UtcNow + roundDuration.Value;
 
@@ -939,7 +903,6 @@ namespace GameHubz.Logic.Services
         {
             if (!roundDuration.HasValue)
             {
-                // No duration configured - round 1 open immediately, rest locked
                 foreach (var m in matches)
                     m.RoundOpenAt = (m.RoundNumber ?? 1) == 1 ? DateTime.UtcNow : DateTime.MaxValue;
                 return;
@@ -963,10 +926,14 @@ namespace GameHubz.Logic.Services
             }
         }
 
-        private bool IsElimination(StageType? type) => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
+        private bool IsElimination(StageType? type)
+            => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
 
         private string GetGroupName(int index)
-        { const string l = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; return index < l.Length ? l[index].ToString() : (index + 1).ToString(); }
+        {
+            const string l = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            return index < l.Length ? l[index].ToString() : (index + 1).ToString();
+        }
 
         private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches)
         {
@@ -1007,9 +974,7 @@ namespace GameHubz.Logic.Services
                 {
                     GroupId = group.Id!.Value,
                     Name = group.Name,
-                    Matches = groupMatches
-                        .Select(m => MapMatchToDto(m))
-                        .ToList(),
+                    Matches = groupMatches.Select(m => MapMatchToDto(m)).ToList(),
                     RoundDeadlines = groupMatches
                         .GroupBy(m => m.RoundNumber ?? 1)
                         .OrderBy(g => g.Key)
@@ -1037,7 +1002,7 @@ namespace GameHubz.Logic.Services
                 NextMatchId = m.NextMatchId,
                 IsRoundLocked = m.RoundOpenAt.HasValue && m.RoundOpenAt.Value > DateTime.UtcNow,
                 MatchOpensAt = m.RoundOpenAt,
-                Evidences = m.MatchEvidences != null ? m.MatchEvidences.Select(x => x.Url!).ToList() : new List<string>(),
+                Evidences = m.MatchEvidences?.Select(x => x.Url!).ToList() ?? [],
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,
@@ -1076,10 +1041,10 @@ namespace GameHubz.Logic.Services
                 GoalDifference = p.GoalsFor - p.GoalsAgainst,
                 MatchesPlayed = p.Wins + p.Draws + p.Losses
             })
-           .OrderByDescending(s => s.Points)
-           .ThenByDescending(s => s.GoalDifference)
-           .ThenByDescending(s => s.GoalsFor)
-           .ToList();
+            .OrderByDescending(s => s.Points)
+            .ThenByDescending(s => s.GoalDifference)
+            .ThenByDescending(s => s.GoalsFor)
+            .ToList();
 
             for (int i = 0; i < standings.Count; i++) standings[i].Position = i + 1;
             return standings;

@@ -12,6 +12,10 @@
         Final = 8,
         WinnersBracket = 9,
         LosersBracket = 10,
-        GrandFinal = 11
+        GrandFinal = 11,
+        RoundOf128 = 12,
+        RoundOf256 = 13,
+        RoundOf512 = 14,
+        RoundOf1024 = 15
     }
 }
