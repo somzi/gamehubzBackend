@@ -18,6 +18,7 @@ namespace GameHubz.DataModels.Models
     {
         public Guid TeamId { get; set; }
         public string TeamName { get; set; } = "";
+        public Guid? CaptainUserId { get; set; }
         public List<TeamMemberDto> Members { get; set; } = new();
     }
 

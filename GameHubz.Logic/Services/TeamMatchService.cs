@@ -57,9 +57,6 @@ namespace GameHubz.Logic.Services
 
             if (teamMatch.HomeTeamRepresentativeUserId.HasValue && teamMatch.AwayTeamRepresentativeUserId.HasValue)
             {
-                var homeRepParticipant = await FindParticipantByUserId(teamMatch.TournamentId, teamMatch.HomeTeamRepresentativeUserId.Value);
-                var awayRepParticipant = await FindParticipantByUserId(teamMatch.TournamentId, teamMatch.AwayTeamRepresentativeUserId.Value);
-
                 var tieBreakMatch = new MatchEntity
                 {
                     Id = Guid.NewGuid(),
@@ -71,8 +68,8 @@ namespace GameHubz.Logic.Services
                     Status = MatchStatus.Pending,
                     IsUpperBracket = true,
                     TeamMatchId = teamMatch.Id,
-                    HomeParticipantId = homeRepParticipant?.Id,
-                    AwayParticipantId = awayRepParticipant?.Id,
+                    HomeParticipantId = teamMatch.HomeTeamParticipantId,
+                    AwayParticipantId = teamMatch.AwayTeamParticipantId,
                     HomeUserId = teamMatch.HomeTeamRepresentativeUserId,
                     AwayUserId = teamMatch.AwayTeamRepresentativeUserId
                 };
@@ -229,12 +226,14 @@ namespace GameHubz.Logic.Services
                 {
                     TeamId = homeTeam.Id!.Value,
                     TeamName = homeTeam.TeamName,
+                    CaptainUserId = homeTeam.CaptainUserId,
                     Members = homeTeamMembers
                 },
                 AwayTeam = awayTeam == null ? null : new TeamMatchTeamInfoDto
                 {
                     TeamId = awayTeam.Id!.Value,
                     TeamName = awayTeam.TeamName,
+                    CaptainUserId = awayTeam.CaptainUserId,
                     Members = awayTeamMembers
                 },
                 SubMatches = subMatchDtos,
