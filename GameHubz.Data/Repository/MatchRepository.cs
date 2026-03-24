@@ -65,131 +65,47 @@ namespace GameHubz.Data.Repository
         {
             var now = DateTime.UtcNow;
 
-            // 1. DOHVATAMO SVE TIMOVE KORISNIKA (Najsigurniji način za EF Core)
-            var userTeamIds = await this.ContextBase.Set<TournamentTeamMemberEntity>()
-                .AsNoTracking()
-                .Where(m => m.UserId == userId && m.TeamId.HasValue)
-                .Select(m => m.TeamId!.Value)
-                .ToListAsync();
-
-            // Nalazimo Participant ID-jeve za te timove
-            var teamParticipantIds = new List<Guid>();
-            if (userTeamIds.Any())
-            {
-                teamParticipantIds = await this.ContextBase.Set<TournamentParticipantEntity>()
-                    .AsNoTracking()
-                    .Where(p => p.TeamId.HasValue && userTeamIds.Contains(p.TeamId!.Value))
-                    .Select(p => p.Id!.Value)
-                    .ToListAsync();
-            }
-
-            // 2. GLAVNI UPIT
             var matches = await this.BaseDbSet()
-                .AsNoTrackingWithIdentityResolution()
+                .AsNoTracking()
                 .Where(x =>
                     x.Tournament!.Status == TournamentStatus.InProgress &&
                     (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
-                    // PRIVREMENO ZAKOMENTARISANO: Otkomentariši ako moraš da proveravaš vreme runde!
-                    // (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
-                    // (x.RoundDeadline == null || x.RoundDeadline >= now) &&
                     (
-                        // SOLO MEČEVI
+                        // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
                         (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
                             (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
                         ||
-                        // TIMSKI MEČEVI (Proveravamo da li se ID ucesnika poklapa sa listom nasih timova)
-                        (x.TeamMatchId != null && x.TeamMatch != null &&
-                            (teamParticipantIds.Contains(x.TeamMatch.HomeTeamParticipantId ?? Guid.Empty) ||
-                             teamParticipantIds.Contains(x.TeamMatch.AwayTeamParticipantId ?? Guid.Empty)))
+                        // TEAM sub-matches: use the explicit user columns
+                        (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
                     )
                 )
-                // Includes
                 .Include(x => x.Tournament).ThenInclude(t => t!.Hub)
                 .Include(x => x.HomeParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.AwayParticipant).ThenInclude(p => p!.User)
-                .Include(x => x.TeamMatch).ThenInclude(tm => tm!.HomeTeamParticipant).ThenInclude(p => p!.Team).ThenInclude(t => t!.Members).ThenInclude(m => m.User)
-                .Include(x => x.TeamMatch).ThenInclude(tm => tm!.AwayTeamParticipant).ThenInclude(p => p!.Team).ThenInclude(t => t!.Members).ThenInclude(m => m.User)
-                .Include(x => x.TeamMatch).ThenInclude(tm => tm!.SubMatches) // Da bismo izvukli Index
+                .Include(x => x.HomeUser)
+                .Include(x => x.AwayUser)
                 .OrderByDescending(x => x.ScheduledStartTime)
                 .ToListAsync();
 
             var result = new List<MatchOverviewDto>();
 
-            // 3. SPAJANJE IGRAČA SA MEČEVIMA
             foreach (var match in matches)
             {
-                // --- SOLO MEČEVI ---
-                if (match.TeamMatchId == null)
-                {
-                    bool isHome = match.HomeParticipant!.UserId == userId;
-                    var me = isHome ? match.HomeParticipant.User : match.AwayParticipant!.User;
-                    var opponent = isHome ? match.AwayParticipant!.User : match.HomeParticipant.User;
+                // Resolve actual user IDs: prefer explicit columns, fall back to participant
+                Guid? homeUserId = match.HomeUserId ?? match.HomeParticipant?.UserId;
+                Guid? awayUserId = match.AwayUserId ?? match.AwayParticipant?.UserId;
 
-                    result.Add(new MatchOverviewDto
-                    {
-                        Id = match.Id!.Value,
-                        HubName = match.Tournament!.Hub!.Name,
-                        TournamentName = match.Tournament.Name,
-                        TournamentId = match.TournamentId,
-                        Status = match.Status,
-                        ScheduledTime = match.ScheduledStartTime,
-                        UserNickname = me?.Nickname ?? me?.Username ?? "Unknown",
-                        OpponentName = opponent?.Username ?? "Unknown",
-                        OpponentNickname = opponent?.Nickname ?? opponent?.Username ?? "Unknown",
-                        OpponentAvatarUrl = opponent?.AvatarUrl
-                    });
+                if (homeUserId != userId && awayUserId != userId)
                     continue;
-                }
 
-                // --- TIMSKI SUB-MEČEVI ---
-                var teamMatch = match.TeamMatch!;
-                var homeTeam = teamMatch.HomeTeamParticipant?.Team;
-                var awayTeam = teamMatch.AwayTeamParticipant?.Team;
+                bool iAmHome = homeUserId == userId;
 
-                if (homeTeam == null || awayTeam == null) continue;
+                // Resolve user info: prefer HomeUser/AwayUser, fall back to Participant.User
+                var homeUser = match.HomeUser ?? match.HomeParticipant?.User;
+                var awayUser = match.AwayUser ?? match.AwayParticipant?.User;
 
-                var homeTeamMembers = homeTeam.Members
-                    .Where(m => m.UserId.HasValue)
-                    .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatch.Id!.Value.GetHashCode())
-                    .ToList();
-
-                var awayTeamMembers = awayTeam.Members
-                    .Where(m => m.UserId.HasValue)
-                    .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatch.Id!.Value.GetHashCode())
-                    .ToList();
-
-                // Nalazimo redni broj sub-meča
-                var sortedSubMatches = teamMatch.SubMatches.OrderBy(s => s.MatchOrder).ToList();
-                int subMatchIndex = sortedSubMatches.FindIndex(s => s.Id == match.Id);
-
-                if (subMatchIndex < 0) continue;
-
-                int baseTieBreakOrder = (teamMatch.MatchOrder ?? 0) + 1000;
-                bool isTieBreakMatch = (match.MatchOrder ?? 0) >= baseTieBreakOrder;
-
-                // Nalazimo igrače (ili iz baze ili po Indexu)
-                Guid? resolvedHomeUserId = match.HomeParticipant?.UserId;
-                if (resolvedHomeUserId == null)
-                {
-                    resolvedHomeUserId = isTieBreakMatch
-                        ? teamMatch.HomeTeamRepresentativeUserId
-                        : (subMatchIndex < homeTeamMembers.Count ? homeTeamMembers[subMatchIndex].UserId : null);
-                }
-
-                Guid? resolvedAwayUserId = match.AwayParticipant?.UserId;
-                if (resolvedAwayUserId == null)
-                {
-                    resolvedAwayUserId = isTieBreakMatch
-                        ? teamMatch.AwayTeamRepresentativeUserId
-                        : (subMatchIndex < awayTeamMembers.Count ? awayTeamMembers[subMatchIndex].UserId : null);
-                }
-
-                // Ako ti ne igraš ovaj sub-meč (npr. ti si drugi u timu, a ovo je prvi meč), preskačemo!
-                if (resolvedHomeUserId != userId && resolvedAwayUserId != userId) continue;
-
-                bool iAmHome = resolvedHomeUserId == userId;
-                var myMember = iAmHome ? homeTeamMembers.FirstOrDefault(m => m.UserId == resolvedHomeUserId) : awayTeamMembers.FirstOrDefault(m => m.UserId == resolvedAwayUserId);
-                var opponentMember = iAmHome ? awayTeamMembers.FirstOrDefault(m => m.UserId == resolvedAwayUserId) : homeTeamMembers.FirstOrDefault(m => m.UserId == resolvedHomeUserId);
+                var me = iAmHome ? homeUser : awayUser;
+                var opponent = iAmHome ? awayUser : homeUser;
 
                 result.Add(new MatchOverviewDto
                 {
@@ -199,17 +115,15 @@ namespace GameHubz.Data.Repository
                     TournamentId = match.TournamentId,
                     Status = match.Status,
                     ScheduledTime = match.ScheduledStartTime,
-                    UserNickname = myMember?.User?.Nickname ?? myMember?.User?.Username ?? "Unknown",
-                    OpponentName = opponentMember?.User?.Username ?? "Unknown",
-                    OpponentNickname = opponentMember?.User?.Nickname ?? opponentMember?.User?.Username ?? "Unknown",
-                    OpponentAvatarUrl = opponentMember?.User?.AvatarUrl
+                    UserNickname = me?.Nickname ?? me?.Username ?? "Unknown",
+                    OpponentName = opponent?.Username ?? "Unknown",
+                    OpponentNickname = opponent?.Nickname ?? opponent?.Username ?? "Unknown",
+                    OpponentAvatarUrl = opponent?.AvatarUrl
                 });
             }
 
             return result;
         }
-
-        private sealed record TeamMemberInfo(Guid UserId, string? Username, string? Nickname, string? AvatarUrl);
 
         public Task<MatchUploadDto> GetForMatchEvidence(Guid matchId)
         {

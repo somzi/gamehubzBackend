@@ -3,6 +3,7 @@ using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace GameHubz.Api.Controllers
 {
@@ -75,6 +76,7 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
         {
             var teamMatchDetails = await this.teamMatchService.GetTeamMatchDetails(id);
+            var s = JsonSerializer.Serialize(teamMatchDetails);
             return Ok(teamMatchDetails);
         }
     }

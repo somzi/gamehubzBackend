@@ -56,5 +56,10 @@ namespace GameHubz.DataModels.Domain
         public DateTime? RoundOpenAt { get; set; }
         public Guid? TeamMatchId { get; set; }
         public TeamMatchEntity? TeamMatch { get; set; }
+
+        public Guid? HomeUserId { get; set; }
+        public UserEntity? HomeUser { get; set; }
+        public Guid? AwayUserId { get; set; }
+        public UserEntity? AwayUser { get; set; }
     }
 }

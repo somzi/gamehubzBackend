@@ -457,6 +457,18 @@ namespace GameHubz.Data.Context
                 .HasForeignKey(x => x.TeamMatchId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            modelBuilder.Entity<MatchEntity>()
+                .HasOne(m => m.HomeUser)
+                .WithMany()
+                .HasForeignKey(m => m.HomeUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasOne(m => m.AwayUser)
+                .WithMany()
+                .HasForeignKey(m => m.AwayUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             modelBuilder.Entity<TeamMatchEntity>()
                 .HasIndex(x => x.TournamentStageId);
 

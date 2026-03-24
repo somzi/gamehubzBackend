@@ -72,7 +72,9 @@ namespace GameHubz.Logic.Services
                     IsUpperBracket = true,
                     TeamMatchId = teamMatch.Id,
                     HomeParticipantId = homeRepParticipant?.Id,
-                    AwayParticipantId = awayRepParticipant?.Id
+                    AwayParticipantId = awayRepParticipant?.Id,
+                    HomeUserId = teamMatch.HomeTeamRepresentativeUserId,
+                    AwayUserId = teamMatch.AwayTeamRepresentativeUserId
                 };
 
                 await this.AppUnitOfWork.MatchRepository.AddEntity(tieBreakMatch, this.UserContextReader);
@@ -128,7 +130,6 @@ namespace GameHubz.Logic.Services
             var subMatches = teamMatch.SubMatches.OrderBy(s => s.MatchOrder).ToList();
 
             int homeWins = 0, awayWins = 0, homeTotalScore = 0, awayTotalScore = 0;
-            var isTieBreakMatchIds = new HashSet<Guid>();
 
             foreach (var sm in subMatches)
             {
@@ -143,38 +144,23 @@ namespace GameHubz.Logic.Services
                 awayTotalScore += sm.AwayUserScore ?? 0;
             }
 
-            if (teamMatch.HomeTeamRepresentativeUserId.HasValue || teamMatch.AwayTeamRepresentativeUserId.HasValue)
-            {
-                foreach (var sm in subMatches)
-                {
-                    bool homeIsRep = sm.HomeParticipant?.UserId == teamMatch.HomeTeamRepresentativeUserId
-                                  || sm.HomeParticipant?.UserId == teamMatch.AwayTeamRepresentativeUserId;
-                    bool awayIsRep = sm.AwayParticipant?.UserId == teamMatch.HomeTeamRepresentativeUserId
-                                  || sm.AwayParticipant?.UserId == teamMatch.AwayTeamRepresentativeUserId;
-                    if (homeIsRep && awayIsRep)
-                        isTieBreakMatchIds.Add(sm.Id!.Value);
-                }
-            }
-
             var homeTeamMembers = homeTeam?.Members?
                  .Where(m => m.UserId.HasValue)
-                 .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatchId.GetHashCode())
                  .Select(m => new TeamMemberDto
                  {
                      UserId = m.UserId!.Value,
                      Username = m.User?.Username ?? "Unknown",
-                     AvatarUrl = m.User!.AvatarUrl
+                     AvatarUrl = m.User?.AvatarUrl
                  })
                  .ToList() ?? new List<TeamMemberDto>();
 
             var awayTeamMembers = awayTeam?.Members?
                 .Where(m => m.UserId.HasValue)
-                .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatchId.GetHashCode())
                 .Select(m => new TeamMemberDto
                 {
                     UserId = m.UserId!.Value,
                     Username = m.User?.Username ?? "Unknown",
-                    AvatarUrl = m.User!.AvatarUrl
+                    AvatarUrl = m.User?.AvatarUrl
                 })
                 .ToList() ?? new List<TeamMemberDto>();
 
@@ -188,40 +174,29 @@ namespace GameHubz.Logic.Services
 
             int baseTieBreakOrder = (teamMatch.MatchOrder ?? 0) + 1000;
 
-            var subMatchDtos = subMatches.Select((sm, index) =>
+            var subMatchDtos = subMatches.Select(sm =>
             {
-                bool isTieBreakMatch = isTieBreakMatchIds.Contains(sm.Id!.Value)
-                    || (sm.MatchOrder ?? 0) >= baseTieBreakOrder;
+                bool isTieBreakMatch = (sm.MatchOrder ?? 0) >= baseTieBreakOrder;
 
-                TeamMemberDto? homePlayer = sm.HomeParticipant?.User == null
-                    ? null
-                    : new TeamMemberDto
-                    {
-                        UserId = sm.HomeParticipant.UserId!.Value,
-                        Username = sm.HomeParticipant.User.Username
-                    };
+                // Prioritize explicit HomeUserId/AwayUserId, fall back to Participant.UserId
+                Guid? homeUserId = sm.HomeUserId ?? sm.HomeParticipant?.UserId;
+                Guid? awayUserId = sm.AwayUserId ?? sm.AwayParticipant?.UserId;
 
-                TeamMemberDto? awayPlayer = sm.AwayParticipant?.User == null
-                    ? null
-                    : new TeamMemberDto
-                    {
-                        UserId = sm.AwayParticipant.UserId!.Value,
-                        Username = sm.AwayParticipant.User.Username
-                    };
+                TeamMemberDto? homePlayer = null;
+                if (sm.HomeUser != null)
+                    homePlayer = new TeamMemberDto { UserId = sm.HomeUser.Id!.Value, Username = sm.HomeUser.Username };
+                else if (sm.HomeParticipant?.User != null)
+                    homePlayer = new TeamMemberDto { UserId = sm.HomeParticipant.UserId!.Value, Username = sm.HomeParticipant.User.Username };
+                else if (homeUserId.HasValue)
+                    homePlayer = homeTeamMembers.FirstOrDefault(m => m.UserId == homeUserId.Value);
 
-                if (homePlayer == null)
-                {
-                    homePlayer = isTieBreakMatch
-                        ? homeRepresentative
-                        : (index < homeTeamMembers.Count ? homeTeamMembers[index] : null);
-                }
-
-                if (awayPlayer == null)
-                {
-                    awayPlayer = isTieBreakMatch
-                        ? awayRepresentative
-                        : (index < awayTeamMembers.Count ? awayTeamMembers[index] : null);
-                }
+                TeamMemberDto? awayPlayer = null;
+                if (sm.AwayUser != null)
+                    awayPlayer = new TeamMemberDto { UserId = sm.AwayUser.Id!.Value, Username = sm.AwayUser.Username };
+                else if (sm.AwayParticipant?.User != null)
+                    awayPlayer = new TeamMemberDto { UserId = sm.AwayParticipant.UserId!.Value, Username = sm.AwayParticipant.User.Username };
+                else if (awayUserId.HasValue)
+                    awayPlayer = awayTeamMembers.FirstOrDefault(m => m.UserId == awayUserId.Value);
 
                 Guid? winnerUserId = sm.WinnerParticipant?.UserId;
                 if (!winnerUserId.HasValue && sm.Status == MatchStatus.Completed)
@@ -254,21 +229,13 @@ namespace GameHubz.Logic.Services
                 {
                     TeamId = homeTeam.Id!.Value,
                     TeamName = homeTeam.TeamName,
-                    Members = homeTeam.Members.Select(m => new TeamMemberDto
-                    {
-                        UserId = m.UserId!.Value,
-                        Username = m.User?.Username ?? "Unknown"
-                    }).ToList()
+                    Members = homeTeamMembers
                 },
                 AwayTeam = awayTeam == null ? null : new TeamMatchTeamInfoDto
                 {
                     TeamId = awayTeam.Id!.Value,
                     TeamName = awayTeam.TeamName,
-                    Members = awayTeam.Members.Select(m => new TeamMemberDto
-                    {
-                        UserId = m.UserId!.Value,
-                        Username = m.User?.Username ?? "Unknown"
-                    }).ToList()
+                    Members = awayTeamMembers
                 },
                 SubMatches = subMatchDtos,
                 AggregateScore = new TeamAggregateScoreDto

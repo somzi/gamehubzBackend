@@ -436,15 +436,7 @@ namespace GameHubz.Logic.Services
                 if (tm.Status == TeamMatchStatus.Completed)
                     continue;
 
-                for (int j = 0; j < teamSize; j++)
-                {
-                    var subMatch = CreateMatch(tournamentId, stage.Id.Value, tm.RoundNumber ?? 1, MatchStage.GroupStage, (tm.MatchOrder ?? 0) * teamSize + j);
-                    subMatch.TeamMatchId = tm.Id;
-                    subMatch.HomeParticipantId = tm.HomeTeamParticipantId;
-                    subMatch.AwayParticipantId = tm.AwayTeamParticipantId;
-
-                    await this.AppUnitOfWork.MatchRepository.AddEntity(subMatch, this.UserContextReader);
-                }
+                await CreateSubMatchesForTeamMatch(tm, teamSize);
             }
 
             tournament.Status = TournamentStatus.InProgress;
@@ -915,14 +907,17 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
         }
 
-        private async Task CreateSubMatchesForTeamMatch(TeamMatchEntity teamMatch)
+        private async Task CreateSubMatchesForTeamMatch(TeamMatchEntity teamMatch, int? teamSizeOverride = null)
         {
             var existing = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.Id!.Value);
             if (existing != null && existing.SubMatches.Count > 0)
                 return;
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
-            int teamSize = tournament.TeamSize ?? 1;
+            int teamSize = teamSizeOverride ?? tournament.TeamSize ?? 1;
+
+            var homeMembers = await GetShuffledTeamMembers(teamMatch.HomeTeamParticipantId);
+            var awayMembers = await GetShuffledTeamMembers(teamMatch.AwayTeamParticipantId);
 
             for (int j = 0; j < teamSize; j++)
             {
@@ -935,9 +930,24 @@ namespace GameHubz.Logic.Services
                 subMatch.TeamMatchId = teamMatch.Id;
                 subMatch.HomeParticipantId = teamMatch.HomeTeamParticipantId;
                 subMatch.AwayParticipantId = teamMatch.AwayTeamParticipantId;
+                subMatch.HomeUserId = j < homeMembers.Count ? homeMembers[j].UserId : null;
+                subMatch.AwayUserId = j < awayMembers.Count ? awayMembers[j].UserId : null;
 
                 await this.AppUnitOfWork.MatchRepository.AddEntity(subMatch, this.UserContextReader);
             }
+        }
+
+        private async Task<List<TournamentTeamMemberEntity>> GetShuffledTeamMembers(Guid? teamParticipantId)
+        {
+            if (!teamParticipantId.HasValue)
+                return new List<TournamentTeamMemberEntity>();
+
+            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamParticipantId.Value);
+            if (!participant.TeamId.HasValue)
+                return new List<TournamentTeamMemberEntity>();
+
+            var members = await this.AppUnitOfWork.TournamentTeamMemberRepository.GetByTeamId(participant.TeamId.Value);
+            return members.Where(m => m.UserId.HasValue).OrderBy(_ => Guid.NewGuid()).ToList();
         }
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
