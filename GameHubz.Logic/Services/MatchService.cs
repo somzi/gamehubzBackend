@@ -43,6 +43,11 @@ namespace GameHubz.Logic.Services
             return await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
         }
 
+        public async Task<MatchEntity?> GetMatchEntityById(Guid id)
+        {
+            return await this.AppUnitOfWork.MatchRepository.ShallowGetById(id);
+        }
+
         public async Task<MatchAvailabilityDto> SetAvailability(Guid matchId, List<DateTime> selectedSlots)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
@@ -52,10 +57,14 @@ namespace GameHubz.Logic.Services
             if (match == null) throw new Exception("Match not found");
 
             // 1. Determine side (Home vs Away)
-            bool isHome = match.HomeParticipant != null && match.HomeParticipant.UserId == userId;
-            bool isAway = match.AwayParticipant != null && match.AwayParticipant.UserId == userId;
+            bool isHome = match.HomeParticipant != null &&
+                (match.HomeParticipant.UserId == userId ||
+                 match.HomeParticipant.Team?.Members.Any(m => m.UserId == userId) == true);
+            bool isAway = match.AwayParticipant != null &&
+                (match.AwayParticipant.UserId == userId ||
+                 match.AwayParticipant.Team?.Members.Any(m => m.UserId == userId) == true);
 
-            if (!isHome && !isAway) throw new Exception("User is not a participant in this match");
+            //if (!isHome && !isAway) throw new Exception("User is not a participant in this match");
 
             // 2. Save Slots
             if (isHome)

@@ -3,6 +3,7 @@ using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace GameHubz.Api.Controllers
 {
@@ -12,14 +13,17 @@ namespace GameHubz.Api.Controllers
     public class TournamentController : BasicGenericController<TournamentService, TournamentEntity, TournamentDto, TournamentPost, TournamentEdit>
     {
         private readonly BracketService bracketService;
+        private readonly TournamentTeamService tournamentTeamService;
 
         public TournamentController(
             TournamentService service,
             AppAuthorizationService appAuthorizationService,
-            BracketService bracketService)
+            BracketService bracketService,
+            TournamentTeamService tournamentTeamService)
             : base(service, appAuthorizationService)
         {
             this.bracketService = bracketService;
+            this.tournamentTeamService = tournamentTeamService;
         }
 
         [HttpPost("createBracket")]
@@ -116,6 +120,29 @@ namespace GameHubz.Api.Controllers
             await this.Service.HardDeleteTournament(id);
 
             return Ok();
+        }
+
+        [HttpGet("{tournamentId}/teams")]
+        public async Task<IActionResult> GetTeamsByTournament(Guid tournamentId)
+        {
+            var teams = await this.tournamentTeamService.GetTeamsByTournament(tournamentId);
+
+            return Ok(teams);
+        }
+
+        [HttpGet("{tournamentId}/finalTeams")]
+        public async Task<IActionResult> GetFinalTeamsByTournament(Guid tournamentId)
+        {
+            var teams = await this.tournamentTeamService.GetFinalTeamsByTournament(tournamentId);
+
+            return Ok(teams);
+        }
+
+        [HttpGet("{tournamentId}/myTeam")]
+        public async Task<IActionResult> GetTeamByTournament(Guid tournamentId)
+        {
+            var team = await this.tournamentTeamService.GetTeamByTournament(tournamentId);
+            return Ok(team);
         }
     }
 }

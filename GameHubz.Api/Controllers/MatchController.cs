@@ -11,11 +11,15 @@ namespace GameHubz.Api.Controllers
     [Authorize]
     public class MatchController : BasicGenericController<MatchService, MatchEntity, MatchDto, MatchPost, MatchEdit>
     {
+        private readonly TeamMatchService teamMatchService;
+
         public MatchController(
             MatchService service,
-            AppAuthorizationService appAuthorizationService)
+            AppAuthorizationService appAuthorizationService,
+            TeamMatchService teamMatchService)
             : base(service, appAuthorizationService)
         {
+            this.teamMatchService = teamMatchService;
         }
 
         [HttpPost("availability")]
@@ -53,9 +57,25 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("{id}/details")]
-        public async Task<MatchResultDetailDto> GetDetails(Guid id)
+        public async Task<IActionResult> GetDetails(Guid id)
         {
-            return await this.Service.GetWithEvidence(id);
+            var match = await this.Service.GetMatchEntityById(id);
+
+            if (match?.TeamMatchId.HasValue == true)
+            {
+                var teamMatchDetails = await this.teamMatchService.GetTeamMatchDetails(match.TeamMatchId.Value);
+                return Ok(teamMatchDetails);
+            }
+
+            var result = await this.Service.GetWithEvidence(id);
+            return Ok(result);
+        }
+
+        [HttpGet("{id}/team/details")]
+        public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
+        {
+            var teamMatchDetails = await this.teamMatchService.GetTeamMatchDetails(id);
+            return Ok(teamMatchDetails);
         }
     }
 }

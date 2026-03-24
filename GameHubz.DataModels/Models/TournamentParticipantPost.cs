@@ -9,5 +9,7 @@ namespace GameHubz.DataModels.Models
         public Guid? TournamentId { get; set; }
 
         public Guid? UserId { get; set; }
+
+        public Guid? TeamId { get; set; }
     }
 }

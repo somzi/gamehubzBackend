@@ -21,6 +21,11 @@ namespace GameHubz.DataModels.Domain
         public Guid? WinnerUserId { get; set; }
         public UserEntity? WinnerUser { get; set; }
 
+        public bool IsTeamTournament { get; set; }
+        public int? TeamSize { get; set; }
+        public Guid? WinnerTeamId { get; set; }
+        public TournamentTeamEntity? WinnerTeam { get; set; }
+
         public int? QualifiersPerGroup { get; set; }
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }

@@ -334,6 +334,8 @@ namespace GameHubz.Data.Context
                 .HasPrincipalKey(x => x.Id);
 
             // DO NOT DELETE - Generated Configuration Tag
+
+            TeamTournamentConfigurator(modelBuilder);
         }
 
         private static void UserConfigurator(ModelBuilder modelBuilder)
@@ -376,6 +378,101 @@ namespace GameHubz.Data.Context
         {
             modelBuilder.Entity<EmailQueueEntity>().ToTable("EmailQueue")
                 .HasQueryFilter(x => x.IsDeleted == false);
+        }
+
+        private static void TeamTournamentConfigurator(ModelBuilder modelBuilder)
+        {
+            // TournamentTeam
+            modelBuilder.Entity<TournamentTeamEntity>().ToTable("TournamentTeam").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TournamentTeamEntity>()
+                .HasOne(x => x.Tournament)
+                .WithMany()
+                .HasForeignKey(x => x.TournamentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TournamentTeamEntity>()
+                .HasOne(x => x.CaptainUser)
+                .WithMany()
+                .HasForeignKey(x => x.CaptainUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TournamentTeamEntity>()
+                .HasOne(x => x.TournamentParticipant)
+                .WithMany()
+                .HasForeignKey(x => x.TournamentParticipantId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TournamentTeamEntity>()
+                .HasMany(x => x.Members)
+                .WithOne(x => x.Team)
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // TournamentTeamMember
+            modelBuilder.Entity<TournamentTeamMemberEntity>().ToTable("TournamentTeamMember").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TournamentTeamMemberEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // TeamMatch
+            modelBuilder.Entity<TeamMatchEntity>().ToTable("TeamMatch").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.Tournament)
+                .WithMany()
+                .HasForeignKey(x => x.TournamentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.TournamentStage)
+                .WithMany(x => x.TeamMatches)
+                .HasForeignKey(x => x.TournamentStageId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.HomeTeamParticipant)
+                .WithMany()
+                .HasForeignKey(x => x.HomeTeamParticipantId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.AwayTeamParticipant)
+                .WithMany()
+                .HasForeignKey(x => x.AwayTeamParticipantId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.NextTeamMatch)
+                .WithMany()
+                .HasForeignKey(x => x.NextTeamMatchId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasMany(x => x.SubMatches)
+                .WithOne(x => x.TeamMatch)
+                .HasForeignKey(x => x.TeamMatchId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasIndex(x => x.TournamentStageId);
+
+            // TournamentParticipant -> Team
+            modelBuilder.Entity<TournamentParticipantEntity>()
+                .HasOne(x => x.Team)
+                .WithOne(x => x.TournamentParticipant)
+                .HasForeignKey<TournamentParticipantEntity>(x => x.TeamId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Tournament -> WinnerTeam
+            modelBuilder.Entity<TournamentEntity>()
+                .HasOne(x => x.WinnerTeam)
+                .WithMany()
+                .HasForeignKey(x => x.WinnerTeamId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }

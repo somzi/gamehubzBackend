@@ -37,6 +37,10 @@ namespace GameHubz.Logic.Interfaces
 
         IMatchChatRepository MatchChatRepository { get; }
 
+        ITournamentTeamRepository TournamentTeamRepository { get; }
+        ITournamentTeamMemberRepository TournamentTeamMemberRepository { get; }
+        ITeamMatchRepository TeamMatchRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

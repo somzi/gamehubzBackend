@@ -54,5 +54,7 @@ namespace GameHubz.DataModels.Domain
 
         public List<MatchChatEntity>? MatchChats { get; set; } = new();
         public DateTime? RoundOpenAt { get; set; }
+        public Guid? TeamMatchId { get; set; }
+        public TeamMatchEntity? TeamMatch { get; set; }
     }
 }

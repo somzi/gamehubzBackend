@@ -1,6 +1,6 @@
-﻿using Azure.Core;
-using FluentValidation;
+﻿using FluentValidation;
 using GameHubz.DataModels.Enums;
+using System.Runtime.InteropServices;
 
 namespace GameHubz.Logic.Services
 {
@@ -108,15 +108,49 @@ namespace GameHubz.Logic.Services
             return registrations;
         }
 
-        private async Task CreateTournamentParticipant(TournamentRegistrationEntity tournamentRegistration)
+        public async Task RegisterTeam(Guid tournamentId, Guid teamId)
         {
-            var tournamentParticipants = new TournamentParticipantPost
+            var tournamentRegistrationPost = new TournamentRegistrationPost
             {
-                TournamentId = tournamentRegistration.TournamentId,
-                UserId = tournamentRegistration.UserId
+                Status = TournamentRegistrationStatus.Pending,
+                TeamId = teamId,
+                TournamentId = tournamentId,
+                UserId = null
             };
 
-            await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+            await this.SaveEntity(tournamentRegistrationPost);
+        }
+
+        private async Task CreateTournamentParticipant(TournamentRegistrationEntity tournamentRegistration)
+        {
+            if (tournamentRegistration.TeamId.HasValue)
+            {
+                // Team tournament: create participant linked to team
+                var tournamentParticipants = new TournamentParticipantPost
+                {
+                    TournamentId = tournamentRegistration.TournamentId,
+                    UserId = tournamentRegistration.UserId,
+                    TeamId = tournamentRegistration.TeamId
+                };
+
+                var dto = await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+
+                // Link the team to the participant
+                var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(tournamentRegistration.TeamId.Value);
+                team.TournamentParticipantId = dto.Id;
+                await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+            }
+            else
+            {
+                // Solo tournament: existing behavior
+                var tournamentParticipants = new TournamentParticipantPost
+                {
+                    TournamentId = tournamentRegistration.TournamentId,
+                    UserId = tournamentRegistration.UserId
+                };
+
+                await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+            }
         }
 
         private async Task SetRegistrationStatus(TournamentRegistrationEntity tournamentRegistration, TournamentRegistrationStatus status)

@@ -18,5 +18,7 @@ namespace GameHubz.DataModels.Domain
         public int GoalsAgainst { get; set; } = 0;
         public Guid? TournamentGroupId { get; set; }
         public TournamentGroupEntity? TournamentGroup { get; set; }
+        public Guid? TeamId { get; set; }
+        public TournamentTeamEntity? Team { get; set; }
     }
 }

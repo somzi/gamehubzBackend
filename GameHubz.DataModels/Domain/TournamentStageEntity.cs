@@ -12,6 +12,7 @@ namespace GameHubz.DataModels.Domain
         public string? Name { get; set; }
         public TournamentEntity? Tournament { get; set; }
         public List<MatchEntity>? Matches { get; set; } = new();
+        public List<TeamMatchEntity>? TeamMatches { get; set; } = new();
         public List<TournamentGroupEntity>? TournamentGroups { get; set; } = new();
     }
 }

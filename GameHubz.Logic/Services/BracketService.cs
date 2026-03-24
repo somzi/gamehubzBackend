@@ -37,6 +37,7 @@ namespace GameHubz.Logic.Services
                 Name = tournament.Name,
                 Format = tournament.Format,
                 Status = tournament.Status,
+                IsTeamTournament = tournament.IsTeamTournament,
                 Stages = new List<TournamentStageStructureDto>(),
                 HubOwnerId = tournament.Hub!.UserId
             };
@@ -53,7 +54,9 @@ namespace GameHubz.Logic.Services
 
                 if (stageEntity.Type == StageType.SingleEliminationBracket)
                 {
-                    stageDto.Rounds = MapBracketRounds(stageEntity.Matches);
+                    stageDto.Rounds = tournament.IsTeamTournament
+                        ? MapTeamBracketRounds(stageEntity.TeamMatches)
+                        : MapBracketRounds(stageEntity.Matches);
                 }
                 else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
                 {
@@ -89,7 +92,10 @@ namespace GameHubz.Logic.Services
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
-                    await GenerateSingleEliminationBracket(tournamentId);
+                    if (tournament.IsTeamTournament)
+                        await GenerateTeamSingleEliminationBracket(tournamentId);
+                    else
+                        await GenerateSingleEliminationBracket(tournamentId);
                     break;
 
                 case TournamentFormat.League:
@@ -325,6 +331,162 @@ namespace GameHubz.Logic.Services
             throw new NotImplementedException("Double Elimination logic is coming soon!");
         }
 
+        public async Task GenerateTeamSingleEliminationBracket(Guid tournamentId)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+            var participants = tournament!.TournamentParticipants?.ToList();
+
+            if (participants == null || participants.Count < 2)
+                throw new Exception("Not enough team participants");
+
+            if (!tournament.TeamSize.HasValue)
+                throw new Exception("TeamSize is required for team tournaments.");
+
+            int teamSize = tournament.TeamSize.Value;
+
+            // Shuffle and seed
+            var shuffled = participants.OrderBy(a => Guid.NewGuid()).ToList();
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                shuffled[i].Seed = i + 1;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
+            }
+
+            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+            var participantsBySeed = shuffled
+                .Where(p => p.Seed.HasValue)
+                .ToDictionary(p => p.Seed!.Value, p => p);
+
+            var bracketSlots = seedOrder
+                .Select(seed => participantsBySeed.TryGetValue(seed, out var participant) ? participant : null)
+                .ToList();
+
+            var stage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.SingleEliminationBracket,
+                Order = 1,
+                Name = "Main Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
+
+            // Generate TeamMatchEntity bracket tree
+            int playerCount = bracketSlots.Count;
+            int totalRounds = (int)Math.Log2(playerCount);
+            var allTeamMatches = new List<TeamMatchEntity>();
+            var currentRoundTeamMatches = new List<TeamMatchEntity>();
+            int matchesInRound = playerCount / 2;
+
+            for (int i = 0; i < matchesInRound; i++)
+            {
+                var tm = new TeamMatchEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    TournamentStageId = stage.Id,
+                    HomeTeamParticipantId = bracketSlots[i * 2]?.Id,
+                    AwayTeamParticipantId = bracketSlots[i * 2 + 1]?.Id,
+                    RoundNumber = 1,
+                    MatchOrder = i,
+                    Status = TeamMatchStatus.Pending
+                };
+                currentRoundTeamMatches.Add(tm);
+                allTeamMatches.Add(tm);
+            }
+
+            for (int round = 2; round <= totalRounds; round++)
+            {
+                matchesInRound /= 2;
+                var nextRoundTeamMatches = new List<TeamMatchEntity>();
+                for (int i = 0; i < matchesInRound; i++)
+                {
+                    var tm = new TeamMatchEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        TournamentId = tournamentId,
+                        TournamentStageId = stage.Id,
+                        RoundNumber = round,
+                        MatchOrder = i,
+                        Status = TeamMatchStatus.Pending
+                    };
+                    currentRoundTeamMatches[i * 2].NextTeamMatchId = tm.Id;
+                    currentRoundTeamMatches[i * 2 + 1].NextTeamMatchId = tm.Id;
+                    nextRoundTeamMatches.Add(tm);
+                    allTeamMatches.Add(tm);
+                }
+                currentRoundTeamMatches = nextRoundTeamMatches;
+            }
+
+            // Auto-advance byes for TeamMatches
+            AutoAdvanceTeamByes(allTeamMatches);
+
+            // Save all TeamMatchEntities
+            foreach (var tm in allTeamMatches)
+            {
+                await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
+            }
+
+            // Create sub-matches (individual MatchEntities) for each team match with two participants
+            foreach (var tm in allTeamMatches)
+            {
+                if (!tm.HomeTeamParticipantId.HasValue || !tm.AwayTeamParticipantId.HasValue)
+                    continue;
+                if (tm.Status == TeamMatchStatus.Completed)
+                    continue;
+
+                for (int j = 0; j < teamSize; j++)
+                {
+                    var subMatch = CreateMatch(tournamentId, stage.Id.Value, tm.RoundNumber ?? 1, MatchStage.GroupStage, (tm.MatchOrder ?? 0) * teamSize + j);
+                    subMatch.TeamMatchId = tm.Id;
+                    subMatch.HomeParticipantId = tm.HomeTeamParticipantId;
+                    subMatch.AwayParticipantId = tm.AwayTeamParticipantId;
+
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(subMatch, this.UserContextReader);
+                }
+            }
+
+            tournament.Status = TournamentStatus.InProgress;
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
+        private static void AutoAdvanceTeamByes(List<TeamMatchEntity> allTeamMatches)
+        {
+            var matchesById = allTeamMatches
+                .Where(m => m.Id.HasValue)
+                .ToDictionary(m => m.Id!.Value, m => m);
+
+            var firstRound = allTeamMatches
+                .Where(m => (m.RoundNumber ?? 1) == 1)
+                .OrderBy(m => m.MatchOrder)
+                .ToList();
+
+            foreach (var tm in firstRound)
+            {
+                bool hasHome = tm.HomeTeamParticipantId.HasValue;
+                bool hasAway = tm.AwayTeamParticipantId.HasValue;
+
+                if (hasHome == hasAway)
+                {
+                    if (!hasHome) tm.Status = TeamMatchStatus.Completed;
+                    continue;
+                }
+
+                var winnerId = tm.HomeTeamParticipantId ?? tm.AwayTeamParticipantId;
+                tm.WinnerTeamParticipantId = winnerId;
+                tm.Status = TeamMatchStatus.Completed;
+
+                if (winnerId.HasValue && tm.NextTeamMatchId.HasValue && matchesById.TryGetValue(tm.NextTeamMatchId.Value, out var nextTm))
+                {
+                    bool isHomeSlot = (tm.MatchOrder % 2) == 0;
+                    if (isHomeSlot) nextTm.HomeTeamParticipantId = winnerId;
+                    else nextTm.AwayTeamParticipantId = winnerId;
+                }
+            }
+        }
+
         #endregion 2. Generators
 
         #region 3. Result Processing & Updates
@@ -354,7 +516,10 @@ namespace GameHubz.Logic.Services
                 }
                 else if (IsElimination(match.TournamentStage?.Type))
                 {
-                    await RevertEliminationResult(match, nextMatch);
+                    if (match.TeamMatchId.HasValue)
+                        await RevertTeamMatchResult(match);
+                    else
+                        await RevertEliminationResult(match, nextMatch);
                 }
             }
 
@@ -402,17 +567,35 @@ namespace GameHubz.Logic.Services
             }
             else if (IsElimination(match.TournamentStage?.Type))
             {
-                if (winnerParticipientId == null)
-                    throw new Exception("Draws not allowed in elimination matches. Someone must win!");
+                if (match.TeamMatchId.HasValue)
+                {
+                    // Persist the sub-match result before reading team match state
+                    await this.SaveAsync();
+                    await ProcessTeamMatchResult(match);
+                }
+                else
+                {
+                    // Solo elimination
+                    if (winnerParticipientId == null)
+                        throw new Exception("Draws not allowed in elimination matches. Someone must win!");
 
-                await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
-                await this.SaveAsync();
+                    await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
+                    await this.SaveAsync();
+                }
             }
 
             // Clear Cache
             var affectedUserIds = new HashSet<Guid>();
             if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
             if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+
+            if (match.HomeParticipant?.Team?.Members != null)
+                foreach (var m in match.HomeParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            if (match.AwayParticipant?.Team?.Members != null)
+                foreach (var m in match.AwayParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
 
             foreach (var userId in affectedUserIds)
                 await cacheService.RemoveAsync($"player_stats:{userId}");
@@ -488,7 +671,20 @@ namespace GameHubz.Logic.Services
 
         private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch)
         {
-            if (nextMatch == null) return;
+            if (nextMatch == null)
+            {
+                if (match.WinnerParticipantId.HasValue)
+                {
+                    var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                    if (tournament.Status == TournamentStatus.Completed)
+                    {
+                        tournament.Status = TournamentStatus.InProgress;
+                        tournament.WinnerUserId = null;
+                        await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                    }
+                }
+                return;
+            }
 
             if (match.WinnerParticipantId.HasValue)
             {
@@ -516,6 +712,60 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
                 }
             }
+        }
+
+        private async Task RevertTeamMatchResult(MatchEntity subMatch)
+        {
+            var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(subMatch.TeamMatchId!.Value);
+            if (teamMatch == null) return;
+
+            if (teamMatch.Status != TeamMatchStatus.Completed && teamMatch.Status != TeamMatchStatus.TieBreakRequired)
+                return;
+
+            var oldWinner = teamMatch.WinnerTeamParticipantId;
+
+            teamMatch.WinnerTeamParticipantId = null;
+            teamMatch.Status = TeamMatchStatus.Pending;
+            await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
+
+            if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+            {
+                var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
+                if (nextTeamMatch != null)
+                {
+                    bool isHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                    if (isHomeSlot)
+                        nextTeamMatch.HomeTeamParticipantId = null;
+                    else
+                        nextTeamMatch.AwayTeamParticipantId = null;
+
+                    foreach (var sm in nextTeamMatch.SubMatches)
+                    {
+                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+                    }
+
+                    if (nextTeamMatch.Status == TeamMatchStatus.Completed)
+                    {
+                        nextTeamMatch.WinnerTeamParticipantId = null;
+                        nextTeamMatch.Status = TeamMatchStatus.Pending;
+                    }
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
+                }
+            }
+            else if (!teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+            {
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
+                if (tournament.Status == TournamentStatus.Completed)
+                {
+                    tournament.Status = TournamentStatus.InProgress;
+                    tournament.WinnerUserId = null;
+                    tournament.WinnerTeamId = null;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                }
+            }
+
+            await this.SaveAsync();
         }
 
         private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId, Guid? winnerUserId, MatchEntity? nextMatch)
@@ -560,6 +810,134 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+        }
+
+        private async Task ProcessTeamMatchResult(MatchEntity completedSubMatch)
+        {
+            var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(completedSubMatch.TeamMatchId!.Value);
+            if (teamMatch == null) return;
+
+            var subMatches = teamMatch.SubMatches;
+
+            // Check if all sub-matches are completed
+            if (!subMatches.All(sm => sm.Status == MatchStatus.Completed))
+                return;
+
+            // Count wins per team
+            int homeWins = 0, awayWins = 0;
+            int homeTotalScore = 0, awayTotalScore = 0;
+
+            foreach (var sm in subMatches)
+            {
+                if (sm.WinnerParticipantId == sm.HomeParticipantId)
+                    homeWins++;
+                else if (sm.WinnerParticipantId == sm.AwayParticipantId)
+                    awayWins++;
+
+                homeTotalScore += sm.HomeUserScore ?? 0;
+                awayTotalScore += sm.AwayUserScore ?? 0;
+            }
+
+            Guid? winnerTeamParticipantId = null;
+
+            if (homeWins != awayWins)
+            {
+                winnerTeamParticipantId = homeWins > awayWins
+                    ? teamMatch.HomeTeamParticipantId
+                    : teamMatch.AwayTeamParticipantId;
+            }
+            else
+            {
+                // Wins are tied — use aggregate total score
+                if (homeTotalScore != awayTotalScore)
+                {
+                    winnerTeamParticipantId = homeTotalScore > awayTotalScore
+                        ? teamMatch.HomeTeamParticipantId
+                        : teamMatch.AwayTeamParticipantId;
+                }
+                else
+                {
+                    // Both wins and aggregate score are tied
+                    teamMatch.Status = TeamMatchStatus.TieBreakRequired;
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
+                    await this.SaveAsync();
+                    await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                    await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+                    return;
+                }
+            }
+
+            // Winner determined
+            teamMatch.WinnerTeamParticipantId = winnerTeamParticipantId;
+            teamMatch.Status = TeamMatchStatus.Completed;
+            await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
+
+            // Advance or complete
+            if (teamMatch.NextTeamMatchId.HasValue)
+            {
+                var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchId.Value);
+
+                bool isHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                if (isHomeSlot)
+                    nextTeamMatch.HomeTeamParticipantId = winnerTeamParticipantId;
+                else
+                    nextTeamMatch.AwayTeamParticipantId = winnerTeamParticipantId;
+
+                await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
+
+                // If next team match now has both participants, create sub-matches for it
+                if (nextTeamMatch.HomeTeamParticipantId.HasValue && nextTeamMatch.AwayTeamParticipantId.HasValue)
+                {
+                    await CreateSubMatchesForTeamMatch(nextTeamMatch);
+                }
+            }
+            else
+            {
+                // Tournament is over
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
+                var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(winnerTeamParticipantId!.Value);
+
+                if (winnerParticipant.TeamId.HasValue)
+                {
+                    tournament.WinnerTeamId = winnerParticipant.TeamId;
+                    var winnerTeam = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(winnerParticipant.TeamId.Value);
+                    tournament.WinnerUserId = winnerTeam.CaptainUserId;
+                }
+
+                tournament.Status = TournamentStatus.Completed;
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+            }
+
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+        }
+
+        private async Task CreateSubMatchesForTeamMatch(TeamMatchEntity teamMatch)
+        {
+            var existing = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.Id!.Value);
+            if (existing != null && existing.SubMatches.Count > 0)
+                return;
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
+            int teamSize = tournament.TeamSize ?? 1;
+
+            for (int j = 0; j < teamSize; j++)
+            {
+                var subMatch = CreateMatch(
+                    teamMatch.TournamentId,
+                    teamMatch.TournamentStageId!.Value,
+                    teamMatch.RoundNumber ?? 1,
+                    MatchStage.GroupStage,
+                    (teamMatch.MatchOrder ?? 0) * teamSize + j);
+                subMatch.TeamMatchId = teamMatch.Id;
+                subMatch.HomeParticipantId = teamMatch.HomeTeamParticipantId;
+                subMatch.AwayParticipantId = teamMatch.AwayTeamParticipantId;
+
+                await this.AppUnitOfWork.MatchRepository.AddEntity(subMatch, this.UserContextReader);
+            }
         }
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
@@ -932,6 +1310,65 @@ namespace GameHubz.Logic.Services
             return index < l.Length ? l[index].ToString() : (index + 1).ToString();
         }
 
+        private List<BracketRoundDto> MapTeamBracketRounds(List<TeamMatchEntity>? teamMatches)
+        {
+            var rounds = new List<BracketRoundDto>();
+            if (teamMatches == null || !teamMatches.Any()) return rounds;
+
+            var grouped = teamMatches.GroupBy(m => m.RoundNumber ?? 1).OrderBy(g => g.Key);
+
+            foreach (var grp in grouped)
+            {
+                rounds.Add(new BracketRoundDto
+                {
+                    RoundNumber = grp.Key,
+                    RoundDeadline = grp.SelectMany(m => m.SubMatches).Max(sm => sm.RoundDeadline),
+                    Name = $"Round {grp.Key}",
+                    Matches = grp.OrderBy(m => m.MatchOrder)
+                                 .Select(tm => MapTeamMatchToDto(tm))
+                                 .ToList()
+                });
+            }
+            return rounds;
+        }
+
+        private MatchStructureDto MapTeamMatchToDto(TeamMatchEntity tm)
+        {
+            return new MatchStructureDto
+            {
+                Id = tm.Id!.Value,
+                Round = tm.RoundNumber ?? 1,
+                Order = tm.MatchOrder ?? 0,
+                Status = MapTeamMatchStatus(tm.Status),
+                TeamMatchId = tm.Id,
+                NextTeamMatchId = tm.NextTeamMatchId,
+                Evidences = [],
+                Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
+                {
+                    ParticipantId = tm.HomeTeamParticipant.Id!.Value,
+                    UserId = tm.HomeTeamParticipant.UserId ?? Guid.Empty,
+                    Username = tm.HomeTeamParticipant.Team?.TeamName ?? "Unknown",
+                    TeamName = tm.HomeTeamParticipant.Team?.TeamName,
+                    IsWinner = tm.WinnerTeamParticipantId == tm.HomeTeamParticipant.Id
+                },
+                Away = tm.AwayTeamParticipant == null ? null : new MatchParticipantDto
+                {
+                    ParticipantId = tm.AwayTeamParticipant.Id!.Value,
+                    UserId = tm.AwayTeamParticipant.UserId ?? Guid.Empty,
+                    Username = tm.AwayTeamParticipant.Team?.TeamName ?? "Unknown",
+                    TeamName = tm.AwayTeamParticipant.Team?.TeamName,
+                    IsWinner = tm.WinnerTeamParticipantId == tm.AwayTeamParticipant.Id
+                }
+            };
+        }
+
+        private static MatchStatus MapTeamMatchStatus(TeamMatchStatus status)
+            => status switch
+            {
+                TeamMatchStatus.Completed => MatchStatus.Completed,
+                _ => MatchStatus.Pending
+            };
+
         private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches)
         {
             var rounds = new List<BracketRoundDto>();
@@ -1003,20 +1440,22 @@ namespace GameHubz.Logic.Services
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,
-                    UserId = m.HomeParticipant.UserId!.Value,
-                    Username = m.HomeParticipant.User?.Username ?? "Unknown",
+                    UserId = m.HomeParticipant.UserId ?? Guid.Empty,
+                    Username = m.HomeParticipant.User?.Username ?? m.HomeParticipant.Team?.TeamName ?? "Unknown",
                     Score = m.HomeUserScore,
                     Seed = m.HomeParticipant.Seed,
-                    IsWinner = m.WinnerParticipantId == m.HomeParticipant.Id
+                    IsWinner = m.WinnerParticipantId == m.HomeParticipant.Id,
+                    TeamName = m.HomeParticipant.Team?.TeamName
                 },
                 Away = m.AwayParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.AwayParticipant.Id!.Value,
-                    UserId = m.AwayParticipant.UserId!.Value,
-                    Username = m.AwayParticipant.User?.Username ?? "Unknown",
+                    UserId = m.AwayParticipant.UserId ?? Guid.Empty,
+                    Username = m.AwayParticipant.User?.Username ?? m.AwayParticipant.Team?.TeamName ?? "Unknown",
                     Score = m.AwayUserScore,
                     Seed = m.AwayParticipant.Seed,
-                    IsWinner = m.WinnerParticipantId == m.AwayParticipant.Id
+                    IsWinner = m.WinnerParticipantId == m.AwayParticipant.Id,
+                    TeamName = m.AwayParticipant.Team?.TeamName
                 }
             };
         }

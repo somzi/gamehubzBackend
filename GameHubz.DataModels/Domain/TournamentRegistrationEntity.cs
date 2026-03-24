@@ -11,6 +11,9 @@ namespace GameHubz.DataModels.Domain
 
         public TournamentRegistrationStatus Status { get; set; }
 
+        public Guid? TeamId { get; set; }
+        public TournamentTeamEntity? Team { get; set; }
+
         public TournamentEntity? Tournament { get; set; }
 
         public UserEntity? User { get; set; }

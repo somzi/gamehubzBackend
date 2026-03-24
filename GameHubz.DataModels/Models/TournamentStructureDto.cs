@@ -10,5 +10,6 @@ namespace GameHubz.DataModels.Models
         public TournamentStatus Status { get; set; }
         public List<TournamentStageStructureDto> Stages { get; set; } = new();
         public Guid HubOwnerId { get; set; }
+        public bool IsTeamTournament { get; set; }
     }
 }

@@ -98,6 +98,11 @@ namespace GameHubz.Logic.Services
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
+            if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
+            {
+                throw new Exception("You cannot create a tournament with 1 participant.");
+            }
+
             tournament.Status = TournamentStatus.RegistrationClosed;
 
             await RejectPendings(tournament);

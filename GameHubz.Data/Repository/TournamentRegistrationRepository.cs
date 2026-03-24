@@ -37,9 +37,18 @@ namespace GameHubz.Data.Repository
                .Select(x => new TournamentRegistrationOverview
                {
                    Id = x.Id!.Value,
-                   UserId = x.UserId!.Value,
-                   Username = x.User!.Username,
-                   AvatarUrl =  x.User.AvatarUrl
+                   UserId = (x.TeamId.HasValue ? x.Team!.CaptainUserId : x.UserId) ?? Guid.Empty,
+                   Username = x.TeamId.HasValue
+                       ? x.Team!.CaptainUser!.Username
+                       : x.User!.Username,
+                   AvatarUrl = x.TeamId.HasValue
+                       ? x.Team!.CaptainUser!.AvatarUrl
+                       : x.User!.AvatarUrl,
+                   IsTeamRegistration = x.TeamId.HasValue,
+                   TeamId = x.TeamId,
+                   TeamName = x.TeamId.HasValue ? x.Team!.TeamName : null,
+                   CaptainUserId = x.TeamId.HasValue ? x.Team!.CaptainUserId : null,
+                   MemberCount = x.TeamId.HasValue ? x.Team!.Members.Count() : null
                })
                .ToListAsync();
         }

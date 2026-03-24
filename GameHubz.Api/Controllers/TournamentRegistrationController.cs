@@ -47,5 +47,13 @@ namespace GameHubz.Api.Controllers
         {
             return await this.Service.GetPendingByTournamentId(tournamentId);
         }
+
+        [HttpGet("tournament/{tournamentId}/team/{teamId}/register")]
+        public async Task<IActionResult> RegisterTeam(Guid tournamentId, Guid teamId)
+        {
+            await this.Service.RegisterTeam(tournamentId, teamId);
+
+            return Ok();
+        }
     }
 }

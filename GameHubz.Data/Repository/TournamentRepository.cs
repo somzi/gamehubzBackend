@@ -59,7 +59,8 @@ namespace GameHubz.Data.Repository
                      Prize = x.Prize,
                      PrizeCurrency = x.PrizeCurrency,
                      Status = x.Status,
-                     Id = x.Id!.Value!
+                     Id = x.Id!.Value!,
+                     IsTeamTournament = x.IsTeamTournament
                  })
                 .ToListAsync();
 
@@ -93,7 +94,8 @@ namespace GameHubz.Data.Repository
                     HubName = x.Hub!.Name,
                     HubAvatarUrl = x.Hub.AvatarUrl,
                     Format = x.Format,
-                    RoundDurationMinutes = x.RoundDurationMinutes
+                    RoundDurationMinutes = x.RoundDurationMinutes,
+                    IsTeamTournament = x.IsTeamTournament
                 })
                 .ToListAsync();
         }
@@ -119,6 +121,7 @@ namespace GameHubz.Data.Repository
         public async Task<TournamentEntity> GetWithPendingRegistration(Guid id)
         {
             return await this.BaseDbSet()
+                .Include(x => x.TournamentParticipants)
                 .Include(x => x.TournamentRegistrations!
                     .Where(tr => tr.Status == TournamentRegistrationStatus.Pending))
                 .SingleAsync(x => x.Id == id);
@@ -143,6 +146,18 @@ namespace GameHubz.Data.Repository
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.Matches!)
                         .ThenInclude(m => m.MatchEvidences)
+                // Load TeamMatches for team tournaments
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.TeamMatches!)
+                        .ThenInclude(tm => tm.SubMatches)
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.TeamMatches!)
+                        .ThenInclude(tm => tm.HomeTeamParticipant)
+                            .ThenInclude(p => p!.Team)
+                .Include(t => t.TournamentStages!)
+                    .ThenInclude(s => s.TeamMatches!)
+                        .ThenInclude(tm => tm.AwayTeamParticipant)
+                            .ThenInclude(p => p!.Team)
                 .FirstOrDefaultAsync(t => t.Id == tournamentId);
         }
 
@@ -168,7 +183,9 @@ namespace GameHubz.Data.Repository
                       HubId = x.HubId!.Value,
                       Format = x.Format,
                       RoundDurationMinutes = x.RoundDurationMinutes,
-                      HubName =x.Hub!.Name
+                      HubName = x.Hub!.Name,
+                      IsTeamTournament = x.IsTeamTournament,
+                      TeamSize = x.TeamSize
                   }).FirstOrDefaultAsync();
         }
 
@@ -187,7 +204,9 @@ namespace GameHubz.Data.Repository
                 case TournamentUserStatus.AvailableToJoin:
                     query = query.Where(x =>
                         x.Status == TournamentStatus.RegistrationOpen &&
-                        !x.TournamentParticipants!.Any(tp => tp.UserId == userId) &&
+                        !x.TournamentParticipants!.Any(tp =>
+                            tp.UserId == userId ||
+                            (tp.Team != null && tp.Team.Members.Any(tm => tm.UserId == userId))) &&
                         (x.RegistrationDeadline == null || x.RegistrationDeadline > DateTime.UtcNow)
                     );
                     break;
@@ -196,21 +215,27 @@ namespace GameHubz.Data.Repository
                     query = query.Where(x =>
                         (x.Status == TournamentStatus.RegistrationOpen ||
                          x.Status == TournamentStatus.RegistrationClosed) &&
-                        x.TournamentParticipants!.Any(tp => tp.UserId == userId)
+                        x.TournamentParticipants!.Any(tp =>
+                            tp.UserId == userId ||
+                            (tp.Team != null && tp.Team.Members.Any(tm => tm.UserId == userId)))
                     );
                     break;
 
                 case TournamentUserStatus.Live:
                     query = query.Where(x =>
                         x.Status == TournamentStatus.InProgress &&
-                        x.TournamentParticipants!.Any(tp => tp.UserId == userId)
+                        x.TournamentParticipants!.Any(tp =>
+                            tp.UserId == userId ||
+                            (tp.Team != null && tp.Team.Members.Any(tm => tm.UserId == userId)))
                     );
                     break;
 
                 case TournamentUserStatus.Completed:
                     query = query.Where(x =>
                         x.Status == TournamentStatus.Completed &&
-                        x.TournamentParticipants!.Any(tp => tp.UserId == userId)
+                        x.TournamentParticipants!.Any(tp =>
+                            tp.UserId == userId ||
+                            (tp.Team != null && tp.Team.Members.Any(tm => tm.UserId == userId)))
                     );
                     break;
 

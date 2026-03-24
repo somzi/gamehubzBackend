@@ -54,7 +54,8 @@ namespace GameHubz.Data.Repository
                     PrizeCurrency = x.Tournament.PrizeCurrency,
                     Status = x.Tournament.Status,
                     Region = x.Tournament.Region,
-                    StartDate = x.Tournament.StartDate!.Value
+                    StartDate = x.Tournament.StartDate!.Value,
+                    IsTeamTournament = x.Tournament.IsTeamTournament
                 })
                 .ToListAsync();
         }
@@ -84,7 +85,8 @@ namespace GameHubz.Data.Repository
                     HubAvatarUrl = x.Tournament.Hub!.AvatarUrl,
                     HubName = x.Tournament.Hub.Name,
                     Format = x.Tournament.Format,
-                    RoundDurationMinutes = x.Tournament.RoundDurationMinutes
+                    RoundDurationMinutes = x.Tournament.RoundDurationMinutes,
+                    IsTeamTournament = x.Tournament.IsTeamTournament
                 })
                 .ToListAsync();
 

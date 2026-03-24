@@ -11,6 +11,8 @@ namespace GameHubz.DataModels.Models
         public DateTime? StartTime { get; set; }
         public DateTime? RoundDeadline { get; set; }
         public Guid? NextMatchId { get; set; }
+        public Guid? TeamMatchId { get; set; }
+        public Guid? NextTeamMatchId { get; set; }
 
         public MatchParticipantDto? Home { get; set; }
         public MatchParticipantDto? Away { get; set; }

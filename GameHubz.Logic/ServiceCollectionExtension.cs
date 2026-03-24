@@ -87,6 +87,9 @@ namespace GameHubz.Logic
 
             services.AddTransient<MatchChatService>();
 
+            services.AddTransient<TournamentTeamService>();
+            services.AddTransient<TeamMatchService>();
+
             // DO NOT DELETE - Generated Service Tag
 
             ConfigureValidators(services);

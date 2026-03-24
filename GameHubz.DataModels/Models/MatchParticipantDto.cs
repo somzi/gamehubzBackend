@@ -8,5 +8,6 @@
         public int? Score { get; set; }
         public bool IsWinner { get; set; }
         public int? Seed { get; set; }
+        public string? TeamName { get; set; }
     }
 }
