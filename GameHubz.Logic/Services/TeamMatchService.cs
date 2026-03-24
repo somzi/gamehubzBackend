@@ -157,21 +157,19 @@ namespace GameHubz.Logic.Services
             }
 
             var homeTeamMembers = homeTeam?.Members?
-                .Where(m => m.UserId.HasValue)
-                .OrderBy(m => m.JoinedAt)
-                .ThenBy(m => m.Id)
-                .Select(m => new TeamMemberDto
-                {
-                    UserId = m.UserId!.Value,
-                    Username = m.User?.Username ?? "Unknown",
-                    AvatarUrl = m.User!.AvatarUrl
-                })
-                .ToList() ?? new List<TeamMemberDto>();
+                 .Where(m => m.UserId.HasValue)
+                 .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatchId.GetHashCode())
+                 .Select(m => new TeamMemberDto
+                 {
+                     UserId = m.UserId!.Value,
+                     Username = m.User?.Username ?? "Unknown",
+                     AvatarUrl = m.User!.AvatarUrl
+                 })
+                 .ToList() ?? new List<TeamMemberDto>();
 
             var awayTeamMembers = awayTeam?.Members?
                 .Where(m => m.UserId.HasValue)
-                .OrderBy(m => m.JoinedAt)
-                .ThenBy(m => m.Id)
+                .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatchId.GetHashCode())
                 .Select(m => new TeamMemberDto
                 {
                     UserId = m.UserId!.Value,

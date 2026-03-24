@@ -148,8 +148,15 @@ namespace GameHubz.Data.Repository
 
                 if (homeTeam == null || awayTeam == null) continue;
 
-                var homeTeamMembers = homeTeam.Members.Where(m => m.UserId.HasValue).OrderBy(m => m.JoinedAt).ThenBy(m => m.Id).ToList();
-                var awayTeamMembers = awayTeam.Members.Where(m => m.UserId.HasValue).OrderBy(m => m.JoinedAt).ThenBy(m => m.Id).ToList();
+                var homeTeamMembers = homeTeam.Members
+                    .Where(m => m.UserId.HasValue)
+                    .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatch.Id!.Value.GetHashCode())
+                    .ToList();
+
+                var awayTeamMembers = awayTeam.Members
+                    .Where(m => m.UserId.HasValue)
+                    .OrderBy(m => m.UserId!.Value.GetHashCode() ^ teamMatch.Id!.Value.GetHashCode())
+                    .ToList();
 
                 // Nalazimo redni broj sub-meča
                 var sortedSubMatches = teamMatch.SubMatches.OrderBy(s => s.MatchOrder).ToList();
