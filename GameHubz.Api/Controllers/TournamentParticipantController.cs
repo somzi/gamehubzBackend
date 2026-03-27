@@ -27,9 +27,17 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("tournament/{tournamentId}/user/{userId}")]
-        public async Task GetByTournament(Guid tournamentId, Guid userId)
+        public async Task RemoveUser(Guid tournamentId, Guid userId)
         {
             await this.Service.RemoveUser(tournamentId, userId);
+        }
+
+        [HttpPost("tournament/{tournamentId}/team/{teamId}")]
+        public async Task<IActionResult> RemoveTeam(Guid tournamentId, Guid teamId)
+        {
+            await this.Service.RemoveTeam(tournamentId, teamId);
+
+            return Ok();
         }
     }
 }

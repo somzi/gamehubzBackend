@@ -37,16 +37,22 @@ namespace GameHubz.Logic.Services
             var cachedStats = await cacheService.GetAsync<PlayerMatchesDto>(key);
             if (cachedStats != null) return cachedStats;
 
-            var stats = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
-            var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
-            stats.TournamentsWon = numberOfTournamentsWon;
+            var statsTask = this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
+            var performanceTask = this.AppUnitOfWork.MatchRepository.GetPerformanceByUserId(id);
+            var tournamentsWonTask = this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
 
-            var perforamance = await this.AppUnitOfWork.MatchRepository.GetPerformanceByUserId(id);
+            await Task.WhenAll(statsTask, performanceTask, tournamentsWonTask);
+
+            var stats = statsTask.Result;
+            var performance = performanceTask.Result;
+            var tournamentsWon = tournamentsWonTask.Result;
+
+            stats.TournamentsWon = tournamentsWon;
 
             var result = new PlayerMatchesDto
             {
                 Stats = stats,
-                Performance = perforamance
+                Performance = performance
             };
 
             await cacheService.SetAsync(key, result, TimeSpan.FromMinutes(3));

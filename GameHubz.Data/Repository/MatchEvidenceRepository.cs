@@ -16,9 +16,7 @@ namespace GameHubz.Data.Repository
             ISortStringBuilder sortStringBuilder,
             ILocalizationService localizationService)
             : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
-        {   
+        {
         }
-
-
     }
 }

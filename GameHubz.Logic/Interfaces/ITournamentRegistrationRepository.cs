@@ -9,5 +9,7 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentRegistrationEntity> GetUserByTournamentId(Guid tournamentId, Guid userId);
 
         Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId);
+
+        Task<TournamentRegistrationEntity?> GetByTeamId(Guid teamId);
     }
 }

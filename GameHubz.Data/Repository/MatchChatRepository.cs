@@ -28,7 +28,7 @@ namespace GameHubz.Data.Repository
                 {
                     Id = x.Id!.Value,
                     UserId = x.UserId!.Value,
-                    UserNickname = x.User!.Nickname,
+                    UserNickname = x.User!.Nickname ?? x.User!.Username,
                     Content = x.Content,
                     SentAt = x.CreatedOn!.Value
                 })

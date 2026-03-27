@@ -264,39 +264,5 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .AnyAsync(m => m.TournamentStageId == bracketStageId);
         }
-
-        private static List<TournamentTeamMemberEntity> GetSortedMembers(
-          IEnumerable<TournamentTeamMemberEntity>? members)
-        {
-            return members?
-                .Where(m => m.UserId.HasValue)
-                .OrderBy(m => m.JoinedAt)
-                .ThenBy(m => m.Id)
-                .ToList() ?? [];
-        }
-
-        private static MatchOverviewDto MapToOverviewDto(
-            MatchEntity match,
-            string? userNickname,
-            string? opponentName,
-            string? opponentNickname,
-            string? opponentAvatarUrl)
-        {
-            return new MatchOverviewDto
-            {
-                Id = match.Id!.Value,
-                HubName = match.Tournament!.Hub!.Name,
-                TournamentName = match.Tournament.Name,
-                TournamentId = match.TournamentId,
-                HomeParticipantId = match.HomeParticipantId,
-                AwayParticipantId = match.AwayParticipantId,
-                Status = match.Status,
-                ScheduledTime = match.ScheduledStartTime,
-                UserNickname = userNickname ?? "Unknown",
-                OpponentName = opponentName ?? "Unknown",
-                OpponentNickname = opponentNickname ?? "Unknown",
-                OpponentAvatarUrl = opponentAvatarUrl
-            };
-        }
     }
 }

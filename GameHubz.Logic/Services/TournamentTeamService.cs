@@ -104,25 +104,22 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
+            if (data == null) throw new Exception("Team not found.");
 
-            var tournament = team.Tournament ?? await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(team.TournamentId!.Value);
-
-            if (!tournament.TeamSize.HasValue)
+            if (!data.TeamSize.HasValue)
                 throw new Exception("Tournament team size is not configured.");
 
-            if (team.Members.Count >= tournament.TeamSize.Value)
+            if (data.CurrentMemberCount >= data.TeamSize.Value)
                 throw new Exception("Team is already full.");
 
-            var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, tournament.Id!.Value);
-            if (alreadyInTeam)
+            if (data.UserAlreadyInTournament)
                 throw new Exception("User is already in a team for this tournament.");
 
             var member = new TournamentTeamMemberEntity
             {
                 Id = Guid.NewGuid(),
-                TeamId = team.Id,
+                TeamId = data.TeamId,
                 UserId = user.UserId,
                 JoinedAt = DateTime.UtcNow
             };
@@ -130,10 +127,17 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentTeamMemberRepository.AddEntity(member, this.UserContextReader);
             await this.SaveAsync();
 
-            await InvalidateCache(tournament.Id!.Value);
+            await InvalidateCache(data.TournamentId);
 
-            var members = await this.AppUnitOfWork.TournamentTeamMemberRepository.GetByTeamId(teamId);
-            return MapTeamsToDto(team, members, tournament.TeamSize);
+            return new TeamDto
+            {
+                TeamId = data.TeamId,
+                TeamName = data.TeamName,
+                CaptainUserId = data.CaptainUserId,
+                TeamSize = data.TeamSize,
+                Members = [.. data.Members, new TeamMemberDto { UserId = user.UserId, Username = user.Username }],
+                MemberCount = data.CurrentMemberCount + 1
+            };
         }
 
         public async Task KickMember(Guid teamId, Guid userId)
@@ -160,10 +164,7 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<TeamDto>> GetTeamsByTournament(Guid tournamentId)
         {
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
-            var teams = await this.AppUnitOfWork.TournamentTeamRepository.GetByTournamentId(tournamentId);
-
-            return teams.Select(t => MapTeamsToDto(t, t.Members, tournament.TeamSize)).ToList();
+            return await this.AppUnitOfWork.TournamentTeamRepository.GetTeamsDtoByTournamentId(tournamentId);
         }
 
         public async Task<List<TeamDto>> GetFinalTeamsByTournament(Guid tournamentId)
@@ -177,18 +178,7 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetSingleByTournamentId(tournamentId, user.UserId);
-
-            var teamDto = MapTeamToDto(team);
-
-            if (team.Tournament!.TournamentRegistrations != null)
-            {
-                teamDto.IsAlreadyRegistred = team.Tournament!.TournamentRegistrations.Any(x => x.TeamId == team.Id
-                && (x.Status == TournamentRegistrationStatus.Pending
-                || x.Status == TournamentRegistrationStatus.Approved));
-            }
-
-            return teamDto;
+            return await this.AppUnitOfWork.TournamentTeamRepository.GetTeamDtoByTournamentId(tournamentId, user.UserId);
         }
 
         public async Task LeaveTeam(Guid teamId)
@@ -236,22 +226,6 @@ namespace GameHubz.Logic.Services
                 MemberCount = members.Count(),
                 TeamSize = teamSize,
                 Members = members.Select(m => new TeamMemberDto
-                {
-                    UserId = m.UserId!.Value,
-                    Username = m.User?.Username ?? "Unknown"
-                }).ToList()
-            };
-        }
-
-        private static TeamDto MapTeamToDto(TournamentTeamEntity team)
-        {
-            return new TeamDto
-            {
-                TeamId = team.Id!.Value,
-                TeamName = team.TeamName,
-                CaptainUserId = team.CaptainUserId!.Value,
-                MemberCount = team.Members.Count(),
-                Members = team.Members.Select(m => new TeamMemberDto
                 {
                     UserId = m.UserId!.Value,
                     Username = m.User?.Username ?? "Unknown"

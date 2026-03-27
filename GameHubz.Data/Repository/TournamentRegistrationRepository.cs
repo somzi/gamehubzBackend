@@ -66,5 +66,11 @@ namespace GameHubz.Data.Repository
                     .ThenInclude(x => x!.TournamentParticipants)
                 .FirstAsync(x => x.Id == registrationId);
         }
+
+        public Task<TournamentRegistrationEntity?> GetByTeamId(Guid teamId)
+        {
+            return this.BaseDbSet()
+                .FirstOrDefaultAsync(x => x.TeamId == teamId);
+        }
     }
 }

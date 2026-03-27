@@ -69,5 +69,28 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
         }
+
+        public async Task RemoveTeam(Guid tournamentId, Guid teamId)
+        {
+            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
+            if (team == null) throw new Exception("Team not found.");
+
+            foreach (var member in team.Members)
+            {
+                await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
+            }
+
+            await this.AppUnitOfWork.TournamentTeamRepository.SoftDeleteEntity(team, this.UserContextReader);
+
+            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByTeamId(teamId);
+            if (participant != null)
+                await this.AppUnitOfWork.TournamentParticipantRepository.HardDeleteEntity(participant);
+
+            var registration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetByTeamId(teamId);
+            if (registration != null)
+                await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
+
+            await this.SaveAsync();
+        }
     }
 }
