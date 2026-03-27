@@ -63,15 +63,15 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("user/{userId}/joined")]
-        public async Task<IEnumerable<HubDto>> GetUserJoinedHubs(Guid userId, [FromQuery] int pageNumber)
+        public async Task<IEnumerable<HubDto>> GetUserJoinedHubs(Guid userId, [FromQuery] int pageNumber, [FromQuery] string? search = null)
         {
-            return await hubService.GetJoinedByUser(userId, pageNumber);
+            return await hubService.GetJoinedByUser(userId, pageNumber, search);
         }
 
         [HttpGet("user/{userId}/discovery")]
-        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, [FromQuery] int pageNumber)
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, [FromQuery] int pageNumber, [FromQuery] string? search = null)
         {
-            return await hubService.GetUserNotJoined(userId, pageNumber);
+            return await hubService.GetUserNotJoined(userId, pageNumber, search);
         }
 
         [HttpGet("{id}/members")]

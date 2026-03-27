@@ -172,16 +172,16 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber)
+        public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true);
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, search);
 
             return data;
         }
 
-        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, int pageNumber)
+        public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false);
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, search);
 
             return data;
         }
