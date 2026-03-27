@@ -202,6 +202,19 @@ namespace GameHubz.Logic.Services
             if (member == null) throw new Exception("User is not a member of this team.");
 
             await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
+
+            var remainingMembers = team.Members.Where(m => m.UserId != user.UserId).ToList();
+
+            if (remainingMembers.Count == 0)
+            {
+                await this.AppUnitOfWork.TournamentTeamRepository.SoftDeleteEntity(team, this.UserContextReader);
+            }
+            else if (team.CaptainUserId == user.UserId)
+            {
+                team.CaptainUserId = remainingMembers.First().UserId;
+                await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+            }
+
             await this.SaveAsync();
 
             await InvalidateCache(team.TournamentId!.Value);
