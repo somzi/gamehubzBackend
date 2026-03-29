@@ -100,103 +100,80 @@ namespace GameHubz.Logic.Services
 
         public async Task<TieBreakStatusDto> GetTieBreakStatus(Guid teamMatchId)
         {
-            var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatchId);
-            if (teamMatch == null) throw new Exception("Team match not found.");
+            var projection = await this.AppUnitOfWork.TeamMatchRepository.GetTieBreakProjection(teamMatchId);
+            if (projection == null) throw new Exception("Team match not found.");
 
             return new TieBreakStatusDto
             {
-                TeamMatchId = teamMatch.Id!.Value,
-                Status = teamMatch.Status.ToString(),
-                HomeRepresentative = teamMatch.HomeTeamRepresentativeUserId.HasValue
-                    ? await GetUserAsTeamMember(teamMatch.HomeTeamRepresentativeUserId.Value)
+                TeamMatchId = projection.TeamMatchId,
+                Status = projection.Status.ToString(),
+                HomeRepresentative = projection.HomeTeamRepresentativeUserId.HasValue
+                    ? new TeamMemberDto
+                    {
+                        UserId = projection.HomeTeamRepresentativeUserId.Value,
+                        Username = projection.HomeRepresentativeUsername ?? "Unknown"
+                    }
                     : null,
-                AwayRepresentative = teamMatch.AwayTeamRepresentativeUserId.HasValue
-                    ? await GetUserAsTeamMember(teamMatch.AwayTeamRepresentativeUserId.Value)
+                AwayRepresentative = projection.AwayTeamRepresentativeUserId.HasValue
+                    ? new TeamMemberDto
+                    {
+                        UserId = projection.AwayTeamRepresentativeUserId.Value,
+                        Username = projection.AwayRepresentativeUsername ?? "Unknown"
+                    }
                     : null
             };
         }
 
         public async Task<TeamMatchDetailsDto> GetTeamMatchDetails(Guid teamMatchId)
         {
-            var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatchId);
-            if (teamMatch == null) throw new Exception("Team match not found.");
+            var projection = await this.AppUnitOfWork.TeamMatchRepository.GetDetailsProjection(teamMatchId);
+            if (projection == null) throw new Exception("Team match not found.");
 
-            var homeTeam = teamMatch.HomeTeamParticipant?.Team;
-            var awayTeam = teamMatch.AwayTeamParticipant?.Team;
-
-            var subMatches = teamMatch.SubMatches.OrderBy(s => s.MatchOrder).ToList();
+            var homeTeamMembers = projection.HomeTeam?.Members ?? [];
+            var awayTeamMembers = projection.AwayTeam?.Members ?? [];
 
             int homeWins = 0, awayWins = 0, homeTotalScore = 0, awayTotalScore = 0;
 
-            foreach (var sm in subMatches)
+            foreach (var sm in projection.SubMatches)
             {
                 if (sm.Status == MatchStatus.Completed && sm.WinnerParticipantId.HasValue)
                 {
-                    if (sm.WinnerParticipantId == teamMatch.HomeTeamParticipantId)
+                    if (sm.WinnerParticipantId == projection.HomeTeamParticipantId)
                         homeWins++;
-                    else if (sm.WinnerParticipantId == teamMatch.AwayTeamParticipantId)
+                    else if (sm.WinnerParticipantId == projection.AwayTeamParticipantId)
                         awayWins++;
                 }
                 homeTotalScore += sm.HomeUserScore ?? 0;
                 awayTotalScore += sm.AwayUserScore ?? 0;
             }
 
-            var homeTeamMembers = homeTeam?.Members?
-                 .Where(m => m.UserId.HasValue)
-                 .Select(m => new TeamMemberDto
-                 {
-                     UserId = m.UserId!.Value,
-                     Username = m.User?.Username ?? "Unknown",
-                     AvatarUrl = m.User?.AvatarUrl
-                 })
-                 .ToList() ?? new List<TeamMemberDto>();
+            int baseTieBreakOrder = (projection.MatchOrder ?? 0) + 1000;
 
-            var awayTeamMembers = awayTeam?.Members?
-                .Where(m => m.UserId.HasValue)
-                .Select(m => new TeamMemberDto
-                {
-                    UserId = m.UserId!.Value,
-                    Username = m.User?.Username ?? "Unknown",
-                    AvatarUrl = m.User?.AvatarUrl
-                })
-                .ToList() ?? new List<TeamMemberDto>();
-
-            TeamMemberDto? homeRepresentative = teamMatch.HomeTeamRepresentativeUserId.HasValue
-                ? await GetUserAsTeamMember(teamMatch.HomeTeamRepresentativeUserId.Value)
-                : null;
-
-            TeamMemberDto? awayRepresentative = teamMatch.AwayTeamRepresentativeUserId.HasValue
-                ? await GetUserAsTeamMember(teamMatch.AwayTeamRepresentativeUserId.Value)
-                : null;
-
-            int baseTieBreakOrder = (teamMatch.MatchOrder ?? 0) + 1000;
-
-            var subMatchDtos = subMatches.Select(sm =>
+            var subMatchDtos = projection.SubMatches.Select(sm =>
             {
                 bool isTieBreakMatch = (sm.MatchOrder ?? 0) >= baseTieBreakOrder;
 
-                // Prioritize explicit HomeUserId/AwayUserId, fall back to Participant.UserId
-                Guid? homeUserId = sm.HomeUserId ?? sm.HomeParticipant?.UserId;
-                Guid? awayUserId = sm.AwayUserId ?? sm.AwayParticipant?.UserId;
-
                 TeamMemberDto? homePlayer = null;
-                if (sm.HomeUser != null)
-                    homePlayer = new TeamMemberDto { UserId = sm.HomeUser.Id!.Value, Username = sm.HomeUser.Username };
-                else if (sm.HomeParticipant?.User != null)
-                    homePlayer = new TeamMemberDto { UserId = sm.HomeParticipant.UserId!.Value, Username = sm.HomeParticipant.User.Username };
-                else if (homeUserId.HasValue)
-                    homePlayer = homeTeamMembers.FirstOrDefault(m => m.UserId == homeUserId.Value);
+                if (sm.HomeUserId.HasValue && sm.HomeUsername != null)
+                    homePlayer = new TeamMemberDto { UserId = sm.HomeUserId.Value, Username = sm.HomeUsername, AvatarUrl = sm.HomeAvatarUrl };
+                else if (sm.HomeUserId.HasValue)
+                    homePlayer = homeTeamMembers.FirstOrDefault(m => m.UserId == sm.HomeUserId.Value);
 
                 TeamMemberDto? awayPlayer = null;
-                if (sm.AwayUser != null)
-                    awayPlayer = new TeamMemberDto { UserId = sm.AwayUser.Id!.Value, Username = sm.AwayUser.Username };
-                else if (sm.AwayParticipant?.User != null)
-                    awayPlayer = new TeamMemberDto { UserId = sm.AwayParticipant.UserId!.Value, Username = sm.AwayParticipant.User.Username };
-                else if (awayUserId.HasValue)
-                    awayPlayer = awayTeamMembers.FirstOrDefault(m => m.UserId == awayUserId.Value);
+                if (sm.AwayUserId.HasValue && sm.AwayUsername != null)
+                    awayPlayer = new TeamMemberDto { UserId = sm.AwayUserId.Value, Username = sm.AwayUsername, AvatarUrl = sm.AwayAvatarUrl };
+                else if (sm.AwayUserId.HasValue)
+                    awayPlayer = awayTeamMembers.FirstOrDefault(m => m.UserId == sm.AwayUserId.Value);
 
-                Guid? winnerUserId = sm.WinnerParticipant?.UserId;
-                if (!winnerUserId.HasValue && sm.Status == MatchStatus.Completed)
+                Guid? winnerUserId = null;
+                if (sm.WinnerParticipantId.HasValue)
+                {
+                    if (sm.WinnerParticipantId == sm.HomeParticipantId)
+                        winnerUserId = homePlayer?.UserId;
+                    else if (sm.WinnerParticipantId == sm.AwayParticipantId)
+                        winnerUserId = awayPlayer?.UserId;
+                }
+                else if (sm.Status == MatchStatus.Completed)
                 {
                     if ((sm.HomeUserScore ?? 0) > (sm.AwayUserScore ?? 0))
                         winnerUserId = homePlayer?.UserId;
@@ -206,34 +183,49 @@ namespace GameHubz.Logic.Services
 
                 return new TeamSubMatchDto
                 {
-                    MatchId = sm.Id!.Value,
+                    MatchId = sm.MatchId,
                     HomePlayer = homePlayer,
                     AwayPlayer = awayPlayer,
                     HomeScore = sm.HomeUserScore,
                     AwayScore = sm.AwayUserScore,
                     Status = sm.Status,
                     WinnerUserId = winnerUserId,
-                    IsTieBreakMatch = isTieBreakMatch
+                    IsTieBreakMatch = isTieBreakMatch,
+                    Evidences = sm.Evidences
                 };
             }).ToList();
 
+            TeamMemberDto? homeRepresentative = null;
+            if (projection.HomeTeamRepresentativeUserId.HasValue)
+            {
+                homeRepresentative = homeTeamMembers.FirstOrDefault(m => m.UserId == projection.HomeTeamRepresentativeUserId.Value)
+                    ?? await GetUserAsTeamMember(projection.HomeTeamRepresentativeUserId.Value);
+            }
+
+            TeamMemberDto? awayRepresentative = null;
+            if (projection.AwayTeamRepresentativeUserId.HasValue)
+            {
+                awayRepresentative = awayTeamMembers.FirstOrDefault(m => m.UserId == projection.AwayTeamRepresentativeUserId.Value)
+                    ?? await GetUserAsTeamMember(projection.AwayTeamRepresentativeUserId.Value);
+            }
+
             return new TeamMatchDetailsDto
             {
-                TeamMatchId = teamMatch.Id!.Value,
-                Status = teamMatch.Status,
-                WinnerTeamParticipantId = teamMatch.WinnerTeamParticipantId,
-                HomeTeam = homeTeam == null ? null : new TeamMatchTeamInfoDto
+                TeamMatchId = projection.TeamMatchId,
+                Status = projection.Status,
+                WinnerTeamParticipantId = projection.WinnerTeamParticipantId,
+                HomeTeam = projection.HomeTeam == null ? null : new TeamMatchTeamInfoDto
                 {
-                    TeamId = homeTeam.Id!.Value,
-                    TeamName = homeTeam.TeamName,
-                    CaptainUserId = homeTeam.CaptainUserId,
+                    TeamId = projection.HomeTeam.TeamId,
+                    TeamName = projection.HomeTeam.TeamName,
+                    CaptainUserId = projection.HomeTeam.CaptainUserId,
                     Members = homeTeamMembers
                 },
-                AwayTeam = awayTeam == null ? null : new TeamMatchTeamInfoDto
+                AwayTeam = projection.AwayTeam == null ? null : new TeamMatchTeamInfoDto
                 {
-                    TeamId = awayTeam.Id!.Value,
-                    TeamName = awayTeam.TeamName,
-                    CaptainUserId = awayTeam.CaptainUserId,
+                    TeamId = projection.AwayTeam.TeamId,
+                    TeamName = projection.AwayTeam.TeamName,
+                    CaptainUserId = projection.AwayTeam.CaptainUserId,
                     Members = awayTeamMembers
                 },
                 SubMatches = subMatchDtos,
@@ -246,17 +238,11 @@ namespace GameHubz.Logic.Services
                 },
                 TieBreak = new TeamTieBreakInfoDto
                 {
-                    IsRequired = teamMatch.Status == TeamMatchStatus.TieBreakRequired,
+                    IsRequired = projection.Status == TeamMatchStatus.TieBreakRequired,
                     HomeRepresentative = homeRepresentative,
                     AwayRepresentative = awayRepresentative
                 }
             };
-        }
-
-        private async Task<TournamentParticipantEntity?> FindParticipantByUserId(Guid tournamentId, Guid userId)
-        {
-            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetUserByTournamentId(tournamentId, userId);
-            return participant;
         }
 
         private async Task<TeamMemberDto> GetUserAsTeamMember(Guid userId)

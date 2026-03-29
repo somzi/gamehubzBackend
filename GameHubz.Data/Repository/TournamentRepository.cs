@@ -95,7 +95,8 @@ namespace GameHubz.Data.Repository
                     HubAvatarUrl = x.Hub.AvatarUrl,
                     Format = x.Format,
                     RoundDurationMinutes = x.RoundDurationMinutes,
-                    IsTeamTournament = x.IsTeamTournament
+                    IsTeamTournament = x.IsTeamTournament,
+                    TeamWinCondition = x.TeamWinCondition
                 })
                 .ToListAsync();
         }
@@ -185,7 +186,8 @@ namespace GameHubz.Data.Repository
                       RoundDurationMinutes = x.RoundDurationMinutes,
                       HubName = x.Hub!.Name,
                       IsTeamTournament = x.IsTeamTournament,
-                      TeamSize = x.TeamSize
+                      TeamSize = x.TeamSize,
+                      TeamWinCondition = x.TeamWinCondition
                   }).FirstOrDefaultAsync();
         }
 

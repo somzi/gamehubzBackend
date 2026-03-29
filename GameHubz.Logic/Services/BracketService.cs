@@ -823,7 +823,9 @@ namespace GameHubz.Logic.Services
             if (!subMatches.All(sm => sm.Status == MatchStatus.Completed))
                 return;
 
-            // Count wins per team
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
+
+            // Count wins per team and aggregate scores
             int homeWins = 0, awayWins = 0;
             int homeTotalScore = 0, awayTotalScore = 0;
 
@@ -840,31 +842,42 @@ namespace GameHubz.Logic.Services
 
             Guid? winnerTeamParticipantId = null;
 
-            if (homeWins != awayWins)
+            if (tournament.TeamWinCondition == TeamWinCondition.AggregateScore)
             {
-                winnerTeamParticipantId = homeWins > awayWins
-                    ? teamMatch.HomeTeamParticipantId
-                    : teamMatch.AwayTeamParticipantId;
-            }
-            else
-            {
-                // Wins are tied — use aggregate total score
+                // Primary: aggregate score, tiebreaker: match wins
                 if (homeTotalScore != awayTotalScore)
                 {
                     winnerTeamParticipantId = homeTotalScore > awayTotalScore
                         ? teamMatch.HomeTeamParticipantId
                         : teamMatch.AwayTeamParticipantId;
                 }
-                else
+                else if (homeWins != awayWins)
                 {
-                    // Both wins and aggregate score are tied
-                    teamMatch.Status = TeamMatchStatus.TieBreakRequired;
-                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
-                    await this.SaveAsync();
-                    await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
-                    await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
-                    return;
+                    winnerTeamParticipantId = homeWins > awayWins
+                        ? teamMatch.HomeTeamParticipantId
+                        : teamMatch.AwayTeamParticipantId;
                 }
+            }
+            else
+            {
+                // MatchWins: winner is determined solely by match wins — ties go straight to TieBreakRequired
+                if (homeWins != awayWins)
+                {
+                    winnerTeamParticipantId = homeWins > awayWins
+                        ? teamMatch.HomeTeamParticipantId
+                        : teamMatch.AwayTeamParticipantId;
+                }
+            }
+
+            if (winnerTeamParticipantId == null)
+            {
+                // Both primary and tiebreaker are tied
+                teamMatch.Status = TeamMatchStatus.TieBreakRequired;
+                await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
+                await this.SaveAsync();
+                await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+                return;
             }
 
             // Winner determined
@@ -894,14 +907,11 @@ namespace GameHubz.Logic.Services
             else
             {
                 // Tournament is over
-                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
                 var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(winnerTeamParticipantId!.Value);
 
                 if (winnerParticipant.TeamId.HasValue)
                 {
                     tournament.WinnerTeamId = winnerParticipant.TeamId;
-                    var winnerTeam = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(winnerParticipant.TeamId.Value);
-                    tournament.WinnerUserId = winnerTeam.CaptainUserId;
                 }
 
                 tournament.Status = TournamentStatus.Completed;

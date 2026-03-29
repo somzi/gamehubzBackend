@@ -24,5 +24,6 @@ namespace GameHubz.DataModels.Models
         public int? RoundDurationMinutes { get; set; }
         public bool? IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
+        public TeamWinCondition? TeamWinCondition { get; set; }
     }
 }

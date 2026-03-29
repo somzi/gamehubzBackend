@@ -32,6 +32,7 @@ namespace GameHubz.DataModels.Models
         public MatchStatus Status { get; set; }
         public Guid? WinnerUserId { get; set; }
         public bool IsTieBreakMatch { get; set; }
+        public List<string> Evidences { get; set; } = [];
     }
 
     public class TeamAggregateScoreDto

@@ -23,6 +23,7 @@ namespace GameHubz.DataModels.Domain
 
         public bool IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
+        public TeamWinCondition TeamWinCondition { get; set; }
         public Guid? WinnerTeamId { get; set; }
         public TournamentTeamEntity? WinnerTeam { get; set; }
 

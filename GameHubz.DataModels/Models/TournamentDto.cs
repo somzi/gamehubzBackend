@@ -28,6 +28,8 @@ namespace GameHubz.DataModels.Models
         public Guid CreatedBy { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
 
+        public TeamWinCondition TeamWinCondition { get; set; }
+
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();
