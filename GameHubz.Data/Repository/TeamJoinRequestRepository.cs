@@ -42,6 +42,12 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(r => r.TeamId == teamId && r.UserId == userId && r.Status == JoinRequestStatus.Pending);
         }
 
+        public async Task<TeamJoinRequestEntity?> GetApprovedByTeamAndUser(Guid teamId, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .FirstOrDefaultAsync(r => r.TeamId == teamId && r.UserId == userId && r.Status == JoinRequestStatus.Approved);
+        }
+
         public async Task<TeamJoinRequestEntity?> GetByIdWithTeam(Guid requestId)
         {
             return await this.BaseDbSet()

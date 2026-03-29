@@ -158,6 +158,11 @@ namespace GameHubz.Logic.Services
             if (member == null) throw new Exception("User is not a member of this team.");
 
             await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
+
+            var joinRequest = await this.AppUnitOfWork.TeamJoinRequestRepository.GetApprovedByTeamAndUser(teamId, userId);
+            if (joinRequest != null)
+                await this.AppUnitOfWork.TeamJoinRequestRepository.HardDeleteEntity(joinRequest);
+
             await this.SaveAsync();
 
             await InvalidateCache(team.TournamentId!.Value);
@@ -321,6 +326,10 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
 
+            var joinRequest = await this.AppUnitOfWork.TeamJoinRequestRepository.GetApprovedByTeamAndUser(teamId, user.UserId);
+            if (joinRequest != null)
+                await this.AppUnitOfWork.TeamJoinRequestRepository.HardDeleteEntity(joinRequest);
+
             var remainingMembers = team.Members.Where(m => m.UserId != user.UserId).ToList();
 
             if (remainingMembers.Count == 0)
@@ -357,7 +366,8 @@ namespace GameHubz.Logic.Services
                 Members = members.Select(m => new TeamMemberDto
                 {
                     UserId = m.UserId!.Value,
-                    Username = m.User?.Username ?? "Unknown"
+                    Username = m.User?.Username ?? "Unknown",
+                    AvatarUrl = m.User?.AvatarUrl ?? null
                 }).ToList()
             };
         }

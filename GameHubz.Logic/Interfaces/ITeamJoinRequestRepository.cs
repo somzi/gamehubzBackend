@@ -6,6 +6,7 @@ namespace GameHubz.Logic.Interfaces
     {
         Task<List<TeamJoinRequestDto>> GetPendingRequestsByTeamId(Guid teamId);
         Task<TeamJoinRequestEntity?> GetPendingByTeamAndUser(Guid teamId, Guid userId);
+        Task<TeamJoinRequestEntity?> GetApprovedByTeamAndUser(Guid teamId, Guid userId);
         Task<TeamJoinRequestEntity?> GetByIdWithTeam(Guid requestId);
         Task<bool> HasPendingRequest(Guid teamId, Guid userId);
     }
