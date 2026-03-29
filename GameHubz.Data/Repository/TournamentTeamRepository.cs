@@ -42,12 +42,40 @@ namespace GameHubz.Data.Repository
                     CaptainUserId = t.CaptainUserId!.Value,
                     TeamSize = t.Tournament!.TeamSize,
                     MemberCount = t.Members.Count,
+                    RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
                         Username = m.User!.Username,
                         AvatarUrl = m.User.AvatarUrl
                     }).ToList()
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<TeamDto>> GetTeamsDtoByTournamentId(Guid tournamentId, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.TournamentId == tournamentId)
+                .Select(t => new TeamDto
+                {
+                    TeamId = t.Id!.Value,
+                    TeamName = t.TeamName,
+                    CaptainUserId = t.CaptainUserId!.Value,
+                    TeamSize = t.Tournament!.TeamSize,
+                    MemberCount = t.Members.Count,
+                    RequiresApproval = t.RequiresApproval,
+                    Members = t.Members.Select(m => new TeamMemberDto
+                    {
+                        UserId = m.UserId!.Value,
+                        Username = m.User!.Username,
+                        AvatarUrl = m.User.AvatarUrl
+                    }).ToList(),
+                    UserRequestStatus = t.JoinRequests
+                        .Where(r => r.UserId == userId)
+                        .OrderByDescending(r => r.CreatedOn)
+                        .Select(r => (JoinRequestStatus?)r.Status)
+                        .FirstOrDefault()
                 })
                 .ToListAsync();
         }
@@ -99,6 +127,7 @@ namespace GameHubz.Data.Repository
                     CaptainUserId = t.CaptainUserId!.Value,
                     MemberCount = t.Members.Count,
                     TeamSize = t.Tournament!.TeamSize,
+                    RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
@@ -126,6 +155,7 @@ namespace GameHubz.Data.Repository
                         TeamName = t.TeamName,
                         TeamSize = t.Tournament!.TeamSize,
                         CurrentMemberCount = t.Members.Count,
+                        RequiresApproval = t.RequiresApproval,
                         Members = t.Members.Select(m => new TeamMemberDto
                         {
                             UserId = m.UserId!.Value,

@@ -130,6 +130,14 @@ namespace GameHubz.Api.Controllers
             return Ok(teams);
         }
 
+        [HttpGet("{tournamentId}/teams/me")]
+        public async Task<IActionResult> GetTeamsByTournamentForUser(Guid tournamentId)
+        {
+            var teams = await this.tournamentTeamService.GetTeamsByTournamentForUser(tournamentId);
+
+            return Ok(teams);
+        }
+
         [HttpGet("{tournamentId}/finalTeams")]
         public async Task<IActionResult> GetFinalTeamsByTournament(Guid tournamentId)
         {

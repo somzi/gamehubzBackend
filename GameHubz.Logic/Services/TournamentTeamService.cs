@@ -38,6 +38,7 @@ namespace GameHubz.Logic.Services
                 TournamentId = request.TournamentId,
                 TeamName = request.TeamName,
                 CaptainUserId = user.UserId,
+                RequiresApproval = request.RequiresApproval,
                 CreatedOn = DateTime.UtcNow
             };
 
@@ -162,9 +163,136 @@ namespace GameHubz.Logic.Services
             await InvalidateCache(team.TournamentId!.Value);
         }
 
+        public async Task<TeamDto> RequestJoin(Guid teamId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
+            if (data == null) throw new Exception("Team not found.");
+
+            if (!data.RequiresApproval)
+                throw new Exception("This team is public. Use the join endpoint instead.");
+
+            if (!data.TeamSize.HasValue)
+                throw new Exception("Tournament team size is not configured.");
+
+            if (data.CurrentMemberCount >= data.TeamSize.Value)
+                throw new Exception("Team is already full.");
+
+            if (data.UserAlreadyInTournament)
+                throw new Exception("User is already in a team for this tournament.");
+
+            var alreadyRequested = await this.AppUnitOfWork.TeamJoinRequestRepository.HasPendingRequest(teamId, user.UserId);
+            if (alreadyRequested)
+                throw new Exception("You already have a pending request for this team.");
+
+            var request = new TeamJoinRequestEntity
+            {
+                Id = Guid.NewGuid(),
+                TeamId = data.TeamId,
+                UserId = user.UserId,
+                Status = JoinRequestStatus.Pending,
+                CreatedOn = DateTime.UtcNow
+            };
+
+            await this.AppUnitOfWork.TeamJoinRequestRepository.AddEntity(request, this.UserContextReader);
+            await this.SaveAsync();
+
+            return new TeamDto
+            {
+                TeamId = data.TeamId,
+                TeamName = data.TeamName,
+                CaptainUserId = data.CaptainUserId,
+                TeamSize = data.TeamSize,
+                RequiresApproval = true,
+                UserRequestStatus = JoinRequestStatus.Pending,
+                Members = data.Members,
+                MemberCount = data.CurrentMemberCount
+            };
+        }
+
         public async Task<List<TeamDto>> GetTeamsByTournament(Guid tournamentId)
         {
             return await this.AppUnitOfWork.TournamentTeamRepository.GetTeamsDtoByTournamentId(tournamentId);
+        }
+
+        public async Task<List<TeamDto>> GetTeamsByTournamentForUser(Guid tournamentId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            return await this.AppUnitOfWork.TournamentTeamRepository.GetTeamsDtoByTournamentId(tournamentId, user.UserId);
+        }
+
+        public async Task<List<TeamJoinRequestDto>> GetPendingRequests(Guid teamId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetById(teamId);
+            if (team == null) throw new Exception("Team not found.");
+
+            if (team.CaptainUserId != user.UserId)
+                throw new Exception("Only the captain can view join requests.");
+
+            return await this.AppUnitOfWork.TeamJoinRequestRepository.GetPendingRequestsByTeamId(teamId);
+        }
+
+        public async Task<TeamDto> ApproveRequest(Guid requestId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
+            if (request == null) throw new Exception("Request not found.");
+
+            var team = request.Team!;
+
+            if (team.CaptainUserId != user.UserId)
+                throw new Exception("Only the captain can approve requests.");
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(team.TournamentId!.Value);
+
+            if (!tournament.TeamSize.HasValue)
+                throw new Exception("Tournament team size is not configured.");
+
+            if (team.Members.Count >= tournament.TeamSize.Value)
+                throw new Exception("Team is already full.");
+
+            var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(request.UserId!.Value, team.TournamentId!.Value);
+            if (alreadyInTeam)
+                throw new Exception("User is already in a team for this tournament.");
+
+            var member = new TournamentTeamMemberEntity
+            {
+                Id = Guid.NewGuid(),
+                TeamId = team.Id,
+                UserId = request.UserId,
+                JoinedAt = DateTime.UtcNow
+            };
+
+            await this.AppUnitOfWork.TournamentTeamMemberRepository.AddEntity(member, this.UserContextReader);
+
+            request.Status = JoinRequestStatus.Approved;
+            await this.AppUnitOfWork.TeamJoinRequestRepository.UpdateEntity(request, this.UserContextReader);
+
+            await this.SaveAsync();
+
+            await InvalidateCache(team.TournamentId!.Value);
+
+            return MapTeamsToDto(team, [.. team.Members, member], tournament.TeamSize);
+        }
+
+        public async Task RejectRequest(Guid requestId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
+            if (request == null) throw new Exception("Request not found.");
+
+            if (request.Team!.CaptainUserId != user.UserId)
+                throw new Exception("Only the captain can reject requests.");
+
+            request.Status = JoinRequestStatus.Rejected;
+            await this.AppUnitOfWork.TeamJoinRequestRepository.UpdateEntity(request, this.UserContextReader);
+
+            await this.SaveAsync();
         }
 
         public async Task<List<TeamDto>> GetFinalTeamsByTournament(Guid tournamentId)
@@ -225,6 +353,7 @@ namespace GameHubz.Logic.Services
                 CaptainUserId = team.CaptainUserId!.Value,
                 MemberCount = members.Count(),
                 TeamSize = teamSize,
+                RequiresApproval = team.RequiresApproval,
                 Members = members.Select(m => new TeamMemberDto
                 {
                     UserId = m.UserId!.Value,

@@ -11,6 +11,8 @@ namespace GameHubz.DataModels.Domain
         public UserEntity? CaptainUser { get; set; }
         public Guid? TournamentParticipantId { get; set; }
         public TournamentParticipantEntity? TournamentParticipant { get; set; }
+        public bool RequiresApproval { get; set; }
         public List<TournamentTeamMemberEntity> Members { get; set; } = new();
+        public List<TeamJoinRequestEntity> JoinRequests { get; set; } = new();
     }
 }

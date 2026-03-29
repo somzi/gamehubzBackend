@@ -9,6 +9,7 @@ namespace GameHubz.DataModels.Models
         public int? TeamSize { get; set; }
         public int CurrentMemberCount { get; set; }
         public bool UserAlreadyInTournament { get; set; }
+        public bool RequiresApproval { get; set; }
         public List<TeamMemberDto> Members { get; set; } = [];
     }
 }

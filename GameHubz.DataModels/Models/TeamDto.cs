@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class TeamDto
@@ -10,6 +12,8 @@ namespace GameHubz.DataModels.Models
         public List<TeamMemberDto> Members { get; set; } = new();
         public bool IsAlreadyRegistred { get; set; }
         public bool IsRegistrationAccepted { get; set; }
+        public bool RequiresApproval { get; set; }
+        public JoinRequestStatus? UserRequestStatus { get; set; }
     }
 
     public class TeamMemberDto

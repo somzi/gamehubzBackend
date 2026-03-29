@@ -418,6 +418,24 @@ namespace GameHubz.Data.Context
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            // TeamJoinRequest
+            modelBuilder.Entity<TeamJoinRequestEntity>().ToTable("TeamJoinRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<TeamJoinRequestEntity>()
+                .HasOne(x => x.Team)
+                .WithMany(x => x.JoinRequests)
+                .HasForeignKey(x => x.TeamId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<TeamJoinRequestEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamJoinRequestEntity>()
+                .HasIndex(x => new { x.TeamId, x.Status });
+
             // TeamMatch
             modelBuilder.Entity<TeamMatchEntity>().ToTable("TeamMatch").HasQueryFilter(x => x.IsDeleted == false);
 

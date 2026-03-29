@@ -47,6 +47,7 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public ITournamentTeamRepository TournamentTeamRepository => this.GetRepository<TournamentTeamRepository>();
         public ITournamentTeamMemberRepository TournamentTeamMemberRepository => this.GetRepository<TournamentTeamMemberRepository>();
+        public ITeamJoinRequestRepository TeamJoinRequestRepository => this.GetRepository<TeamJoinRequestRepository>();
         public ITeamMatchRepository TeamMatchRepository => this.GetRepository<TeamMatchRepository>();
 
         // DO NOT DELETE - Generated Repository Tag

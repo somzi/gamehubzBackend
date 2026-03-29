@@ -5,6 +5,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<TournamentTeamEntity>> GetByTournamentId(Guid tournamentId);
 
         Task<List<TeamDto>> GetTeamsDtoByTournamentId(Guid tournamentId);
+        Task<List<TeamDto>> GetTeamsDtoByTournamentId(Guid tournamentId, Guid userId);
         Task<List<TournamentTeamEntity>> GetFinalByTournamentId(Guid tournamentId);
 
         Task<TournamentTeamEntity?> GetByIdWithMembers(Guid teamId);

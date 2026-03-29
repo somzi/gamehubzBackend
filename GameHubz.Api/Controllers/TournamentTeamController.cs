@@ -45,6 +45,13 @@ namespace GameHubz.Api.Controllers
             return Ok(team);
         }
 
+        [HttpPost("{teamId}/request-join")]
+        public async Task<IActionResult> RequestJoin(Guid teamId)
+        {
+            var team = await this.tournamentTeamService.RequestJoin(teamId);
+            return Ok(team);
+        }
+
         [HttpDelete("{teamId}/members/{userId}")]
         public async Task<IActionResult> KickMember(Guid teamId, Guid userId)
         {
@@ -56,6 +63,27 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> LeaveTeam(Guid teamId)
         {
             await this.tournamentTeamService.LeaveTeam(teamId);
+            return NoContent();
+        }
+
+        [HttpGet("{teamId}/requests")]
+        public async Task<IActionResult> GetPendingRequests(Guid teamId)
+        {
+            var requests = await this.tournamentTeamService.GetPendingRequests(teamId);
+            return Ok(requests);
+        }
+
+        [HttpPut("requests/{requestId}/approve")]
+        public async Task<IActionResult> ApproveRequest(Guid requestId)
+        {
+            var team = await this.tournamentTeamService.ApproveRequest(requestId);
+            return Ok(team);
+        }
+
+        [HttpPut("requests/{requestId}/reject")]
+        public async Task<IActionResult> RejectRequest(Guid requestId)
+        {
+            await this.tournamentTeamService.RejectRequest(requestId);
             return NoContent();
         }
     }
