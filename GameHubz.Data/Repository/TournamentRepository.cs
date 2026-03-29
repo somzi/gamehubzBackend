@@ -251,7 +251,8 @@ namespace GameHubz.Data.Repository
         public async Task<int> GetNumberOfTournamentsWonByUserId(Guid userId)
         {
             return await this.BaseDbSet()
-                    .CountAsync(t => t.WinnerUserId == userId);
+                    .CountAsync(t => t.WinnerUserId == userId
+                        || (t.WinnerTeamId != null && t.WinnerTeam!.Members.Any(m => m.UserId == userId)));
         }
 
         public async Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId)

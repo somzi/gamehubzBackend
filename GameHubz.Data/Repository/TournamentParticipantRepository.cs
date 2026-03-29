@@ -63,7 +63,8 @@ namespace GameHubz.Data.Repository
         public async Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize)
         {
             var query = this.BaseDbSet()
-                .Where(x => x.UserId == userid);
+                .Where(x => x.UserId == userid
+                    || (x.TeamId != null && x.Team!.Members.Any(m => m.UserId == userid)));
 
             var count = await query.CountAsync();
 
