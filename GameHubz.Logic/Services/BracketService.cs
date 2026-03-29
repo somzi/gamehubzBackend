@@ -515,21 +515,29 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            // 2. Update Basic Info
-            match.HomeUserScore = request.HomeScore;
-            match.AwayUserScore = request.AwayScore;
+            // 2. Normalize scores — frontend sends HomeScore as the submitter's score
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isSubmitterAway = match.TeamMatchId.HasValue
+                ? match.AwayUserId == currentUser.UserId
+                : match.AwayParticipant?.UserId == currentUser.UserId;
+
+            int homeScore = isSubmitterAway ? request.AwayScore : request.HomeScore;
+            int awayScore = isSubmitterAway ? request.HomeScore : request.AwayScore;
+
+            match.HomeUserScore = homeScore;
+            match.AwayUserScore = awayScore;
             match.Status = MatchStatus.Completed;
 
             // 3. Determine Winner
             Guid? winnerParticipientId = null;
             Guid? winnerUserId = null;
 
-            if (request.HomeScore > request.AwayScore)
+            if (homeScore > awayScore)
             {
                 winnerParticipientId = match.HomeParticipantId;
                 winnerUserId = match.HomeParticipant!.UserId;
             }
-            else if (request.AwayScore > request.HomeScore)
+            else if (awayScore > homeScore)
             {
                 winnerParticipientId = match.AwayParticipantId;
                 winnerUserId = match.AwayParticipant!.UserId;
@@ -543,7 +551,7 @@ namespace GameHubz.Logic.Services
             // 5. Apply Rules & Advance
             if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
             {
-                await UpdateLeagueStatistics(match.HomeParticipant, match.AwayParticipant, request.HomeScore, request.AwayScore);
+                await UpdateLeagueStatistics(match.HomeParticipant, match.AwayParticipant, homeScore, awayScore);
                 await this.SaveAsync();
 
                 if (match.TournamentStage?.Type == StageType.GroupStage)
