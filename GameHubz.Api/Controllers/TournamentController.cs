@@ -14,16 +14,19 @@ namespace GameHubz.Api.Controllers
     {
         private readonly BracketService bracketService;
         private readonly TournamentTeamService tournamentTeamService;
+        private readonly TournamentExportService tournamentExportService;
 
         public TournamentController(
             TournamentService service,
             AppAuthorizationService appAuthorizationService,
             BracketService bracketService,
-            TournamentTeamService tournamentTeamService)
+            TournamentTeamService tournamentTeamService,
+            TournamentExportService tournamentExportService)
             : base(service, appAuthorizationService)
         {
             this.bracketService = bracketService;
             this.tournamentTeamService = tournamentTeamService;
+            this.tournamentExportService = tournamentExportService;
         }
 
         [HttpPost("createBracket")]
@@ -151,6 +154,14 @@ namespace GameHubz.Api.Controllers
         {
             var team = await this.tournamentTeamService.GetTeamByTournament(tournamentId);
             return Ok(team);
+        }
+
+        [HttpGet("{id}/export/pdf")]
+        public async Task<IActionResult> ExportBracketPdf(Guid id)
+        {
+            var (pdf, name) = await this.tournamentExportService.GenerateBracketPdfAsync(id);
+            var safeName = string.Concat(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
+            return File(pdf, "application/pdf", $"bracket-{safeName}.pdf");
         }
     }
 }

@@ -20,6 +20,8 @@ namespace GameHubz.Api
     {
         public static void Main(params string[] args)
         {
+            QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+
             WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
             builder.WebHost.UseNLog();

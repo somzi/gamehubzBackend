@@ -24,6 +24,7 @@
 		<PackageReference Include="Microsoft.Identity.Web.TokenCache" Version="3.13.2" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 		<PackageReference Include="NLog" Version="6.0.3" />
+		<PackageReference Include="QuestPDF" Version="2025.1.2" />
 		<PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
 		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
 		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.14.0" />

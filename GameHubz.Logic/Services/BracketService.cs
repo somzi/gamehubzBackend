@@ -118,6 +118,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
         }
 
@@ -601,6 +602,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
             await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{request.TournamentId}");
         }
 
         #endregion 3. Result Processing & Updates
@@ -880,6 +882,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
                 await this.SaveAsync();
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
             }
@@ -926,6 +929,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
         }
 
@@ -1494,12 +1498,13 @@ namespace GameHubz.Logic.Services
 
         private async Task<List<LeagueStandingDto>> GetGroupStandings(Guid groupId)
         {
-            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(groupId);
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdWithNames(groupId);
 
             var standings = participants.Select(p => new LeagueStandingDto
             {
                 ParticipantId = p.Id!.Value,
                 UserId = p.UserId!.Value,
+                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId!.Value.ToString(),
                 Points = p.Points,
                 Wins = p.Wins,
                 Draws = p.Draws,
