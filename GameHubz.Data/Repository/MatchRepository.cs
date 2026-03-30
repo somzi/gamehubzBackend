@@ -242,7 +242,9 @@ namespace GameHubz.Data.Repository
                     AwayUserScore = x.AwayUserScore ?? 0,
                     HomeUserScore = x.HomeUserScore ?? 0,
                     Evidences = x.MatchEvidences.Select(e => e.Url!).ToList(),
-                    ScheduledTime = x.ScheduledStartTime
+                    ScheduledTime = x.ScheduledStartTime,
+                    HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
+                    AwayUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
                 })
                 .FirstAsync();
         }

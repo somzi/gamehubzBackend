@@ -681,6 +681,7 @@ namespace GameHubz.Logic.Services
                         tournament.Status = TournamentStatus.InProgress;
                         tournament.WinnerUserId = null;
                         await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
                     }
                 }
                 return;
@@ -728,6 +729,8 @@ namespace GameHubz.Logic.Services
             teamMatch.Status = TeamMatchStatus.Pending;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+
             if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
             {
                 var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
@@ -762,6 +765,7 @@ namespace GameHubz.Logic.Services
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
                 }
             }
 

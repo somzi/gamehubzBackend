@@ -8,5 +8,7 @@
         public int AwayUserScore { get; set; }
         public List<string> Evidences { get; set; } = [];
         public DateTime? ScheduledTime { get; set; }
+        public string? AwayUserAvatarUrl { get; set; }
+        public string? HomeUserAvatarUrl { get; set; }
     }
 }

@@ -7,7 +7,7 @@ namespace GameHubz.Logic.Services
     {
         private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
 
-        public async void LogError(HttpContext context, Exception ex, string exceptionCategory)
+        public async Task LogError(HttpContext context, Exception ex, string exceptionCategory)
         {
             var exceptionType = ex.GetType().Name;
             var requestMethod = context.Request.Method ?? string.Empty;
@@ -17,7 +17,7 @@ namespace GameHubz.Logic.Services
 
             LogEventInfo logEventInfo = new(LogLevel.Error, string.Empty, string.Empty)
             {
-                Message = string.Format(ex.ToString()),
+                Message = ex.ToString(),
                 LoggerName = logger.Name
             };
 

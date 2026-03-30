@@ -60,7 +60,7 @@ namespace GameHubz.Api.Middleware
 
         private async Task CreateExceptionResponse(HttpContext context, HttpStatusCode code, Exception exception, string category)
         {
-            this.logger.LogError(context, exception, category);
+            await this.logger.LogError(context, exception, category);
 
             var result = CreateHandledErrorModel(exception);
 
