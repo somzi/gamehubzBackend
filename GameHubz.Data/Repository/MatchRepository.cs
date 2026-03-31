@@ -244,7 +244,7 @@ namespace GameHubz.Data.Repository
                     Evidences = x.MatchEvidences.Select(e => e.Url!).ToList(),
                     ScheduledTime = x.ScheduledStartTime,
                     HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
-                    AwayUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
+                    AwayUserAvatarUrl = x.AwayParticipant.User.AvatarUrl,
                 })
                 .FirstAsync();
         }
