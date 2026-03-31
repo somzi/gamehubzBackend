@@ -81,13 +81,13 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("{id}/user/{userId}/kick")]
-        public async Task GetMembers(Guid id, Guid userid)
+        public async Task KickMember(Guid id, Guid userid)
         {
             await hubService.KickUserFromHub(id, userid);
         }
 
         [HttpPost("{id}/avatar")]
-        public async Task<IActionResult> UploadAvatar(Guid id, [FromForm] IFormFile avatar)
+        public async Task<IActionResult> UploadHubAvatar(Guid id, IFormFile avatar)
         {
             if (avatar == null || avatar.Length == 0)
             {

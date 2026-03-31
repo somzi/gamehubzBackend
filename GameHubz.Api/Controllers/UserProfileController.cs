@@ -50,7 +50,7 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("avatar")]
-        public async Task<IActionResult> UploadAvatar([FromForm] IFormFile avatar)
+        public async Task<IActionResult> UploadAvatar(IFormFile avatar)
         {
             if (avatar == null || avatar.Length == 0)
             {

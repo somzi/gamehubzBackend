@@ -35,7 +35,7 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("reject")]
-        public async Task<IActionResult> ApproveRegistrations([FromBody] Guid registrationId)
+        public async Task<IActionResult> RejectRegistration([FromBody] Guid registrationId)
         {
             await this.Service.RejectRegistration(registrationId);
 
