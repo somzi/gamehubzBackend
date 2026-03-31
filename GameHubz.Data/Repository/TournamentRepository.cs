@@ -130,36 +130,51 @@ namespace GameHubz.Data.Repository
 
         public async Task<TournamentEntity?> GetWithFullDetails(Guid tournamentId)
         {
-            return await this.BaseDbSet()
-                .AsNoTracking() // Read-only speed boost
+            // Lightweight PK lookup to determine tournament type before building the heavy query
+            var isTeam = await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => (bool?)t.IsTeamTournament)
+                .FirstOrDefaultAsync();
+
+            if (isTeam == null) return null;
+
+            // AsSplitQuery prevents cartesian explosion — each Include path
+            // becomes a separate SQL query instead of one massive LEFT JOIN product
+            IQueryable<TournamentEntity> query = this.BaseDbSet()
+                .AsNoTracking()
+                .AsSplitQuery()
                 .Include(t => t.Hub)
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.TournamentGroups)
-                // Load Matches for every stage
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.Matches!)
                         .ThenInclude(m => m.HomeParticipant)
-                            .ThenInclude(p => p!.User) // Get Username/Avatar
+                            .ThenInclude(p => p!.User)
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.Matches!)
                         .ThenInclude(m => m.AwayParticipant)
                             .ThenInclude(p => p!.User)
                 .Include(t => t.TournamentStages!)
                     .ThenInclude(s => s.Matches!)
-                        .ThenInclude(m => m.MatchEvidences)
-                // Load TeamMatches for team tournaments
-                .Include(t => t.TournamentStages!)
-                    .ThenInclude(s => s.TeamMatches!)
-                        .ThenInclude(tm => tm.SubMatches)
-                .Include(t => t.TournamentStages!)
-                    .ThenInclude(s => s.TeamMatches!)
-                        .ThenInclude(tm => tm.HomeTeamParticipant)
-                            .ThenInclude(p => p!.Team)
-                .Include(t => t.TournamentStages!)
-                    .ThenInclude(s => s.TeamMatches!)
-                        .ThenInclude(tm => tm.AwayTeamParticipant)
-                            .ThenInclude(p => p!.Team)
-                .FirstOrDefaultAsync(t => t.Id == tournamentId);
+                        .ThenInclude(m => m.MatchEvidences);
+
+            if (isTeam.Value)
+            {
+                query = query
+                    .Include(t => t.TournamentStages!)
+                        .ThenInclude(s => s.TeamMatches!)
+                            .ThenInclude(tm => tm.SubMatches)
+                    .Include(t => t.TournamentStages!)
+                        .ThenInclude(s => s.TeamMatches!)
+                            .ThenInclude(tm => tm.HomeTeamParticipant)
+                                .ThenInclude(p => p!.Team)
+                    .Include(t => t.TournamentStages!)
+                        .ThenInclude(s => s.TeamMatches!)
+                            .ThenInclude(tm => tm.AwayTeamParticipant)
+                                .ThenInclude(p => p!.Team);
+            }
+
+            return await query.FirstOrDefaultAsync(t => t.Id == tournamentId);
         }
 
         public async Task<TournamentOverview?> GetOverview(Guid tournamentId)
