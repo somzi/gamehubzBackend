@@ -42,7 +42,7 @@ namespace GameHubz.DataMigrations.Api
             builder.Services.AddFluentMigratorCore().ConfigureRunner(runnerBuilder =>
             {
                 runnerBuilder
-                    .AddSqlServer()
+                    .AddPostgres()
                     .WithGlobalConnectionString(builder.Configuration.GetConnectionString("DatabaseConnection"))
                     .ScanIn(typeof(Migration_00001_Scheme_Initial).Assembly)
                     .For.Migrations();

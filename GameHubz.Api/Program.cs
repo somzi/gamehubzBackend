@@ -20,6 +20,8 @@ namespace GameHubz.Api
     {
         public static void Main(params string[] args)
         {
+            AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
             QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
             WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -105,7 +107,7 @@ namespace GameHubz.Api
         {
             ConfigurationManager configuration = builder.Configuration;
             builder.Services.AddDbContext<ApplicationContext>(
-                options => options.UseSqlServer(configuration.GetConnectionString("DatabaseConnection")!),
+                options => options.UseNpgsql(configuration.GetConnectionString("DatabaseConnection")!),
                 ServiceLifetime.Transient,
                 ServiceLifetime.Transient);
         }
