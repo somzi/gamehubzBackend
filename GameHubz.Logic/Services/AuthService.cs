@@ -123,16 +123,16 @@ namespace GameHubz.Logic.Services
 
             UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail($"{loginRequest.Email}");
 
-            //if (user != null && !user.IsActive)
-            //{
-            //    return new TokenResponse(false, null, this.LocalizationService["AuthService.DeletedAccount"]);
-            //}
+            if (user != null && !user.IsActive)
+            {
+                return new TokenResponse(false, null, this.LocalizationService["AuthService.DeletedAccount"]);
+            }
 
-            //if (user == null
-            //    || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
-            //{
-            //    return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
-            //}
+            if (user == null
+                || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
+            {
+                return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
+            }
 
             var refreshToken = await this.GenerateAndAddRefreshTokenForUser(user!.Id!.Value);
 
