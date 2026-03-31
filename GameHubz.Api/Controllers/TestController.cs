@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using GameHubz.Logic.Services;
@@ -59,6 +60,20 @@ namespace GameHubz.Api.Controllers
             {
                 ContentType = "text/html",
                 Content = output
+            };
+        }
+
+        [HttpGet("version")]
+        public ContentResult Version()
+        {
+            string version = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion ?? "unknown";
+
+            return new ContentResult
+            {
+                ContentType = "text/html",
+                Content = version
             };
         }
 
