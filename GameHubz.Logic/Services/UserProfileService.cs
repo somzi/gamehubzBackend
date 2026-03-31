@@ -49,7 +49,7 @@ namespace GameHubz.Logic.Services
                 Performance = perforamance
             };
 
-            await cacheService.SetAsync(key, result, TimeSpan.FromMinutes(3));
+            await cacheService.SetAsync(key, result, TimeSpan.FromSeconds(30));
 
             return result;
         }

@@ -268,10 +268,14 @@ namespace GameHubz.Data.Context
                 .HasIndex(x => new { x.HubId, x.CreatedOn });
 
             modelBuilder.Entity<TournamentEntity>()
-                .HasIndex(x => new { x.HubId, x.Status });
+                .HasIndex(x => new { x.HubId, x.Status, x.StartDate })
+                .IsDescending(false, false, true);
 
             modelBuilder.Entity<TournamentEntity>()
                 .HasIndex(x => x.StartDate);
+
+            modelBuilder.Entity<TournamentEntity>()
+                .HasIndex(x => x.WinnerUserId);
 
             modelBuilder.Entity<MatchEntity>()
                 .HasIndex(x => x.TournamentStageId);
@@ -284,6 +288,36 @@ namespace GameHubz.Data.Context
 
             modelBuilder.Entity<TournamentParticipantEntity>()
                 .HasIndex(x => x.TournamentGroupId);
+
+            // ── Performance indexes ──────────────────────────────────────
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasIndex(x => new { x.TournamentId, x.Status });
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasIndex(x => new { x.TournamentId, x.RoundNumber });
+
+            modelBuilder.Entity<MatchEntity>()
+                .HasIndex(x => new { x.Status, x.ScheduledStartTime })
+                .IsDescending(false, true);
+
+            modelBuilder.Entity<TournamentParticipantEntity>()
+                .HasIndex(x => new { x.TournamentId, x.UserId });
+
+            modelBuilder.Entity<TournamentRegistrationEntity>()
+                .HasIndex(x => new { x.TournamentId, x.Status });
+
+            modelBuilder.Entity<TournamentRegistrationEntity>()
+                .HasIndex(x => x.TeamId);
+
+            modelBuilder.Entity<UserEntity>()
+                .HasIndex(x => x.Email);
+
+            modelBuilder.Entity<RefreshTokenEntity>()
+                .HasIndex(x => x.Token);
+
+            modelBuilder.Entity<UserHubEntity>()
+                .HasIndex(x => new { x.UserId, x.HubId });
 
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
 
