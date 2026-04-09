@@ -78,13 +78,6 @@ namespace GameHubz.Logic.Services
 
             var document = Document.Create(doc =>
             {
-                doc.Page(page =>
-                {
-                    page.Size(PageSizes.A4);
-                    page.Content().AlignCenter().AlignMiddle()
-                        .Text("FONT RADI NA LINUXU!").FontSize(30).FontFamily("Inter").Bold();
-                });
-
                 foreach (var stage in structure.Stages)
                 {
                     if (stage.Rounds is { Count: > 0 })
