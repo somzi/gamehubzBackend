@@ -13,6 +13,7 @@ namespace GameHubz.Logic.Services
     {
         // ── Layout constants (points) ──────────────────────────────────
         private const float MatchBoxW = 174;
+
         private const float MatchBoxH = 50;
         private const float RowH = 25;
         private const float RoundGap = 56;
@@ -31,6 +32,7 @@ namespace GameHubz.Logic.Services
 
         // ── Colors ─────────────────────────────────────────────────────
         private const string CHeaderBg = "#0F172A";
+
         private const string CAccent = "#3B82F6";
         private const string CBoxBg = "#F8F9FA";
         private const string CBoxBrd = "#DEE2E6";
@@ -66,13 +68,13 @@ namespace GameHubz.Logic.Services
 
         public async Task<(byte[] Pdf, string TournamentName)> GenerateBracketPdfAsync(Guid tournamentId)
         {
-            string cacheKey = $"pdf:bracket:{tournamentId}";
+            //string cacheKey = $"pdf:bracket:{tournamentId}";
 
             var structure = await this.bracketService.GetTournamentStructure(tournamentId);
 
-            var cached = await this.cacheService.GetAsync<byte[]>(cacheKey);
-            if (cached != null)
-                return (cached, structure.Name);
+            //var cached = await this.cacheService.GetAsync<byte[]>(cacheKey);
+            //if (cached != null)
+            //    return (cached, structure.Name);
 
             var document = Document.Create(doc =>
             {
@@ -87,7 +89,7 @@ namespace GameHubz.Logic.Services
             });
 
             var pdf = document.GeneratePdf();
-            await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(30));
+            //await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(1));
             return (pdf, structure.Name);
         }
 
