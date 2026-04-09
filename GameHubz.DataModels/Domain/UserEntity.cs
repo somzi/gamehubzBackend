@@ -64,5 +64,7 @@ namespace GameHubz.DataModels.Domain
         public bool IsActive { get; set; } = true;
 
         public string? ForgotPasswordOtp { get; set; }
+
+        public string? PushToken { get; set; }
     }
 }

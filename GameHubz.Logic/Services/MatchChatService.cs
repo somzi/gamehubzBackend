@@ -7,6 +7,7 @@ namespace GameHubz.Logic.Services
     public class MatchChatService : AppBaseServiceGeneric<MatchChatEntity, MatchChatDto, MatchChatPost, MatchChatEdit>
     {
         private readonly IHubContext<MatchChatHub> hubContext;
+        private readonly INotificationService notificationService;
 
         public MatchChatService(
             IUnitOfWorkFactory factory,
@@ -16,7 +17,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            IHubContext<MatchChatHub> hubContext) : base(
+            IHubContext<MatchChatHub> hubContext,
+            INotificationService notificationService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -26,6 +28,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.hubContext = hubContext;
+            this.notificationService = notificationService;
         }
 
         public async Task<ChatMessageDto> SendMessage(Guid matchId, string content)
@@ -53,6 +56,32 @@ namespace GameHubz.Logic.Services
 
             await hubContext.Clients.Group(matchId.ToString())
                              .SendAsync("ReceiveMessage", dto);
+
+            // Push notification to the opponent
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+                    if (match == null) return;
+
+                    Guid? opponentUserId = match.HomeUserId == user.UserId
+                        ? match.AwayUserId
+                        : match.HomeUserId;
+
+                    if (opponentUserId == null) return;
+
+                    var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+                    if (opponent?.PushToken == null) return;
+
+                    await notificationService.SendToOneAsync(
+                        opponent.PushToken,
+                        "New Message",
+                        $"{user.Username}: {content}",
+                        new { matchId });
+                }
+                catch { /* fire-and-forget – swallow errors */ }
+            });
 
             return dto;
         }

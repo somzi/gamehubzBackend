@@ -183,5 +183,12 @@ namespace GameHubz.Data.Repository
                 .Where(x => x.ForgotPasswordOtp == resetPasswordRequestDto.OtpCode && x.Email == resetPasswordRequestDto.Email)
                 .SingleAsync();
         }
+
+        public async Task ClearPushTokenAsync(string pushToken)
+        {
+            await this.BaseDbSet()
+                .Where(x => x.PushToken == pushToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.PushToken, (string?)null));
+        }
     }
 }

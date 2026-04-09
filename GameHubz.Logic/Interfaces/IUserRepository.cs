@@ -37,5 +37,7 @@ namespace GameHubz.Logic.Interfaces
         Task<UserEntity> GetWithSocialsAndStats(Guid id);
 
         Task<UserEntity?> GetByOtpAndMail(ResetPasswordOtpRequestDto resetPasswordRequestDto);
+
+        Task ClearPushTokenAsync(string pushToken);
     }
 }

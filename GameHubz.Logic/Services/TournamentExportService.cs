@@ -89,7 +89,7 @@ namespace GameHubz.Logic.Services
             });
 
             var pdf = document.GeneratePdf();
-            await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(30));
+            await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(5));
             return (pdf, structure.Name);
         }
 
