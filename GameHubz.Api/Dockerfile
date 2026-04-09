@@ -2,11 +2,11 @@
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 USER root
-# Dodali smo 'fontconfig' paket da bismo mogli da osvežimo keš fontova
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
     libfreetype6 \
     fontconfig \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 EXPOSE 8080
