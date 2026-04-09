@@ -7,6 +7,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
+        private readonly INotificationService notificationService;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -17,7 +18,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             HubActivityService hubActivityService,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            INotificationService notificationService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -28,6 +30,7 @@ namespace GameHubz.Logic.Services
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
+            this.notificationService = notificationService;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -267,6 +270,36 @@ namespace GameHubz.Logic.Services
             if (inputDto.Id is null)
             {
                 await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+
+                // Notify all hub followers about the new tournament
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
+                        if (hubMembers == null || hubMembers.Count == 0) return;
+
+                        var userIds = hubMembers.Select(m => m.UserId).Distinct().ToList();
+                        var pushTokens = new List<string>();
+
+                        foreach (var userId in userIds)
+                        {
+                            var user = await this.AppUnitOfWork.UserRepository.GetById(userId);
+                            if (user?.PushToken != null)
+                                pushTokens.Add(user.PushToken);
+                        }
+
+                        if (pushTokens.Count > 0)
+                        {
+                            await notificationService.SendToManyAsync(
+                                pushTokens,
+                                "New Tournament!",
+                                $"A new tournament \"{model.Name}\" has been created. Register now!",
+                                new { tournamentId = model.Id });
+                        }
+                    }
+                    catch { /* fire-and-forget */ }
+                });
             }
             else
             {

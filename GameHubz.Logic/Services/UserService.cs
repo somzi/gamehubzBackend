@@ -84,6 +84,17 @@ namespace GameHubz.Logic.Services
             return this.AppUnitOfWork.UserRepository.GetById(tokenUserInfo.UserId);
         }
 
+        public async Task UpdatePushToken(Guid userId, string? pushToken)
+        {
+            var user = await this.AppUnitOfWork.UserRepository.GetById(userId)
+                       ?? throw new EntityNotFoundException("User", "UserEntity", this.LocalizationService);
+
+            user.PushToken = pushToken;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
         protected override IRepository<UserEntity> GetRepository()
         {
             return this.AppUnitOfWork.UserRepository;

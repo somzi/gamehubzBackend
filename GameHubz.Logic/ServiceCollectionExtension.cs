@@ -92,6 +92,8 @@ namespace GameHubz.Logic
 
             services.AddTransient<TournamentExportService>();
 
+            services.AddTransient<INotificationService, NotificationService>();
+
             // DO NOT DELETE - Generated Service Tag
 
             ConfigureValidators(services);

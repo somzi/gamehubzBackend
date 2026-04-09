@@ -50,6 +50,12 @@ namespace GameHubz.Api
 
             builder.Services.AddHostedService<SendEmailTask>();
 
+            builder.Services.AddHttpClient("ExpoPush", client =>
+            {
+                client.BaseAddress = new Uri("https://exp.host");
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+            });
+
             builder.Services.AddStackExchangeRedisCache(options =>
             {
                 options.Configuration = builder.Configuration.GetConnectionString("Redis");
