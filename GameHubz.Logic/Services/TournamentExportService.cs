@@ -13,6 +13,7 @@ namespace GameHubz.Logic.Services
     {
         // ── Layout constants (points) ──────────────────────────────────
         private const float MatchBoxW = 174;
+
         private const float MatchBoxH = 50;
         private const float RowH = 25;
         private const float RoundGap = 56;
@@ -31,6 +32,7 @@ namespace GameHubz.Logic.Services
 
         // ── Colors ─────────────────────────────────────────────────────
         private const string CHeaderBg = "#0F172A";
+
         private const string CAccent = "#3B82F6";
         private const string CBoxBg = "#F8F9FA";
         private const string CBoxBrd = "#DEE2E6";
@@ -76,6 +78,13 @@ namespace GameHubz.Logic.Services
 
             var document = Document.Create(doc =>
             {
+                doc.Page(page =>
+                {
+                    page.Size(PageSizes.A4);
+                    page.Content().AlignCenter().AlignMiddle()
+                        .Text("FONT RADI NA LINUXU!").FontSize(30).FontFamily("Inter").Bold();
+                });
+
                 foreach (var stage in structure.Stages)
                 {
                     if (stage.Rounds is { Count: > 0 })
