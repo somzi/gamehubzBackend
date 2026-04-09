@@ -47,7 +47,7 @@ namespace GameHubz.Logic.Services
         private const string CScoreL = "#6C757D";
         private const string CMuted = "#94A3B8";
         private const string CWhite = "#FFFFFF";
-        private const string Font = "Segoe UI, Arial, sans-serif";
+        private const string Font = "Inter";
 
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -87,7 +87,7 @@ namespace GameHubz.Logic.Services
             });
 
             var pdf = document.GeneratePdf();
-            await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(30));
+            await this.cacheService.SetAsync(cacheKey, pdf, TimeSpan.FromMinutes(5));
             return (pdf, structure.Name);
         }
 
@@ -354,7 +354,7 @@ namespace GameHubz.Logic.Services
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(30);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily("Inter"));
 
                 page.Header().Column(col =>
                 {

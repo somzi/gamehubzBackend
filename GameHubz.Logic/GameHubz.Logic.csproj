@@ -31,6 +31,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<EmbeddedResource Include="Fonts\Inter-Regular.ttf" />
+		<EmbeddedResource Include="Fonts\Inter-Bold.ttf" />
+		<Content Include="Fonts\*.ttf">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\GameHubz.Common\GameHubz.Common.csproj" />
 		<ProjectReference Include="..\GameHubz.DataMigrations\GameHubz.DataMigrations.csproj" />
 		<ProjectReference Include="..\GameHubz.DataModels\GameHubz.DataModels.csproj" />
