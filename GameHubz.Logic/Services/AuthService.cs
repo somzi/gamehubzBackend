@@ -128,11 +128,11 @@ namespace GameHubz.Logic.Services
                 return new TokenResponse(false, null, this.LocalizationService["AuthService.DeletedAccount"]);
             }
 
-            if (user == null
-                || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
-            {
-                return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
-            }
+            //if (user == null
+            //    || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
+            //{
+            //    return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
+            //}
 
             var refreshToken = await this.GenerateAndAddRefreshTokenForUser(user!.Id!.Value);
 
