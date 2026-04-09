@@ -20,9 +20,9 @@ namespace GameHubz.Logic.Fonts
             if (stream == null)
                 throw new InvalidOperationException($"Embedded font resource '{resourceName}' not found.");
 
-            FontManager.RegisterFontWithCustomName(
-                resourceName.Contains("Bold") ? "Inter-Bold" : "Inter",
-                stream);
+            // Umesto RegisterFontWithCustomName, koristi defaultni RegisterFont.
+            // On će sam pročitati metapodatke iz TTF fajla i shvatiti da je to porodica "Inter"
+            FontManager.RegisterFont(stream);
         }
     }
 }
