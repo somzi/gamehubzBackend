@@ -65,9 +65,9 @@ namespace GameHubz.Logic.Services
                     var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
                     if (match == null) return;
 
-                    Guid? opponentUserId = match.HomeUserId == user.UserId
-                        ? match.AwayUserId
-                        : match.HomeUserId;
+                    Guid? opponentUserId = match.HomeParticipant!.UserId == user.UserId
+                        ? match.AwayParticipant!.UserId
+                        : match.HomeParticipant!.UserId;
 
                     if (opponentUserId == null) return;
 
