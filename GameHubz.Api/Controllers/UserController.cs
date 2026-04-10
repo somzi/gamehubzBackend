@@ -32,7 +32,7 @@ namespace GameHubz.Api.Controllers
             this.tournamentService = tournamentService;
         }
 
-        [HttpPatch("push-token")]
+        [HttpPost("push-token")]
         public async Task<IActionResult> UpdatePushToken([FromBody] UpdatePushTokenRequest request)
         {
             var tokenUserInfo = await this.userContextReader.GetTokenUserInfoFromContextThrowIfNull();
