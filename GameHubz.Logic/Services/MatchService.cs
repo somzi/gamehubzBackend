@@ -118,25 +118,24 @@ namespace GameHubz.Logic.Services
                 {
                     if (match.Status == MatchStatus.Scheduled)
                     {
-                        string timeStr = match.ScheduledStartTime!.Value.ToString("MMM d 'at' HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " UTC";
-                        string body = $"Your match is confirmed for {timeStr}";
-
                         var homeUserId = GetParticipantUserId(match, isHome: true);
                         var awayUserId = GetParticipantUserId(match, isHome: false);
 
-                        if (homeUserId.HasValue)
-                        {
-                            var home = await this.AppUnitOfWork.UserRepository.GetById(homeUserId.Value);
-                            if (home?.PushToken != null)
-                                await notificationService.SendToOneAsync(home.PushToken, "Match Scheduled", body, new { matchId });
-                        }
+                        Guid? opponentUserId = isHome
+                            ? GetParticipantUserId(match, isHome: false)
+                            : GetParticipantUserId(match, isHome: true);
 
-                        if (awayUserId.HasValue)
-                        {
-                            var away = await this.AppUnitOfWork.UserRepository.GetById(awayUserId.Value);
-                            if (away?.PushToken != null)
-                                await notificationService.SendToOneAsync(away.PushToken, "Match Scheduled", body, new { matchId });
-                        }
+                        if (opponentUserId == null) return;
+
+                        var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+
+                        if (opponent == null) return;
+
+                        string body = $"Your match is confirmed vs {user.Username}";
+
+                        if (opponent?.PushToken == null) return;
+
+                        await notificationService.SendToOneAsync(opponent.PushToken, "Match Scheduled", body, new { matchId = matchId.ToString() });
                     }
                     else
                     {
@@ -150,9 +149,9 @@ namespace GameHubz.Logic.Services
 
                         await notificationService.SendToOneAsync(
                             opponent.PushToken,
-                            user.Username,
-                            "Set their availability \u2014 add yours to confirm a time",
-                            new { matchId });
+                            "Match schedule",
+                            $"{user.Username} set their availability, add yours to confirm a time",
+                            new { matchId = matchId.ToString() });
                     }
                 }
                 catch { /* fire-and-forget */ }

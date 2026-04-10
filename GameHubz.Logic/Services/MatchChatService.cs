@@ -92,7 +92,7 @@ namespace GameHubz.Logic.Services
                         opponent.PushToken,
                         user.Username,
                         content,
-                        new { matchId });
+                        new { matchId = matchId.ToString() });
                 }
                 catch { /* fire-and-forget – swallow errors */ }
             });
