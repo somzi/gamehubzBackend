@@ -37,7 +37,7 @@ namespace GameHubz.Api.Controllers
         {
             var tokenUserInfo = await this.userContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            await this.Service.UpdatePushToken(tokenUserInfo.UserId, request.PushToken);
+            await this.Service.UpdatePushToken(tokenUserInfo.UserId, request.Token);
 
             return Ok();
         }
