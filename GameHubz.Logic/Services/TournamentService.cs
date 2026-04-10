@@ -293,8 +293,8 @@ namespace GameHubz.Logic.Services
                         {
                             await notificationService.SendToManyAsync(
                                 pushTokens,
-                                "New Tournament!",
-                                $"A new tournament \"{model.Name}\" has been created. Register now!",
+                                model.Name,
+                                "Registration is open — grab your spot!",
                                 new { tournamentId = model.Id });
                         }
                     }

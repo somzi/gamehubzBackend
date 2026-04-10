@@ -65,9 +65,16 @@ namespace GameHubz.Logic.Services
                     var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
                     if (match == null) return;
 
-                    Guid? opponentUserId = match.HomeParticipant!.UserId == user.UserId
-                        ? match.AwayParticipant!.UserId
-                        : match.HomeParticipant!.UserId;
+                    Guid? opponentUserId = match.HomeUserId == user.UserId
+                        ? match.AwayUserId
+                        : match.HomeUserId;
+
+                    if (opponentUserId == null)
+                    {
+                        opponentUserId = match.HomeParticipant?.UserId == user.UserId
+                            ? match.AwayParticipant?.UserId
+                            : match.HomeParticipant?.UserId;
+                    }
 
                     if (opponentUserId == null) return;
 
@@ -76,8 +83,8 @@ namespace GameHubz.Logic.Services
 
                     await notificationService.SendToOneAsync(
                         opponent.PushToken,
-                        "New Message",
-                        $"{user.Username}: {content}",
+                        user.Username,
+                        content,
                         new { matchId });
                 }
                 catch { /* fire-and-forget – swallow errors */ }
