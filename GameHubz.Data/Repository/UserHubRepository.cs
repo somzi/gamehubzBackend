@@ -33,7 +33,8 @@ namespace GameHubz.Data.Repository
                 .Select(x => new UserHubOverview
                 {
                     UserId = x.UserId!.Value,
-                    Username = x.User!.Username
+                    Username = x.User!.Username,
+                    PushToken = x.User!.PushToken
                 })
                 .ToListAsync();
         }

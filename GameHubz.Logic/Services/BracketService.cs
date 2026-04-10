@@ -1535,21 +1535,11 @@ namespace GameHubz.Logic.Services
             {
                 try
                 {
-                    var participants = tournament.TournamentParticipants?
-                        .Where(p => p.UserId.HasValue)
-                        .Select(p => p.UserId!.Value)
-                        .Distinct()
-                        .ToList();
+                    var userIds = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllUserIdsByTournamentId(tournamentId);
 
-                    if (participants == null || participants.Count == 0) return;
+                    if (userIds.Count == 0) return;
 
-                    var pushTokens = new List<string>();
-                    foreach (var userId in participants)
-                    {
-                        var user = await this.AppUnitOfWork.UserRepository.GetById(userId);
-                        if (user?.PushToken != null)
-                            pushTokens.Add(user.PushToken);
-                    }
+                    var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(userIds);
 
                     if (pushTokens.Count > 0)
                     {

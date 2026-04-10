@@ -199,7 +199,7 @@ namespace GameHubz.Logic.Services
 
             var data = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(id);
 
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
 
             return data;
         }

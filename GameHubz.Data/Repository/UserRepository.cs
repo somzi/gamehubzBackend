@@ -190,5 +190,13 @@ namespace GameHubz.Data.Repository
                 .Where(x => x.PushToken == pushToken)
                 .ExecuteUpdateAsync(s => s.SetProperty(u => u.PushToken, (string?)null));
         }
+
+        public async Task<List<string>> GetPushTokensByUserIds(List<Guid> userIds)
+        {
+            return await this.BaseDbSet()
+                .Where(x => userIds.Contains(x.Id!.Value) && x.PushToken != null)
+                .Select(x => x.PushToken!)
+                .ToListAsync();
+        }
     }
 }
