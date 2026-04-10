@@ -58,6 +58,13 @@ namespace GameHubz.Logic.Services
                              .SendAsync("ReceiveMessage", dto);
 
             // Push notification to the opponent
+            SendNotification(matchId, content, user);
+
+            return dto;
+        }
+
+        private void SendNotification(Guid matchId, string content, TokenUserInfo user)
+        {
             _ = Task.Run(async () =>
             {
                 try
@@ -89,8 +96,6 @@ namespace GameHubz.Logic.Services
                 }
                 catch { /* fire-and-forget – swallow errors */ }
             });
-
-            return dto;
         }
 
         public async Task<List<ChatMessageDto>> GetHistory(Guid matchId)

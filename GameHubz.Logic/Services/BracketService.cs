@@ -125,37 +125,7 @@ namespace GameHubz.Logic.Services
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
 
             // Notify all participants that the tournament is now live
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var participants = tournament.TournamentParticipants?
-                        .Where(p => p.UserId.HasValue)
-                        .Select(p => p.UserId!.Value)
-                        .Distinct()
-                        .ToList();
-
-                    if (participants == null || participants.Count == 0) return;
-
-                    var pushTokens = new List<string>();
-                    foreach (var userId in participants)
-                    {
-                        var user = await this.AppUnitOfWork.UserRepository.GetById(userId);
-                        if (user?.PushToken != null)
-                            pushTokens.Add(user.PushToken);
-                    }
-
-                    if (pushTokens.Count > 0)
-                    {
-                        await notificationService.SendToManyAsync(
-                            pushTokens,
-                            "Tournament Started!",
-                            $"{tournament.Name} is now live. Good luck!",
-                            new { tournamentId });
-                    }
-                }
-                catch { /* fire-and-forget */ }
-            });
+            SendNotification(tournament, tournamentId);
         }
 
         #endregion 1. Tournament Generation Entry Points
@@ -1557,6 +1527,41 @@ namespace GameHubz.Logic.Services
 
             for (int i = 0; i < standings.Count; i++) standings[i].Position = i + 1;
             return standings;
+        }
+
+        private void SendNotification(TournamentEntity tournament, Guid tournamentId)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var participants = tournament.TournamentParticipants?
+                        .Where(p => p.UserId.HasValue)
+                        .Select(p => p.UserId!.Value)
+                        .Distinct()
+                        .ToList();
+
+                    if (participants == null || participants.Count == 0) return;
+
+                    var pushTokens = new List<string>();
+                    foreach (var userId in participants)
+                    {
+                        var user = await this.AppUnitOfWork.UserRepository.GetById(userId);
+                        if (user?.PushToken != null)
+                            pushTokens.Add(user.PushToken);
+                    }
+
+                    if (pushTokens.Count > 0)
+                    {
+                        await notificationService.SendToManyAsync(
+                            pushTokens,
+                            $"{tournament.Name}",
+                            $"Tournament is now live. Good luck!",
+                            new { tournamentId });
+                    }
+                }
+                catch { /* fire-and-forget */ }
+            });
         }
 
         #endregion 5. Private Helpers (Core Logic)
