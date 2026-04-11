@@ -141,6 +141,10 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
+            var alreadyOwnsHub = await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(user.UserId);
+            if (alreadyOwnsHub)
+                throw new Exception("You already own a hub and cannot create another one.");
+
             var hub = new HubEntity
             {
                 Name = request.Name,

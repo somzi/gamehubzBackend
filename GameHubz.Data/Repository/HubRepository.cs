@@ -26,6 +26,12 @@ namespace GameHubz.Data.Repository
             .ToListAsync();
         }
 
+        public Task<bool> UserOwnsAnyHub(Guid userId)
+        {
+            return this.BaseDbSet()
+                .AnyAsync(x => x.UserId == userId);
+        }
+
         public async Task<List<HubDto>> GetOverview()
         {
             return await this.BaseDbSet()
