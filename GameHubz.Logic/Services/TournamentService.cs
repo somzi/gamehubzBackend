@@ -272,34 +272,7 @@ namespace GameHubz.Logic.Services
                 await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
                 // Notify all hub followers about the new tournament
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
-                        if (hubMembers == null || hubMembers.Count == 0) return;
-
-                        var userIds = hubMembers.Select(m => m.UserId).Distinct().ToList();
-                        var pushTokens = new List<string>();
-
-                        foreach (var userId in userIds)
-                        {
-                            var user = await this.AppUnitOfWork.UserRepository.GetById(userId);
-                            if (user?.PushToken != null)
-                                pushTokens.Add(user.PushToken);
-                        }
-
-                        if (pushTokens.Count > 0)
-                        {
-                            await notificationService.SendToManyAsync(
-                                pushTokens,
-                                "New Tournament!",
-                                $"A new tournament \"{model.Name}\" has been created. Register now!",
-                                new { tournamentId = model.Id });
-                        }
-                    }
-                    catch { /* fire-and-forget */ }
-                });
+                SendNotification(model);
             }
             else
             {
@@ -310,6 +283,34 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
+        }
+
+        private void SendNotification(TournamentDto model)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
+                    if (hubMembers == null || hubMembers.Count == 0) return;
+
+                    var pushTokens = hubMembers
+                        .Where(m => !string.IsNullOrEmpty(m.PushToken))
+                        .Select(m => m.PushToken)
+                        .Distinct()
+                        .ToList();
+
+                    if (pushTokens.Count > 0)
+                    {
+                        await notificationService.SendToManyAsync(
+                            pushTokens!,
+                            model.Name,
+                            "Registration is open, grab your spot!",
+                            new { tournamentId = model.Id });
+                    }
+                }
+                catch { /* fire-and-forget */ }
+            });
         }
 
         private static bool ShouldDeleteTournament(TournamentEntity tournament)

@@ -58,6 +58,13 @@ namespace GameHubz.Logic.Services
                              .SendAsync("ReceiveMessage", dto);
 
             // Push notification to the opponent
+            SendNotification(matchId, content, user);
+
+            return dto;
+        }
+
+        private void SendNotification(Guid matchId, string content, TokenUserInfo user)
+        {
             _ = Task.Run(async () =>
             {
                 try
@@ -69,6 +76,13 @@ namespace GameHubz.Logic.Services
                         ? match.AwayUserId
                         : match.HomeUserId;
 
+                    if (opponentUserId == null)
+                    {
+                        opponentUserId = match.HomeParticipant?.UserId == user.UserId
+                            ? match.AwayParticipant?.UserId
+                            : match.HomeParticipant?.UserId;
+                    }
+
                     if (opponentUserId == null) return;
 
                     var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
@@ -76,14 +90,12 @@ namespace GameHubz.Logic.Services
 
                     await notificationService.SendToOneAsync(
                         opponent.PushToken,
-                        "New Message",
-                        $"{user.Username}: {content}",
-                        new { matchId });
+                        user.Username,
+                        content,
+                        new { matchId = matchId.ToString() });
                 }
                 catch { /* fire-and-forget – swallow errors */ }
             });
-
-            return dto;
         }
 
         public async Task<List<ChatMessageDto>> GetHistory(Guid matchId)

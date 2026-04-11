@@ -1,7 +1,6 @@
-# See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
+﻿# See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
-# MORA ROOT DA BI INSTALIRAO PAKETE
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
@@ -36,11 +35,11 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-# OVO JE FALILO: Kopiranje tvojih Inter fontova u sam Linux!
+# OVO JE MAGIJA ZA SVG: Kopiramo fontove u Linux OS i osvežavamo keš
 RUN mkdir -p /usr/share/fonts/truetype/custom \
     && cp ./Fonts/*.ttf /usr/share/fonts/truetype/custom/ \
     && fc-cache -f -v
 
-# NA SAMOM KRAJU vracamo na bezbednog korisnika
+# Vraćamo korisnika na non-root zbog sigurnosti
 USER $APP_UID
 ENTRYPOINT ["dotnet", "GameHubz.Api.dll"]

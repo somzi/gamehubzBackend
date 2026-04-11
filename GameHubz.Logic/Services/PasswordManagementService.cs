@@ -185,7 +185,7 @@ namespace GameHubz.Logic.Services
                 var emailModel = new EmailModel
                 {
                     //To = email,
-                    To = "strejtfromts@gmail.com",
+                    To = email,
                     Subject = subject,
                     Message = message,
                     IsMessageHtml = true,
