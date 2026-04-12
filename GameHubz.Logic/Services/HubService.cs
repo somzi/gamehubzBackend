@@ -141,6 +141,10 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
+            var alreadyOwnsHub = await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(user.UserId);
+            if (alreadyOwnsHub)
+                throw new Exception("You already own a hub and cannot create another one.");
+
             var hub = new HubEntity
             {
                 Name = request.Name,
@@ -199,7 +203,7 @@ namespace GameHubz.Logic.Services
 
             var data = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(id);
 
-            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(60));
+            await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
 
             return data;
         }

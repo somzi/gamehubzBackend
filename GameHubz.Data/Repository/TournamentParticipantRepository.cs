@@ -114,5 +114,23 @@ namespace GameHubz.Data.Repository
             return this.BaseDbSet()
                 .FirstOrDefaultAsync(tp => tp.TeamId == teamId);
         }
+
+        public async Task<List<Guid>> GetAllUserIdsByTournamentId(Guid tournamentId)
+        {
+            var soloUserIds = this.BaseDbSet()
+                .Where(tp => tp.TournamentId == tournamentId && tp.UserId.HasValue)
+                .Select(tp => tp.UserId!.Value);
+
+            var teamMemberUserIds = this.BaseDbSet()
+                .Where(tp => tp.TournamentId == tournamentId && tp.TeamId.HasValue)
+                .SelectMany(tp => tp.Team!.Members)
+                .Where(m => m.UserId.HasValue)
+                .Select(m => m.UserId!.Value);
+
+            return await soloUserIds
+                .Union(teamMemberUserIds)
+                .Distinct()
+                .ToListAsync();
+        }
     }
 }

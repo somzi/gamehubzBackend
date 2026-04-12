@@ -10,6 +10,7 @@ using GameHubz.Logic;
 using GameHubz.Logic.Fonts;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Mappings;
+using GameHubz.Logic.Fonts;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -49,6 +50,12 @@ namespace GameHubz.Api
             builder.Services.AddHttpContextAccessor();
 
             builder.Services.AddHostedService<SendEmailTask>();
+
+            builder.Services.AddHttpClient("ExpoPush", client =>
+            {
+                client.BaseAddress = new Uri("https://exp.host");
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+            });
 
             builder.Services.AddStackExchangeRedisCache(options =>
             {

@@ -6,6 +6,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<HubEntity>> GetByUserId(Guid userId);
 
+        Task<bool> UserOwnsAnyHub(Guid userId);
+
         Task<HubOverviewDto?> GetOverviewDtoById(Guid hubId);
 
         Task<bool> IsUserFollowingHub(Guid userId, Guid id);

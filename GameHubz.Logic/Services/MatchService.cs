@@ -7,6 +7,7 @@ namespace GameHubz.Logic.Services
     public class MatchService : AppBaseServiceGeneric<MatchEntity, MatchDto, MatchPost, MatchEdit>
     {
         private readonly CloudinaryStorageService storageService;
+        private readonly INotificationService notificationService;
 
         public MatchService(
             IUnitOfWorkFactory factory,
@@ -16,7 +17,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            CloudinaryStorageService storageService) : base(
+            CloudinaryStorageService storageService,
+            INotificationService notificationService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -26,6 +28,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.storageService = storageService;
+            this.notificationService = notificationService;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -94,6 +97,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
+            SendNotification(matchId, user, match, isHome);
+
             // 4. Return DTO for UI
             return new MatchAvailabilityDto
             {
@@ -103,6 +108,54 @@ namespace GameHubz.Logic.Services
                 ConfirmedTime = match.ScheduledStartTime,
                 MatchDeadline = match.RoundDeadline
             };
+        }
+
+        private void SendNotification(Guid matchId, TokenUserInfo user, MatchEntity match, bool isHome)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (match.Status == MatchStatus.Scheduled)
+                    {
+                        var homeUserId = GetParticipantUserId(match, isHome: true);
+                        var awayUserId = GetParticipantUserId(match, isHome: false);
+
+                        Guid? opponentUserId = isHome
+                            ? GetParticipantUserId(match, isHome: false)
+                            : GetParticipantUserId(match, isHome: true);
+
+                        if (opponentUserId == null) return;
+
+                        var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+
+                        if (opponent == null) return;
+
+                        string body = $"Your match is confirmed vs {user.Username}";
+
+                        if (opponent?.PushToken == null) return;
+
+                        await notificationService.SendToOneAsync(opponent.PushToken, "Match Scheduled", body, new { matchId = matchId.ToString() });
+                    }
+                    else
+                    {
+                        Guid? opponentUserId = isHome
+                            ? GetParticipantUserId(match, isHome: false)
+                            : GetParticipantUserId(match, isHome: true);
+                        if (opponentUserId == null) return;
+
+                        var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+                        if (opponent?.PushToken == null) return;
+
+                        await notificationService.SendToOneAsync(
+                            opponent.PushToken,
+                            "Match schedule",
+                            $"{user.Username} set their availability, add yours to confirm a time",
+                            new { matchId = matchId.ToString() });
+                    }
+                }
+                catch { /* fire-and-forget */ }
+            });
         }
 
         public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
@@ -134,6 +187,11 @@ namespace GameHubz.Logic.Services
             // 4. Obriši keš (jer se meč promenio)
             // await _cacheService.RemoveAsync($"match:{matchId}");
         }
+
+        private static Guid? GetParticipantUserId(MatchEntity match, bool isHome) =>
+            isHome
+                ? (match.HomeUserId ?? match.HomeParticipant?.UserId)
+                : (match.AwayUserId ?? match.AwayParticipant?.UserId);
 
         protected override IRepository<MatchEntity> GetRepository()
             => this.AppUnitOfWork.MatchRepository;
