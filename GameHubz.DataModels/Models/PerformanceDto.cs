@@ -2,6 +2,6 @@
 {
     public class PerformanceDto
     {
-        public bool IsWin { get; set; }
+        public string Result { get; set; } = string.Empty;
     }
 }
