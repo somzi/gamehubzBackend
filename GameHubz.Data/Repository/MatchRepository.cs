@@ -179,10 +179,11 @@ namespace GameHubz.Data.Repository
                             : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Username : "Unknown"))
                         : (m.AwayUser != null ? m.AwayUser.Username
                             : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Username : "Unknown")),
-                    IsWin = m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
-                            ? m.WinnerParticipantId == m.HomeParticipantId
-                            : m.WinnerParticipantId == m.AwayParticipantId),
+                    Result = m.WinnerParticipantId == null
+                        ? "Draw"
+                        : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                            ? (m.WinnerParticipantId == m.HomeParticipantId ? "Win" : "Loss")
+                            : (m.WinnerParticipantId == m.AwayParticipantId ? "Win" : "Loss")),
                 })
                 .ToListAsync();
         }
@@ -198,10 +199,11 @@ namespace GameHubz.Data.Repository
                 .Take(10)
                 .Select(m => new PerformanceDto
                 {
-                    IsWin = m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
-                            ? m.WinnerParticipantId == m.HomeParticipantId
-                            : m.WinnerParticipantId == m.AwayParticipantId),
+                    Result = m.WinnerParticipantId == null
+                        ? "Draw"
+                        : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                            ? (m.WinnerParticipantId == m.HomeParticipantId ? "Win" : "Loss")
+                            : (m.WinnerParticipantId == m.AwayParticipantId ? "Win" : "Loss"))
                 })
                 .ToListAsync();
         }
