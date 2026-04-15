@@ -39,14 +39,20 @@ namespace GameHubz.DataModels.Domain
         [NotMapped]
         public List<DateTime> HomeSlots
         {
-            get => string.IsNullOrEmpty(HomeSlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(HomeSlotsJson)!;
+            get => string.IsNullOrEmpty(HomeSlotsJson)
+                ? new List<DateTime>()
+                : JsonSerializer.Deserialize<List<DateTime>>(HomeSlotsJson)!
+                    .Select(d => DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToList();
             set => HomeSlotsJson = JsonSerializer.Serialize(value);
         }
 
         [NotMapped]
         public List<DateTime> AwaySlots
         {
-            get => string.IsNullOrEmpty(AwaySlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(AwaySlotsJson)!;
+            get => string.IsNullOrEmpty(AwaySlotsJson)
+                ? new List<DateTime>()
+                : JsonSerializer.Deserialize<List<DateTime>>(AwaySlotsJson)!
+                    .Select(d => DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToList();
             set => AwaySlotsJson = JsonSerializer.Serialize(value);
         }
 
