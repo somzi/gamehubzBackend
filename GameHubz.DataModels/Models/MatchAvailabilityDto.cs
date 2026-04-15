@@ -16,13 +16,19 @@ namespace GameHubz.DataModels.Models
 
         public List<DateTime> MySlots
         {
-            get => string.IsNullOrEmpty(MySlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(MySlotsJson)!;
+            get => string.IsNullOrEmpty(MySlotsJson)
+                ? new List<DateTime>()
+                : JsonSerializer.Deserialize<List<DateTime>>(MySlotsJson)!
+                    .Select(d => DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToList();
             set => MySlotsJson = JsonSerializer.Serialize(value);
         }
 
         public List<DateTime> OpponentSlots
         {
-            get => string.IsNullOrEmpty(OpponentSlotsJson) ? new List<DateTime>() : JsonSerializer.Deserialize<List<DateTime>>(OpponentSlotsJson)!;
+            get => string.IsNullOrEmpty(OpponentSlotsJson)
+                ? new List<DateTime>()
+                : JsonSerializer.Deserialize<List<DateTime>>(OpponentSlotsJson)!
+                    .Select(d => DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToList();
             set => OpponentSlotsJson = JsonSerializer.Serialize(value);
         }
     }
