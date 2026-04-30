@@ -69,14 +69,18 @@ namespace GameHubz.Logic.Services
 
             //if (!isHome && !isAway) throw new Exception("User is not a participant in this match");
 
-            // 2. Save Slots
+            // 2. Save Slots — normalize to UTC so Intersect() uses consistent DateTimeKind
+            var normalizedSlots = selectedSlots
+                .Select(s => DateTime.SpecifyKind(s, DateTimeKind.Utc))
+                .ToList();
+
             if (isHome)
             {
-                match.HomeSlots = selectedSlots;
+                match.HomeSlots = normalizedSlots;
             }
             else
             {
-                match.AwaySlots = selectedSlots;
+                match.AwaySlots = normalizedSlots;
             }
 
             // 3. CHECK FOR OVERLAP (The Magic)
