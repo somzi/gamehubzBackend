@@ -430,9 +430,11 @@ namespace GameHubz.Logic.Services
                     {
                         bool isLast = group == groups.Last();
                         // Smanjen razmak između grupa sa 20 na 12
-                        // ShowEntire() GARANTUJE da se tabela ne može više preseći napola
+                        // Prosleđujemo structure.QualifiersPerGroup (dodajemo ?? 1 za svaki slučaj ako je null)
+                        int qualifiersCount = structure.QualifiersPerGroup ?? 1;
+
                         col.Item().PaddingBottom(isLast ? 0 : 12).ShowEntire()
-                            .Element(e => RenderGroupTable(e, group));
+                            .Element(e => RenderGroupTable(e, group, qualifiersCount));
                     }
                 });
 
@@ -456,7 +458,8 @@ namespace GameHubz.Logic.Services
             });
         }
 
-        private static void RenderGroupTable(IContainer container, GroupDto group)
+        // Dodali smo int qualifiersCount kao treći parametar
+        private static void RenderGroupTable(IContainer container, GroupDto group, int qualifiersCount)
         {
             container.Column(col =>
             {
@@ -506,9 +509,11 @@ namespace GameHubz.Logic.Services
                     // Data rows
                     foreach (var s in group.Standings)
                     {
-                        bool isTop = s.Position == 1; // Highlight leader
+                        // Gledamo da li je pozicija tima unutar broja onih koji se kvalifikuju
+                        bool isQualifier = s.Position <= qualifiersCount;
+
                         var cs = TextStyle.Default.FontSize(9);
-                        var bg = isTop
+                        var bg = isQualifier
                             ? CWinBg
                             : s.Position % 2 == 0 ? CBoxBg : Colors.White;
 

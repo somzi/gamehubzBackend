@@ -42,7 +42,8 @@ namespace GameHubz.Logic.Services
                 Status = tournament.Status,
                 IsTeamTournament = tournament.IsTeamTournament,
                 Stages = new List<TournamentStageStructureDto>(),
-                HubOwnerId = tournament.Hub!.UserId
+                HubOwnerId = tournament.Hub!.UserId,
+                QualifiersPerGroup = tournament.QualifiersPerGroup
             };
 
             foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
