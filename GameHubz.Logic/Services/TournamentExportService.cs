@@ -353,7 +353,7 @@ namespace GameHubz.Logic.Services
             TournamentStructureDto structure,
             TournamentStageStructureDto stage)
         {
-            var groups = stage.Groups!;
+            var groups = stage.Groups!.OrderBy(g => g.Name).ToList();
             var pageBatches = new List<List<GroupDto>>();
             var currentBatch = new List<GroupDto>();
             int currentWeight = 0;
