@@ -141,6 +141,7 @@ namespace GameHubz.Logic.Services
             sb.Append("<feComposite in=\"c\" in2=\"o\" operator=\"in\" result=\"s\"/>");
             sb.Append("<feMerge><feMergeNode in=\"s\"/><feMergeNode in=\"SourceGraphic\"/></feMerge>");
             sb.Append("</filter>");
+
             // Clip paths for match boxes
             int idx = 0;
             foreach (var round in rounds)
@@ -352,40 +353,103 @@ namespace GameHubz.Logic.Services
             TournamentStructureDto structure,
             TournamentStageStructureDto stage)
         {
+            var groups = stage.Groups!;
+            var pageBatches = new List<List<GroupDto>>();
+            var currentBatch = new List<GroupDto>();
+            int currentWeight = 0;
+            const int MaxPageWeight = 12;
+
+            foreach (var group in groups)
+            {
+                int count = group.Standings.Count;
+
+                // Određujemo "težinu" grupe na osnovu broja članova
+                int groupWeight;
+                if (count <= 4) groupWeight = 4;      // Staju 3 na stranicu (3 * 4 = 12)
+                else if (count <= 8) groupWeight = 6; // Staju 2 na stranicu (2 * 6 = 12)
+                else groupWeight = 12;                // Staje 1 na stranicu (1 * 12 = 12)
+
+                // Ako dodavanje ove grupe prelazi limit stranice, prelazimo na novu stranicu
+                if (currentWeight + groupWeight > MaxPageWeight && currentBatch.Any())
+                {
+                    pageBatches.Add(currentBatch);
+                    currentBatch = new List<GroupDto>();
+                    currentWeight = 0;
+                }
+
+                currentBatch.Add(group);
+                currentWeight += groupWeight;
+            }
+
+            if (currentBatch.Any())
+            {
+                pageBatches.Add(currentBatch);
+            }
+
+            // Renderujemo svaku pripremljenu stranicu
+            foreach (var batch in pageBatches)
+            {
+                RenderGroupDocPage(doc, structure, stage, batch);
+            }
+        }
+
+        private static void RenderGroupDocPage(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            List<GroupDto> groups)
+        {
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(30);
-                page.DefaultTextStyle(x => x.FontSize(9).FontFamily("Inter"));
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Background(Colors.Grey.Darken4).Padding(15).Column(h =>
-                    {
-                        h.Item().Text(structure.Name).FontSize(18).Bold().FontColor(Colors.White);
-                        h.Item().Text($"{structure.Format}  \u2022  {stage.Name}")
-                            .FontSize(10).FontColor(Colors.Grey.Lighten2);
-                    });
-                    col.Item().Height(3).Background(Colors.Blue.Medium);
+                    col.Item()
+                        .Background(CHeaderBg)
+                        .Padding(15)
+                        .Column(h =>
+                        {
+                            h.Item()
+                                .Text(structure.Name)
+                                .FontSize(18).Bold().FontColor(Colors.White);
+
+                            h.Item()
+                                .Text($"{structure.Format}  \u2022  {(structure.IsTeamTournament ? "Teams" : "Solo")}  \u2022  {stage.Name}")
+                                .FontSize(10).FontColor(CMuted);
+                        });
+
+                    col.Item().Height(3).Background(CAccent);
                 });
 
-                page.Content().PaddingTop(15).Column(col =>
+                page.Content().PaddingTop(20).Column(col =>
                 {
-                    foreach (var group in stage.Groups!)
-                        col.Item().PaddingBottom(15).Element(e => RenderGroupTable(e, group));
+                    foreach (var group in groups)
+                    {
+                        // Dodajemo vertikalni razmak (PaddingBottom) između tabela
+                        bool isLast = group == groups.Last();
+                        col.Item().PaddingBottom(isLast ? 0 : 20)
+                            .Element(e => RenderGroupTable(e, group));
+                    }
                 });
 
                 page.Footer()
-                    .BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(5)
+                    .BorderTop(1).BorderColor(Colors.Grey.Lighten2)
+                    .PaddingTop(5)
                     .Row(row =>
                     {
                         row.RelativeItem()
                             .Text($"Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  \u2022  GameHubz")
                             .FontSize(7).FontColor(Colors.Grey.Medium);
+
                         row.RelativeItem().AlignRight().Text(t =>
                         {
                             t.Span("Page ").FontSize(7).FontColor(Colors.Grey.Medium);
                             t.CurrentPageNumber().FontSize(7).FontColor(Colors.Grey.Medium);
+                            t.Span(" of ").FontSize(7).FontColor(Colors.Grey.Medium);
+                            t.TotalPages().FontSize(7).FontColor(Colors.Grey.Medium);
                         });
                     });
             });
@@ -395,57 +459,69 @@ namespace GameHubz.Logic.Services
         {
             container.Column(col =>
             {
-                col.Item().Row(r =>
-                {
-                    r.AutoItem()
-                        .Background(Colors.Grey.Darken3)
-                        .Padding(5).PaddingLeft(12).PaddingRight(12)
-                        .Text(group.Name).FontSize(11).Bold().FontColor(Colors.White);
-                });
+                // Group header
+                col.Item()
+                    .Background(CRndBg)
+                    .Padding(8).PaddingLeft(14).PaddingRight(14)
+                    .Row(r =>
+                    {
+                        r.AutoItem()
+                            .Text(group.Name)
+                            .FontSize(12).Bold().FontColor(Colors.White);
+                    });
 
-                col.Item().PaddingTop(5).Table(table =>
+                col.Item().PaddingTop(1).Table(table =>
                 {
                     table.ColumnsDefinition(c =>
                     {
-                        c.ConstantColumn(28);
-                        c.RelativeColumn(4);
-                        c.ConstantColumn(32);
-                        c.ConstantColumn(25);
-                        c.ConstantColumn(25);
-                        c.ConstantColumn(25);
-                        c.ConstantColumn(28);
-                        c.ConstantColumn(28);
-                        c.ConstantColumn(28);
+                        c.ConstantColumn(28);  // #
+                        c.RelativeColumn(4);   // Name
+                        c.ConstantColumn(36);  // Pts
+                        c.ConstantColumn(28);  // W
+                        c.ConstantColumn(28);  // D
+                        c.ConstantColumn(28);  // L
+                        c.ConstantColumn(32);  // GF
+                        c.ConstantColumn(32);  // GA
+                        c.ConstantColumn(32);  // GD
                     });
 
+                    // Header row
                     table.Header(h =>
                     {
                         var hs = TextStyle.Default.FontSize(8).Bold().FontColor(Colors.White);
-                        var bg = Colors.Grey.Darken3;
-                        h.Cell().Background(bg).Padding(4).Text("#").Style(hs);
-                        h.Cell().Background(bg).Padding(4).Text("Player / Team").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("Pts").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("W").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("D").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("L").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("GF").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("GA").Style(hs);
-                        h.Cell().Background(bg).Padding(4).AlignCenter().Text("GD").Style(hs);
+
+                        h.Cell().Background(CHeaderBg).Padding(5).Text("#").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).Text("Player / Team").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("Pts").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("W").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("D").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("L").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GF").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GA").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GD").Style(hs);
                     });
 
+                    // Data rows
                     foreach (var s in group.Standings)
                     {
-                        var cs = TextStyle.Default.FontSize(8);
-                        var bg = s.Position % 2 == 0 ? Colors.Grey.Lighten4 : Colors.White;
-                        table.Cell().Background(bg).Padding(4).Text(s.Position.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).Text(s.Name).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Points.ToString()).Style(cs).Bold();
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Wins.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Draws.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Losses.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalsFor.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalDifference.ToString()).Style(cs);
+                        bool isTop = s.Position == 1; // Highlight leader
+                        var cs = TextStyle.Default.FontSize(9);
+                        var bg = isTop
+                            ? CWinBg
+                            : s.Position % 2 == 0 ? CBoxBg : Colors.White;
+
+                        string posStr = s.Position.ToString();
+
+                        table.Cell().Background(bg).Padding(5).Text(posStr).Style(cs);
+                        table.Cell().Background(bg).Padding(5).Text(s.Name).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter()
+                            .Text(s.Points.ToString()).Style(cs).Bold();
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Wins.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Draws.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Losses.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalsFor.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalDifference.ToString()).Style(cs);
                     }
                 });
             });
