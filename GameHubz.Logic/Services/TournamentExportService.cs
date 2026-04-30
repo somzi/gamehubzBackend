@@ -353,6 +353,7 @@ namespace GameHubz.Logic.Services
             TournamentStructureDto structure,
             TournamentStageStructureDto stage)
         {
+            // Dodato abecedno sortiranje po imenu grupe
             var groups = stage.Groups!.OrderBy(g => g.Name).ToList();
             var pageBatches = new List<List<GroupDto>>();
             var currentBatch = new List<GroupDto>();
@@ -363,13 +364,11 @@ namespace GameHubz.Logic.Services
             {
                 int count = group.Standings.Count;
 
-                // Određujemo "težinu" grupe na osnovu broja članova
                 int groupWeight;
                 if (count <= 4) groupWeight = 4;      // Staju 3 na stranicu (3 * 4 = 12)
                 else if (count <= 8) groupWeight = 6; // Staju 2 na stranicu (2 * 6 = 12)
                 else groupWeight = 12;                // Staje 1 na stranicu (1 * 12 = 12)
 
-                // Ako dodavanje ove grupe prelazi limit stranice, prelazimo na novu stranicu
                 if (currentWeight + groupWeight > MaxPageWeight && currentBatch.Any())
                 {
                     pageBatches.Add(currentBatch);
@@ -386,7 +385,6 @@ namespace GameHubz.Logic.Services
                 pageBatches.Add(currentBatch);
             }
 
-            // Renderujemo svaku pripremljenu stranicu
             foreach (var batch in pageBatches)
             {
                 RenderGroupDocPage(doc, structure, stage, batch);
@@ -402,7 +400,8 @@ namespace GameHubz.Logic.Services
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4.Landscape());
-                page.Margin(30);
+                // Malo smanjena margina stranice za još prostora (sa 30 na 25)
+                page.Margin(25);
                 page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
 
                 page.Header().Column(col =>
@@ -424,13 +423,15 @@ namespace GameHubz.Logic.Services
                     col.Item().Height(3).Background(CAccent);
                 });
 
-                page.Content().PaddingTop(20).Column(col =>
+                // Smanjen PaddingTop sa 20 na 8 da se "ukine onaj gornji prazan space"
+                page.Content().PaddingTop(8).Column(col =>
                 {
                     foreach (var group in groups)
                     {
-                        // Dodajemo vertikalni razmak (PaddingBottom) između tabela
                         bool isLast = group == groups.Last();
-                        col.Item().PaddingBottom(isLast ? 0 : 20)
+                        // Smanjen razmak između grupa sa 20 na 12
+                        // ShowEntire() GARANTUJE da se tabela ne može više preseći napola
+                        col.Item().PaddingBottom(isLast ? 0 : 12).ShowEntire()
                             .Element(e => RenderGroupTable(e, group));
                     }
                 });
@@ -470,7 +471,7 @@ namespace GameHubz.Logic.Services
                             .FontSize(12).Bold().FontColor(Colors.White);
                     });
 
-                col.Item().PaddingTop(1).Table(table =>
+                col.Item().Table(table =>
                 {
                     table.ColumnsDefinition(c =>
                     {
@@ -490,15 +491,16 @@ namespace GameHubz.Logic.Services
                     {
                         var hs = TextStyle.Default.FontSize(8).Bold().FontColor(Colors.White);
 
-                        h.Cell().Background(CHeaderBg).Padding(5).Text("#").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).Text("Player / Team").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("Pts").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("W").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("D").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("L").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GF").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GA").Style(hs);
-                        h.Cell().Background(CHeaderBg).Padding(5).AlignCenter().Text("GD").Style(hs);
+                        // Smanjen Padding u ćelijama sa 5 na 4 da redovi budu kompaktniji
+                        h.Cell().Background(CHeaderBg).Padding(4).Text("#").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).Text("Player / Team").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("Pts").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("W").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("D").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("L").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("GF").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("GA").Style(hs);
+                        h.Cell().Background(CHeaderBg).Padding(4).AlignCenter().Text("GD").Style(hs);
                     });
 
                     // Data rows
@@ -512,16 +514,17 @@ namespace GameHubz.Logic.Services
 
                         string posStr = s.Position.ToString();
 
-                        table.Cell().Background(bg).Padding(5).Text(posStr).Style(cs);
-                        table.Cell().Background(bg).Padding(5).Text(s.Name).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter()
+                        // Smanjen Padding u ćelijama sa 5 na 4
+                        table.Cell().Background(bg).Padding(4).Text(posStr).Style(cs);
+                        table.Cell().Background(bg).Padding(4).Text(s.Name).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter()
                             .Text(s.Points.ToString()).Style(cs).Bold();
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Wins.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Draws.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.Losses.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalsFor.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(cs);
-                        table.Cell().Background(bg).Padding(5).AlignCenter().Text(s.GoalDifference.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Wins.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Draws.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.Losses.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalsFor.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(cs);
+                        table.Cell().Background(bg).Padding(4).AlignCenter().Text(s.GoalDifference.ToString()).Style(cs);
                     }
                 });
             });
