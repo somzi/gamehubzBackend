@@ -72,6 +72,13 @@ namespace GameHubz.Api.Controllers
             return Ok(result);
         }
 
+        [HttpPost("{id}/schedule")]
+        public async Task<IActionResult> SetScheduled(Guid id)
+        {
+            await this.Service.SetScheduled(id);
+            return Ok(new { message = "Match scheduled successfully." });
+        }
+
         [HttpGet("{id}/team/details")]
         public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
         {

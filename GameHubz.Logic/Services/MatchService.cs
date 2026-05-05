@@ -162,6 +162,18 @@ namespace GameHubz.Logic.Services
             });
         }
 
+        public async Task SetScheduled(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            match.ScheduledStartTime = DateTime.UtcNow;
+            match.Status = MatchStatus.Scheduled;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
         public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
