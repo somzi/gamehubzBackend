@@ -1439,6 +1439,16 @@ namespace GameHubz.Logic.Services
             var groupDtos = new List<GroupDto>();
             var groups = stage.TournamentGroups ?? new List<TournamentGroupEntity>();
 
+            if (groups.Count == 0)
+                return groupDtos;
+
+            // Single query for all participants across all groups (eliminates N+1)
+            var groupIds = groups.Select(g => g.Id!.Value).ToList();
+            var allParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdsWithNames(groupIds);
+            var participantsByGroup = allParticipants
+                .GroupBy(p => p.TournamentGroupId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
             foreach (var group in groups)
             {
                 var groupMatches = stage.Matches?
@@ -1460,7 +1470,8 @@ namespace GameHubz.Logic.Services
                             g => g.Max(m => m.RoundDeadline))
                 };
 
-                dto.Standings = await GetGroupStandings(group.Id.Value);
+                var participants = participantsByGroup.TryGetValue(group.Id!.Value, out var p) ? p : new List<TournamentParticipantEntity>();
+                dto.Standings = BuildGroupStandings(participants);
                 groupDtos.Add(dto);
             }
             return groupDtos;
@@ -1503,10 +1514,8 @@ namespace GameHubz.Logic.Services
             };
         }
 
-        private async Task<List<LeagueStandingDto>> GetGroupStandings(Guid groupId)
+        private static List<LeagueStandingDto> BuildGroupStandings(List<TournamentParticipantEntity> participants)
         {
-            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdWithNames(groupId);
-
             var standings = participants.Select(p => new LeagueStandingDto
             {
                 ParticipantId = p.Id!.Value,
