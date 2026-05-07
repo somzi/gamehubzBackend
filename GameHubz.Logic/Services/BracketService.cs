@@ -1025,23 +1025,161 @@ namespace GameHubz.Logic.Services
 
             if (qualifiers.Count < 2) throw new Exception("Not enough qualifiers to create knockout bracket.");
 
-            var seededQualifiers = qualifiers
-                .OrderBy(q => q.groupRank)
-                .ThenBy(q => q.groupName)
-                .Select((q, index) =>
-                {
-                    q.participant.Seed = index + 1;
-                    return q.participant;
-                })
+            int totalQualifiers = qualifiers.Count;
+            var rand = new Random();
+
+            var pots = qualifiers
+                .GroupBy(q => q.groupRank)
+                .OrderBy(g => g.Key)
+                .Select(g => g.OrderBy(_ => rand.Next()).ToList())
                 .ToList();
 
-            foreach (var p in seededQualifiers)
+            bool drawSuccessful = false;
+            List<(TournamentParticipantEntity p1, TournamentParticipantEntity p2)> drawnPairs = null!;
+
+            int maxAttempts = 100;
+            while (!drawSuccessful && maxAttempts > 0)
             {
-                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(p);
-                var freshParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(p.Id!.Value);
-                freshParticipant.Seed = p.Seed;
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(freshParticipant, this.UserContextReader);
+                maxAttempts--;
+                drawSuccessful = true;
+                drawnPairs = new List<(TournamentParticipantEntity, TournamentParticipantEntity)>();
+
+                var potsCopy = pots.Select(p => p.ToList()).ToList();
+                int left = 0, right = potsCopy.Count - 1;
+
+                while (left <= right)
+                {
+                    if (left < right)
+                    {
+                        var potA = potsCopy[left].OrderBy(_ => rand.Next()).ToList();
+                        var potB = potsCopy[right];
+
+                        foreach (var first in potA)
+                        {
+                            var validSecond = potB
+                                .Where(s => s.groupName != first.groupName)
+                                .OrderBy(_ => rand.Next())
+                                .FirstOrDefault();
+
+                            if (validSecond == default)
+                            {
+                                drawSuccessful = false;
+                                break;
+                            }
+
+                            drawnPairs.Add((first.participant, validSecond.participant));
+                            potB.Remove(validSecond);
+                        }
+                    }
+                    else
+                    {
+                        // N=1 ili srednji pot (N=3) — uparujemo iz istog pota
+                        var middlePot = potsCopy[left].OrderBy(_ => rand.Next()).ToList();
+
+                        while (middlePot.Count > 0)
+                        {
+                            var first = middlePot.First();
+                            middlePot.Remove(first);
+
+                            var validSecond = middlePot
+                                .Where(s => s.groupName != first.groupName)
+                                .OrderBy(_ => rand.Next())
+                                .FirstOrDefault();
+
+                            if (validSecond == default)
+                            {
+                                drawSuccessful = false;
+                                break;
+                            }
+
+                            drawnPairs.Add((first.participant, validSecond.participant));
+                            middlePot.Remove(validSecond);
+                        }
+                    }
+
+                    if (!drawSuccessful) break;
+                    left++;
+                    right--;
+                }
             }
+
+            if (!drawSuccessful)
+                throw new Exception($"Draw failed after 100 attempts. Qualifiers: {qualifiers.Count}");
+
+            // ------------------------------------------------------------------
+            // DISTRIBUCIJA U KOSTUR: Razdvajanje istih grupa na suprotne strane
+            // ------------------------------------------------------------------
+            int numPairs = drawnPairs.Count;
+            var pairSeeds = GetStandardSeedOrder(GetNextPowerOfTwo(numPairs));
+            var validPairSeeds = pairSeeds.Where(s => s <= numPairs).ToList();
+
+            var topHalfSeeds = validPairSeeds.Take(numPairs / 2 + numPairs % 2).ToList();
+            var bottomHalfSeeds = validPairSeeds.Skip(numPairs / 2 + numPairs % 2).ToList();
+
+            int bestScore = int.MaxValue;
+            List<(TournamentParticipantEntity p1, TournamentParticipantEntity p2)> bestDistribution = null!;
+
+            for (int attempt = 0; attempt < 500; attempt++)
+            {
+                var shuffledPairs = drawnPairs.OrderBy(_ => rand.Next()).ToList();
+                var topPairs = shuffledPairs.Take(topHalfSeeds.Count).ToList();
+                var bottomPairs = shuffledPairs.Skip(topHalfSeeds.Count).ToList();
+
+                var topGroups = topPairs.SelectMany(p => new[] { p.p1.TournamentGroupId, p.p2.TournamentGroupId }).ToList();
+                var bottomGroups = bottomPairs.SelectMany(p => new[] { p.p1.TournamentGroupId, p.p2.TournamentGroupId }).ToList();
+
+                int topDuplicates = topGroups.Count - topGroups.Distinct().Count();
+                int bottomDuplicates = bottomGroups.Count - bottomGroups.Distinct().Count();
+                int totalScore = topDuplicates + bottomDuplicates;
+
+                if (totalScore < bestScore)
+                {
+                    bestScore = totalScore;
+                    bestDistribution = shuffledPairs;
+                }
+
+                if (bestScore == 0) break;
+            }
+
+            var finalTop = bestDistribution.Take(topHalfSeeds.Count).ToList();
+            var finalBottom = bestDistribution.Skip(topHalfSeeds.Count).ToList();
+
+            var seedMap = new Dictionary<Guid, int>();
+
+            for (int i = 0; i < finalTop.Count; i++)
+            {
+                int seedP1 = topHalfSeeds[i];
+                int seedP2 = totalQualifiers - seedP1 + 1;
+                seedMap[finalTop[i].p1.Id!.Value] = seedP1;
+                seedMap[finalTop[i].p2.Id!.Value] = seedP2;
+            }
+
+            for (int i = 0; i < finalBottom.Count; i++)
+            {
+                int seedP1 = bottomHalfSeeds[i];
+                int seedP2 = totalQualifiers - seedP1 + 1;
+                seedMap[finalBottom[i].p1.Id!.Value] = seedP1;
+                seedMap[finalBottom[i].p2.Id!.Value] = seedP2;
+            }
+            // ------------------------------------------------------------------
+
+            foreach (var q in qualifiers)
+            {
+                var participantId = q.participant.Id!.Value;
+                if (seedMap.TryGetValue(participantId, out int newSeed))
+                {
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(q.participant);
+                    var fresh = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(participantId);
+                    fresh.Seed = newSeed;
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(fresh, this.UserContextReader);
+                    q.participant.Seed = newSeed;
+                }
+            }
+
+            var seededQualifiers = qualifiers
+                .Select(q => q.participant)
+                .OrderBy(p => p.Seed ?? 999)
+                .ToList();
 
             var bracketSeeded = GetStandardBracketSeeding(seededQualifiers);
             var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded);
