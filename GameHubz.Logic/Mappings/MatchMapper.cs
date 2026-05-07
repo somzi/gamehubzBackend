@@ -12,7 +12,7 @@ namespace GameHubz.Logic.Mappings
             this.CreateMap<MatchEntity, MatchEdit>();
             this.CreateMap<MatchPost, MatchEntity>();
             this.CreateMap<MatchEntity, MatchListItemDto>()
-              .ForMember(dest => dest.Result, opt => opt.Ignore());
+              .ForMember(dest => dest.IsWin, opt => opt.Ignore());
         }
     }
 }

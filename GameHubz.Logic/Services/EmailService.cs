@@ -56,11 +56,13 @@ namespace GameHubz.Logic.Services
         {
             MailAddress mailAddressFrom;
 
+            string displayName = "GameHubz Support";
+
             try
             {
                 mailAddressFrom = new(
-                    this.smtpOptions.Username,
-                    this.smtpOptions.Username,
+                    "gamehubz.noreply@gmail.com",
+                    displayName,
                     System.Text.Encoding.UTF8);
             }
             catch (Exception ex)
