@@ -1,4 +1,5 @@
 ﻿using GameHubz.DataModels.Enums;
+using MimeKit;
 
 namespace GameHubz.Logic.Services
 {
@@ -562,6 +563,9 @@ namespace GameHubz.Logic.Services
                 await UpdateLeagueStatistics(match.HomeParticipant, match.AwayParticipant, homeScore, awayScore);
                 await this.SaveAsync();
 
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.HomeParticipant);
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.AwayParticipant);
+
                 if (match.TournamentStage?.Type == StageType.GroupStage)
                 {
                     await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
@@ -659,7 +663,7 @@ namespace GameHubz.Logic.Services
             else { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
 
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader
         }
 
         private async Task RevertLeagueStatistics(MatchEntity match)
