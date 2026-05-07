@@ -663,7 +663,7 @@ namespace GameHubz.Logic.Services
             else { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
 
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader
+            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
         }
 
         private async Task RevertLeagueStatistics(MatchEntity match)
