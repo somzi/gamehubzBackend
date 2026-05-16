@@ -94,6 +94,8 @@ namespace GameHubz.Logic
 
             services.AddTransient<INotificationService, NotificationService>();
 
+            services.AddSingleton<TranslationService>();
+
             // DO NOT DELETE - Generated Service Tag
 
             ConfigureValidators(services);
