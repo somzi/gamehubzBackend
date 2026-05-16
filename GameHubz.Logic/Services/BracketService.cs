@@ -1,6 +1,5 @@
 ﻿using GameHubz.Common.Consts;
 using GameHubz.DataModels.Enums;
-using MimeKit;
 
 namespace GameHubz.Logic.Services
 {
@@ -34,8 +33,8 @@ namespace GameHubz.Logic.Services
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
 
             var tournament = cachedBracket == null
-                ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
-                : null;
+                            ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
+                            : null;
 
             if (cachedBracket == null && tournament == null)
                 throw new Exception("Tournament not found");
@@ -535,17 +534,9 @@ namespace GameHubz.Logic.Services
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
             {
-                if (!isPrivileged)
+                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
                 {
-                    if (nextMatch != null &&
-                        (nextMatch.Status != MatchStatus.Pending ||
-                         nextMatch.HomeParticipantId != null ||
-                         nextMatch.AwayParticipantId != null ||
-                         nextMatch.HomeUserScore != null ||
-                         nextMatch.AwayUserScore != null))
-                    {
-                        throw new Exception("This result is locked because the next round has already started. Please contact an admin.");
-                    }
+                    throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
                 }
 
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
@@ -1700,26 +1691,10 @@ namespace GameHubz.Logic.Services
                     ? m.HomeUserId == currentUserId || m.AwayUserId == currentUserId
                     : m.HomeParticipant?.UserId == currentUserId || m.AwayParticipant?.UserId == currentUserId;
 
-                if (isPrivileged || isParticipant)
-                {
-                    if (!m.NextMatchId.HasValue)
-                    {
-                        canRevert = true;
-                    }
-                    else if (!isPrivileged && m.NextMatchId.HasValue &&
-                             matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch))
-                    {
-                        canRevert = nextMatch.Status == MatchStatus.Pending &&
-                                    nextMatch.HomeParticipantId == null &&
-                                    nextMatch.AwayParticipantId == null &&
-                                    nextMatch.HomeUserScore == null &&
-                                    nextMatch.AwayUserScore == null;
-                    }
-                    else if (isPrivileged)
-                    {
-                        canRevert = true;
-                    }
-                }
+                bool isNextMatchPending = !m.NextMatchId.HasValue ||
+                    (matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch) && nextMatch.Status == MatchStatus.Pending);
+
+                canRevert = isNextMatchPending && (isPrivileged || isParticipant);
             }
 
             return new MatchStructureDto
@@ -1782,33 +1757,10 @@ namespace GameHubz.Logic.Services
 
                 bool isParticipant = match.Home?.UserId == currentUserId || match.Away?.UserId == currentUserId;
 
-                if (!isPrivileged && !isParticipant)
-                {
-                    match.CanRevert = false;
-                    continue;
-                }
+                bool isNextMatchPending = match.NextMatchId == null ||
+                    (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
 
-                if (isPrivileged)
-                {
-                    match.CanRevert = true;
-                    continue;
-                }
-
-                // isParticipant and not privileged
-                if (match.NextMatchId == null)
-                {
-                    match.CanRevert = true;
-                }
-                else if (matchById.TryGetValue(match.NextMatchId.Value, out var nextMatch))
-                {
-                    match.CanRevert = nextMatch.Status == MatchStatus.Pending &&
-                                      nextMatch.Home == null &&
-                                      nextMatch.Away == null;
-                }
-                else
-                {
-                    match.CanRevert = false;
-                }
+                match.CanRevert = isNextMatchPending && (isPrivileged || isParticipant);
             }
         }
 
