@@ -9,5 +9,7 @@ namespace GameHubz.Logic.Interfaces
         Task<TeamMatchDetailsProjection?> GetDetailsProjection(Guid teamMatchId);
 
         Task<TieBreakProjection?> GetTieBreakProjection(Guid teamMatchId);
+
+        Task<bool> TryClaimForProcessing(Guid teamMatchId);
     }
 }
