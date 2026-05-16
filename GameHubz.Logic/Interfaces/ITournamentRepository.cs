@@ -25,5 +25,7 @@ namespace GameHubz.Logic.Interfaces
         Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId);
 
         Task<TournamentEntity> GetWithHubById(Guid tournamentId);
+
+        Task<Guid?> GetHubOwnerUserId(Guid tournamentId);
     }
 }

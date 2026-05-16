@@ -284,5 +284,13 @@ namespace GameHubz.Data.Repository
                 .Include(x => x.Hub)
                 .FirstAsync(x => x.Id == id);
         }
+
+        public async Task<Guid?> GetHubOwnerUserId(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => t.Hub!.UserId)
+                .FirstOrDefaultAsync();
+        }
     }
 }

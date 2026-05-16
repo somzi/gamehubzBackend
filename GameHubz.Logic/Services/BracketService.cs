@@ -1,4 +1,5 @@
-﻿using GameHubz.DataModels.Enums;
+﻿using GameHubz.Common.Consts;
+using GameHubz.DataModels.Enums;
 using MimeKit;
 
 namespace GameHubz.Logic.Services
@@ -25,19 +26,33 @@ namespace GameHubz.Logic.Services
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
         {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
+            Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
+            bool isAdmin = currentUser?.RoleEnum == UserRoleEnum.Admin;
+
             string cacheKey = $"bracket:{tournamentId}";
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
-            if (cachedBracket != null)
-                return cachedBracket;
 
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId);
+            var tournament = cachedBracket == null
+                ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
+                : null;
 
-            if (tournament == null)
+            if (cachedBracket == null && tournament == null)
                 throw new Exception("Tournament not found");
+
+            Guid hubOwnerId = tournament?.Hub?.UserId ?? Guid.Empty;
+            bool isPrivileged = isAdmin || currentUserId == hubOwnerId;
+
+            if (cachedBracket != null)
+            {
+                // Patch CanRevert on the cached snapshot for the current user
+                PatchCanRevert(cachedBracket, currentUserId, isPrivileged);
+                return cachedBracket;
+            }
 
             var response = new TournamentStructureDto
             {
-                TournamentId = tournament.Id!.Value,
+                TournamentId = tournament!.Id!.Value,
                 Name = tournament.Name,
                 Format = tournament.Format,
                 Status = tournament.Status,
@@ -61,17 +76,20 @@ namespace GameHubz.Logic.Services
                 {
                     stageDto.Rounds = tournament.IsTeamTournament
                         ? MapTeamBracketRounds(stageEntity.TeamMatches)
-                        : MapBracketRounds(stageEntity.Matches);
+                        : MapBracketRounds(stageEntity.Matches, currentUserId, isPrivileged);
                 }
                 else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
                 {
-                    stageDto.Groups = await MapGroups(stageEntity);
+                    stageDto.Groups = await MapGroups(stageEntity, currentUserId, isPrivileged);
                 }
 
                 response.Stages.Add(stageDto);
             }
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
+
+            // Patch CanRevert after caching so the cached copy stays user-agnostic
+            PatchCanRevert(response, currentUserId, isPrivileged);
 
             return response;
         }
@@ -508,9 +526,28 @@ namespace GameHubz.Logic.Services
                     ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
             }
 
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
+
+            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
+            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
             {
+                if (!isPrivileged)
+                {
+                    if (nextMatch != null &&
+                        (nextMatch.Status != MatchStatus.Pending ||
+                         nextMatch.HomeParticipantId != null ||
+                         nextMatch.AwayParticipantId != null ||
+                         nextMatch.HomeUserScore != null ||
+                         nextMatch.AwayUserScore != null))
+                    {
+                        throw new Exception("This result is locked because the next round has already started. Please contact an admin.");
+                    }
+                }
+
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
                 {
                     await RevertLeagueStatistics(match);
@@ -525,7 +562,6 @@ namespace GameHubz.Logic.Services
             }
 
             // 2. Normalize scores — frontend sends HomeScore as the submitter's score
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isSubmitterAway = match.TeamMatchId.HasValue
                 ? match.AwayUserId == currentUser.UserId
                 : match.AwayParticipant?.UserId == currentUser.UserId;
@@ -614,6 +650,34 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{request.TournamentId}");
+        }
+
+        public async Task<bool> GetCanRevert(Guid matchId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(matchId);
+
+            if (match.Status != MatchStatus.Completed)
+                return false;
+
+            bool isParticipant = match.TeamMatchId.HasValue
+                ? match.HomeUserId == currentUser.UserId || match.AwayUserId == currentUser.UserId
+                : match.HomeParticipant?.UserId == currentUser.UserId || match.AwayParticipant?.UserId == currentUser.UserId;
+
+            if (!isParticipant)
+                return false;
+
+            if (!match.NextMatchId.HasValue)
+                return true;
+
+            var nextMatch = await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+
+            return nextMatch.Status == MatchStatus.Pending &&
+                   nextMatch.HomeParticipantId == null &&
+                   nextMatch.AwayParticipantId == null &&
+                   nextMatch.HomeUserScore == null &&
+                   nextMatch.AwayUserScore == null;
         }
 
         #endregion 3. Result Processing & Updates
@@ -1554,10 +1618,14 @@ namespace GameHubz.Logic.Services
                 _ => MatchStatus.Pending
             };
 
-        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches)
+        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged)
         {
             var rounds = new List<BracketRoundDto>();
             if (matches == null || !matches.Any()) return rounds;
+
+            var matchById = matches
+                .Where(m => m.Id.HasValue)
+                .ToDictionary(m => m.Id!.Value, m => m);
 
             var grouped = matches.GroupBy(m => m.RoundNumber ?? 1).OrderBy(g => g.Key);
 
@@ -1569,14 +1637,14 @@ namespace GameHubz.Logic.Services
                     Name = $"Round {grp.Key}",
                     RoundDeadline = grp.Max(m => m.RoundDeadline),
                     Matches = grp.OrderBy(m => m.MatchOrder)
-                                 .Select(m => MapMatchToDto(m))
+                                 .Select(m => MapMatchToDto(m, currentUserId, isPrivileged, matchById))
                                  .ToList()
                 });
             }
             return rounds;
         }
 
-        private async Task<List<GroupDto>> MapGroups(TournamentStageEntity stage)
+        private async Task<List<GroupDto>> MapGroups(TournamentStageEntity stage, Guid currentUserId, bool isPrivileged)
         {
             var groupDtos = new List<GroupDto>();
             var groups = stage.TournamentGroups ?? new List<TournamentGroupEntity>();
@@ -1599,11 +1667,15 @@ namespace GameHubz.Logic.Services
                     .ThenBy(m => m.MatchOrder)
                     .ToList() ?? new List<MatchEntity>();
 
+                var matchById = groupMatches
+                    .Where(m => m.Id.HasValue)
+                    .ToDictionary(m => m.Id!.Value, m => m);
+
                 var dto = new GroupDto
                 {
                     GroupId = group.Id!.Value,
                     Name = group.Name,
-                    Matches = groupMatches.Select(m => MapMatchToDto(m)).ToList(),
+                    Matches = groupMatches.Select(m => MapMatchToDto(m, currentUserId, isPrivileged, matchById)).ToList(),
                     RoundDeadlines = groupMatches
                         .GroupBy(m => m.RoundNumber ?? 1)
                         .OrderBy(g => g.Key)
@@ -1619,8 +1691,37 @@ namespace GameHubz.Logic.Services
             return groupDtos;
         }
 
-        private MatchStructureDto MapMatchToDto(MatchEntity m)
+        private MatchStructureDto MapMatchToDto(MatchEntity m, Guid currentUserId, bool isPrivileged, Dictionary<Guid, MatchEntity> matchById)
         {
+            bool canRevert = false;
+            if (m.Status == MatchStatus.Completed)
+            {
+                bool isParticipant = m.TeamMatchId.HasValue
+                    ? m.HomeUserId == currentUserId || m.AwayUserId == currentUserId
+                    : m.HomeParticipant?.UserId == currentUserId || m.AwayParticipant?.UserId == currentUserId;
+
+                if (isPrivileged || isParticipant)
+                {
+                    if (!m.NextMatchId.HasValue)
+                    {
+                        canRevert = true;
+                    }
+                    else if (!isPrivileged && m.NextMatchId.HasValue &&
+                             matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch))
+                    {
+                        canRevert = nextMatch.Status == MatchStatus.Pending &&
+                                    nextMatch.HomeParticipantId == null &&
+                                    nextMatch.AwayParticipantId == null &&
+                                    nextMatch.HomeUserScore == null &&
+                                    nextMatch.AwayUserScore == null;
+                    }
+                    else if (isPrivileged)
+                    {
+                        canRevert = true;
+                    }
+                }
+            }
+
             return new MatchStructureDto
             {
                 Id = m.Id!.Value,
@@ -1632,6 +1733,7 @@ namespace GameHubz.Logic.Services
                 NextMatchId = m.NextMatchId,
                 IsRoundLocked = m.RoundOpenAt.HasValue && m.RoundOpenAt.Value > DateTime.UtcNow,
                 MatchOpensAt = m.RoundOpenAt,
+                CanRevert = canRevert,
                 Evidences = m.MatchEvidences?.Select(x => x.Url!).ToList() ?? [],
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
@@ -1654,6 +1756,60 @@ namespace GameHubz.Logic.Services
                     TeamName = m.AwayParticipant.Team?.TeamName
                 }
             };
+        }
+
+        private static void PatchCanRevert(TournamentStructureDto structure, Guid currentUserId, bool isPrivileged)
+        {
+            if (currentUserId == Guid.Empty) return;
+
+            var allMatches = structure.Stages
+                .SelectMany(s => s.Rounds ?? Enumerable.Empty<BracketRoundDto>())
+                .SelectMany(r => r.Matches)
+                .Concat(structure.Stages
+                    .SelectMany(s => s.Groups ?? Enumerable.Empty<GroupDto>())
+                    .SelectMany(g => g.Matches))
+                .ToList();
+
+            var matchById = allMatches.ToDictionary(m => m.Id, m => m);
+
+            foreach (var match in allMatches)
+            {
+                if (match.Status != MatchStatus.Completed)
+                {
+                    match.CanRevert = false;
+                    continue;
+                }
+
+                bool isParticipant = match.Home?.UserId == currentUserId || match.Away?.UserId == currentUserId;
+
+                if (!isPrivileged && !isParticipant)
+                {
+                    match.CanRevert = false;
+                    continue;
+                }
+
+                if (isPrivileged)
+                {
+                    match.CanRevert = true;
+                    continue;
+                }
+
+                // isParticipant and not privileged
+                if (match.NextMatchId == null)
+                {
+                    match.CanRevert = true;
+                }
+                else if (matchById.TryGetValue(match.NextMatchId.Value, out var nextMatch))
+                {
+                    match.CanRevert = nextMatch.Status == MatchStatus.Pending &&
+                                      nextMatch.Home == null &&
+                                      nextMatch.Away == null;
+                }
+                else
+                {
+                    match.CanRevert = false;
+                }
+            }
         }
 
         private static List<LeagueStandingDto> BuildGroupStandings(List<TournamentParticipantEntity> participants)
