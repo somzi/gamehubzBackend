@@ -84,7 +84,7 @@ namespace GameHubz.Data.Repository
                 .Include(x => x.AwayParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.HomeUser)
                 .Include(x => x.AwayUser)
-                .OrderByDescending(x => x.ScheduledStartTime)
+                .OrderByDescending(x => x.ModifiedOn)
                 .ToListAsync();
 
             var result = new List<MatchOverviewDto>();
@@ -142,10 +142,10 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Where(m =>
-                    ((m.TeamMatchId == null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                     && m.Status == MatchStatus.Completed)
-                .OrderByDescending(m => m.ScheduledStartTime)
+                .OrderByDescending(m => m.ModifiedOn)
                 .Skip(pageNumber * pageSize)
                 .Take(pageSize)
                 .Select(m => new MatchListItemDto
@@ -191,10 +191,10 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Where(m =>
-                    ((m.TeamMatchId == null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                     && m.Status == MatchStatus.Completed)
-                .OrderByDescending(m => m.ScheduledStartTime)
+                .OrderByDescending(m => m.ModifiedOn)
                 .Take(10)
                 .Select(m => new PerformanceDto
                 {
@@ -206,12 +206,34 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public async Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(m =>
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
+                    && m.Status == MatchStatus.Completed)
+                .OrderByDescending(m => m.ModifiedOn)
+                .Take(10)
+                .Select(m => new PerformanceV2Dto
+                {
+                    Outcome = m.WinnerParticipantId == null
+                        ? "D"
+                        : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                            ? m.HomeParticipantId
+                            : m.AwayParticipantId) == m.WinnerParticipantId
+                            ? "W"
+                            : "L",
+                })
+                .ToListAsync();
+        }
+
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
             var stats = await this.BaseDbSet()
             .Where(m =>
-                ((m.TeamMatchId == null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                || (m.TeamMatchId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
+                ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
+                || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                 && m.Status == MatchStatus.Completed)
             .GroupBy(_ => 1)
             .Select(g => new PlayerStatsDto

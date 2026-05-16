@@ -102,5 +102,29 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"user_profile:{user.Id}");
         }
+
+        public async Task<PlayerMatchesV2Dto> GetStatsV2(Guid id)
+        {
+            string key = $"player_stats_v2:{id}";
+
+            var cachedStats = await cacheService.GetAsync<PlayerMatchesV2Dto>(key);
+            if (cachedStats != null) return cachedStats;
+
+            var stats = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
+            var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
+            stats.TournamentsWon = numberOfTournamentsWon;
+
+            var performance = await this.AppUnitOfWork.MatchRepository.GetPerformanceByUserIdV2(id);
+
+            var result = new PlayerMatchesV2Dto
+            {
+                Stats = stats,
+                Performance = performance
+            };
+
+            await cacheService.SetAsync(key, result, TimeSpan.FromSeconds(30));
+
+            return result;
+        }
     }
 }
