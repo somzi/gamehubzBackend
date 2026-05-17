@@ -33,6 +33,14 @@ namespace GameHubz.Api.Controllers
             return userProfile;
         }
 
+        [HttpGet("v2/{id}/stats")]
+        public async Task<PlayerMatchesV2Dto> GetStatsV2(Guid id)
+        {
+            var stats = await userProfileService.GetStatsV2(id);
+
+            return stats;
+        }
+
         [HttpGet("{id}/matches")]
         public async Task<List<MatchListItemDto>> GetMatches(Guid id, int pageNumber)
         {

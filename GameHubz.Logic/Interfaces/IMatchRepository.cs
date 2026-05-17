@@ -31,5 +31,7 @@ namespace GameHubz.Logic.Interfaces
         Task<MatchUploadDto> GetForMatchEvidence(Guid matchId);
 
         Task<List<PerformanceDto>> GetPerformanceByUserId(Guid userId);
+
+        Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId);
     }
 }
