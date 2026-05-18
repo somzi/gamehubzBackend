@@ -4,6 +4,7 @@ namespace GameHubz.DataModels.Enums
     {
         Pending = 1,
         Completed = 2,
-        TieBreakRequired = 3
+        TieBreakRequired = 3,
+        Processing = 4
     }
 }

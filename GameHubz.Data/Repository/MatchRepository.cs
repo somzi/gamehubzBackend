@@ -145,7 +145,8 @@ namespace GameHubz.Data.Repository
                     ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
                     || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                     && m.Status == MatchStatus.Completed)
-                .OrderByDescending(m => m.ModifiedOn)
+                .OrderBy(m => m.ScheduledStartTime == null)
+                .ThenByDescending(m => m.ScheduledStartTime)
                 .Skip(pageNumber * pageSize)
                 .Take(pageSize)
                 .Select(m => new MatchListItemDto
