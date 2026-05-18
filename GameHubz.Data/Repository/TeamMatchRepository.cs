@@ -1,6 +1,7 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
@@ -43,6 +44,15 @@ namespace GameHubz.Data.Repository
                         .ThenInclude(t => t!.Members)
                             .ThenInclude(m => m.User)
                 .FirstOrDefaultAsync();
+        }
+
+        public async Task<bool> TryClaimForProcessing(Guid teamMatchId)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(tm => tm.Id == teamMatchId && tm.Status == TeamMatchStatus.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(tm => tm.Status, TeamMatchStatus.Processing));
+
+            return affected > 0;
         }
 
         public async Task<List<TeamMatchEntity>> GetByStageId(Guid stageId)

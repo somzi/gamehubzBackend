@@ -27,6 +27,17 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public async Task<List<TournamentTeamMemberEntity>> GetByTeamIds(IEnumerable<Guid> teamIds)
+        {
+            var ids = teamIds.Distinct().ToList();
+            if (ids.Count == 0) return new List<TournamentTeamMemberEntity>();
+
+            return await this.BaseDbSet()
+                .Where(m => m.TeamId.HasValue && ids.Contains(m.TeamId.Value))
+                .Include(m => m.User)
+                .ToListAsync();
+        }
+
         public async Task<List<TournamentTeamMemberEntity>> GetByUserId(Guid userId)
         {
             return await this.BaseDbSet()

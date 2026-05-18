@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Interfaces
     {
         Task<List<TournamentTeamMemberEntity>> GetByTeamId(Guid teamId);
 
+        Task<List<TournamentTeamMemberEntity>> GetByTeamIds(IEnumerable<Guid> teamIds);
+
         Task<List<TournamentTeamMemberEntity>> GetByUserId(Guid userId);
 
         Task<bool> ExistsInTournament(Guid userId, Guid tournamentId);
