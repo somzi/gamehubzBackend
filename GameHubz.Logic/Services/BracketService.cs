@@ -745,8 +745,8 @@ namespace GameHubz.Logic.Services
             int homeScore = isSubmitterAway ? request.AwayScore : request.HomeScore;
             int awayScore = isSubmitterAway ? request.HomeScore : request.AwayScore;
 
-            match.HomeUserScore = homeScore;
-            match.AwayUserScore = awayScore;
+            match.HomeUserScore = request.HomeScore;
+            match.AwayUserScore = request.AwayScore;
             match.Status = MatchStatus.Completed;
 
             // 3. Determine Winner
