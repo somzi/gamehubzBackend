@@ -4,6 +4,8 @@
     {
         public string HomeUser { get; set; } = string.Empty;
         public string AwayUser { get; set; } = string.Empty;
+        public Guid? HomeUserId { get; set; }
+        public Guid? AwayUserId { get; set; }
         public int HomeUserScore { get; set; }
         public int AwayUserScore { get; set; }
         public List<string> Evidences { get; set; } = [];
