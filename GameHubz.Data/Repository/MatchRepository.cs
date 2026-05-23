@@ -262,6 +262,8 @@ namespace GameHubz.Data.Repository
                 {
                     AwayUser = x.AwayParticipant!.User!.Nickname ?? "unknown",
                     HomeUser = x.HomeParticipant!.User!.Nickname ?? "unknown",
+                    AwayUserId = x.AwayParticipant!.UserId,
+                    HomeUserId = x.HomeParticipant!.UserId,
                     AwayUserScore = x.AwayUserScore ?? 0,
                     HomeUserScore = x.HomeUserScore ?? 0,
                     Evidences = x.MatchEvidences.Select(e => e.Url!).ToList(),
