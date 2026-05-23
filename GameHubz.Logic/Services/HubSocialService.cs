@@ -36,7 +36,14 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeDelete(Guid entityId)
         {
-            await cacheService.RemoveAsync($"hub_overview:{entityId}");
+            // entityId is the HubSocial id, not the hub id — resolve the owning hub
+            // so we bust the correct hub_overview cache entry, otherwise the deleted
+            // social keeps showing until the cache expires.
+            var social = await this.GetRepository().GetById(entityId);
+            if (social?.HubId != null)
+            {
+                await cacheService.RemoveAsync($"hub_overview:{social.HubId}");
+            }
         }
     }
 }
