@@ -105,6 +105,24 @@ namespace GameHubz.Logic.Services
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
                 throw new Exception("Not enough participants to start tournament.");
 
+            // Every participating team must be full: sub-matches are created per roster slot,
+            // so an under-filled team produces matches with no player that can never be played,
+            // which permanently stalls the bracket. The frontend gates this, but enforce it here too.
+            if (tournament.IsTeamTournament && tournament.TeamSize.HasValue)
+            {
+                int requiredSize = tournament.TeamSize.Value;
+                var teams = await this.AppUnitOfWork.TournamentTeamRepository.GetFinalByTournamentId(request.TournamentId);
+
+                var incompleteTeams = teams
+                    .Select(t => new { t.TeamName, MemberCount = t.Members.Count(m => m.UserId.HasValue) })
+                    .Where(t => t.MemberCount < requiredSize)
+                    .Select(t => $"{t.TeamName} ({t.MemberCount}/{requiredSize})")
+                    .ToList();
+
+                if (incompleteTeams.Count > 0)
+                    throw new Exception($"All teams must be full before starting. Incomplete: {string.Join(", ", incompleteTeams)}");
+            }
+
             var tournamentId = request.TournamentId;
 
             TimeSpan? roundDuration = tournament.RoundDurationMinutes.HasValue
@@ -636,7 +654,10 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
             }
 
-            // Create sub-matches (individual MatchEntities) for each team match with two participants
+            // Create sub-matches with a single batched member lookup (avoids per-match N+1)
+            var membersByParticipant = await BuildMembersByParticipantMap(shuffled);
+            var rand = new Random();
+
             foreach (var tm in allTeamMatches)
             {
                 if (!tm.HomeTeamParticipantId.HasValue || !tm.AwayTeamParticipantId.HasValue)
@@ -644,7 +665,9 @@ namespace GameHubz.Logic.Services
                 if (tm.Status == TeamMatchStatus.Completed)
                     continue;
 
-                await CreateSubMatchesForTeamMatch(tm, teamSize);
+                var subs = BuildSubMatchesForTeamMatch(tm, teamSize, null, membersByParticipant, rand);
+                foreach (var sm in subs)
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
             }
 
             tournament.Status = TournamentStatus.InProgress;
@@ -736,11 +759,6 @@ namespace GameHubz.Logic.Services
                         await RevertEliminationResult(match, nextMatch);
                 }
             }
-
-            // 2. Normalize scores — frontend sends HomeScore as the submitter's score
-            bool isSubmitterAway = match.TeamMatchId.HasValue
-                ? match.AwayUserId == currentUser.UserId
-                : match.AwayParticipant?.UserId == currentUser.UserId;
 
             int homeScore = request.HomeScore;
             int awayScore = request.AwayScore;
