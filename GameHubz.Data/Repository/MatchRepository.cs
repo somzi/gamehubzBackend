@@ -70,6 +70,8 @@ namespace GameHubz.Data.Repository
                 .Where(x =>
                     x.Tournament!.Status == TournamentStatus.InProgress &&
                     (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
+                    // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
+                    (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
                     (
                         // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
                         (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
