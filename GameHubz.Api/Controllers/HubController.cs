@@ -89,6 +89,12 @@ namespace GameHubz.Api.Controllers
             return await hubService.GetMembers(id);
         }
 
+        [HttpGet("{id}/members/paged")]
+        public async Task<IEnumerable<UserHubOverview>> GetMembersPaged(Guid id, [FromQuery] int pageNumber = 0, [FromQuery] string? search = null)
+        {
+            return await hubService.GetMembersPaged(id, pageNumber, search);
+        }
+
         [HttpPost("{id}/members")]
         public async Task<UserHubDto> AddMember(Guid id, [FromBody] AddHubMemberRequest request)
         {

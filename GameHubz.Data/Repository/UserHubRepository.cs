@@ -54,5 +54,30 @@ namespace GameHubz.Data.Repository
                 })
                 .ToListAsync();
         }
+
+        public async Task<List<UserHubOverview>> GetUsersByHubPaged(Guid hubId, int pageNumber, int pageSize, string? search)
+        {
+            var query = this.BaseDbSet()
+                .Where(uh => uh.HubId == hubId && uh.HubId != null && uh.HubRole != HubRole.HubOwner);
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim().ToLower();
+                query = query.Where(uh => uh.User != null && uh.User.Username.ToLower().Contains(term));
+            }
+
+            return await query
+                .OrderBy(uh => uh.User!.Username)
+                .Skip(pageNumber * pageSize)
+                .Take(pageSize)
+                .Select(x => new UserHubOverview
+                {
+                    UserId = x.UserId!.Value,
+                    Username = x.User!.Username,
+                    PushToken = x.User!.PushToken,
+                    HubRole = x.HubRole
+                })
+                .ToListAsync();
+        }
     }
 }

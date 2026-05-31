@@ -226,6 +226,12 @@ namespace GameHubz.Logic.Services
             return data;
         }
 
+        public Task<List<UserHubOverview>> GetMembersPaged(Guid id, int pageNumber, string? search)
+        {
+            const int pageSize = 10;
+            return this.AppUnitOfWork.UserHubRepository.GetUsersByHubPaged(id, pageNumber, pageSize, search);
+        }
+
         public async Task KickUserFromHub(Guid hubId, Guid userId)
         {
             var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
