@@ -14,6 +14,7 @@ namespace GameHubz.Logic.Mappings
                  .ForMember(x => x.NumberOfTournaments, m => m.MapFrom(x => x.Tournaments == null ? 0 : x.Tournaments!.Count));
             this.CreateMap<HubEntity, HubEdit>();
             this.CreateMap<HubEdit, HubEntity>();
+            this.CreateMap<HubVerificationRequestEntity, HubVerificationRequestDto>();
         }
     }
 }

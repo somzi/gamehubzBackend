@@ -53,6 +53,8 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public IUserHubBanRepository UserHubBanRepository => this.GetRepository<UserHubBanRepository>();
 
+        public IHubVerificationRequestRepository HubVerificationRequestRepository => this.GetRepository<HubVerificationRequestRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

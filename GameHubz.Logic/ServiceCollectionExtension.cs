@@ -90,6 +90,7 @@ namespace GameHubz.Logic
             services.AddTransient<TournamentTeamService>();
             services.AddTransient<TeamMatchService>();
             services.AddTransient<UserHubRequestService>();
+            services.AddTransient<HubVerificationService>();
 
             services.AddTransient<TournamentExportService>();
 

@@ -13,15 +13,18 @@ namespace GameHubz.Api.Controllers
         private readonly HubService hubService;
         private readonly UserHubRequestService hubJoinRequestService;
         private readonly UserHubService userHubService;
+        private readonly HubVerificationService hubVerificationService;
 
         public HubController(
             HubService service,
             UserHubRequestService hubJoinRequestService,
-            UserHubService userHubService)
+            UserHubService userHubService,
+            HubVerificationService hubVerificationService)
         {
             this.hubService = service;
             this.hubJoinRequestService = hubJoinRequestService;
             this.userHubService = userHubService;
+            this.hubVerificationService = hubVerificationService;
         }
 
         [HttpGet("getAll")]
@@ -168,6 +171,24 @@ namespace GameHubz.Api.Controllers
         {
             await hubJoinRequestService.RejectRequest(requestId);
             return Ok();
+        }
+
+        [HttpPost("{id}/verification-request")]
+        public async Task<HubVerificationRequestDto> RequestVerification(Guid id, [FromBody] RequestHubVerificationRequest request)
+        {
+            return await hubVerificationService.RequestVerification(id, request.Reason);
+        }
+
+        [HttpGet("{id}/verification-request")]
+        public async Task<HubVerificationRequestDto?> GetVerificationRequest(Guid id)
+        {
+            return await hubVerificationService.GetCurrentForHub(id);
+        }
+
+        [HttpPost("{id}/verification-response")]
+        public async Task<HubVerificationRequestDto> RespondVerification(Guid id, [FromBody] RespondHubVerificationRequest request)
+        {
+            return await hubVerificationService.RespondVerification(id, request.Approved);
         }
     }
 }

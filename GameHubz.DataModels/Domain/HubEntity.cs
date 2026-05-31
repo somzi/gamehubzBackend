@@ -14,5 +14,6 @@ namespace GameHubz.DataModels.Domain
         public List<UserHubRequestEntity>? JoinRequests { get; set; } = new();
         public string? AvatarUrl { get; set; }
         public bool IsPublic { get; set; } = true;
+        public bool IsVerified { get; set; } = false;
     }
 }

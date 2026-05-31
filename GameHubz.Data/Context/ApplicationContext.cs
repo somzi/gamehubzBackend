@@ -353,6 +353,17 @@ namespace GameHubz.Data.Context
             modelBuilder.Entity<UserHubBanEntity>()
                 .HasIndex(x => new { x.HubId, x.UserId });
 
+            modelBuilder.Entity<HubVerificationRequestEntity>().ToTable("HubVerificationRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<HubVerificationRequestEntity>()
+                .HasOne(x => x.Hub)
+                .WithMany()
+                .HasForeignKey(x => x.HubId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<HubVerificationRequestEntity>()
+                .HasIndex(x => new { x.HubId, x.Status });
+
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
 
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence")

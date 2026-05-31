@@ -45,6 +45,8 @@ namespace GameHubz.Logic.Interfaces
 
         IUserHubBanRepository UserHubBanRepository { get; }
 
+        IHubVerificationRequestRepository HubVerificationRequestRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

@@ -15,5 +15,6 @@ namespace GameHubz.DataModels.Models
         public List<HubSocialDto>? HubSocials { get; set; } = new();
         public string? AvatarUrl { get; set; }
         public bool IsPublic { get; set; } = true;
+        public bool IsVerified { get; set; } = false;
     }
 }
