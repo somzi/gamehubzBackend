@@ -64,8 +64,6 @@ namespace GameHubz.Logic.Services
 
         public async Task<HubVerificationRequestDto> RespondVerification(Guid hubId, bool approved)
         {
-            await this.appAuthorizationService.CheckAuthorization(new[] { UserRoleEnum.Admin });
-
             var request = await this.AppUnitOfWork.HubVerificationRequestRepository.GetPendingForHub(hubId)
                 ?? throw new Exception("No pending verification request found for this hub.");
 
@@ -92,8 +90,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
+            // Verification status is owner-only — non-owners (incl. admins) get no payload
+            // rather than an auth error, so the manage-hub bootstrap stays quiet for admins.
             if (hub.UserId != user.UserId)
-                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+                return null;
 
             var latest = await this.AppUnitOfWork.HubVerificationRequestRepository.GetLatestForHub(hubId);
             return latest == null ? null : this.mapper.Map<HubVerificationRequestDto>(latest);

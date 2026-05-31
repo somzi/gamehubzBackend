@@ -119,6 +119,18 @@ namespace GameHubz.Api.Controllers
             await userHubService.BanMember(id, userId);
         }
 
+        [HttpGet("{id}/bans")]
+        public async Task<IEnumerable<HubBanOverview>> GetBans(Guid id)
+        {
+            return await userHubService.GetBans(id);
+        }
+
+        [HttpDelete("{id}/bans/{userId}")]
+        public async Task UnbanMember(Guid id, Guid userId)
+        {
+            await userHubService.UnbanMember(id, userId);
+        }
+
         [HttpPost("{id}/user/{userId}/kick")]
         public async Task KickMember(Guid id, Guid userid)
         {
@@ -191,6 +203,7 @@ namespace GameHubz.Api.Controllers
             return await hubVerificationService.GetCurrentForHub(id);
         }
 
+        [AllowAnonymous]
         [HttpPost("{id}/verification-response")]
         public async Task<HubVerificationRequestDto> RespondVerification(Guid id, [FromBody] RespondHubVerificationRequest request)
         {

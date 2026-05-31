@@ -44,7 +44,8 @@ namespace GameHubz.Data.Repository
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
                     NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
-                    IsPublic = x.IsPublic
+                    IsPublic = x.IsPublic,
+                    IsVerified = x.IsVerified
                 })
                 .ToListAsync();
         }
@@ -64,6 +65,7 @@ namespace GameHubz.Data.Repository
                     AvatarUrl = x.AvatarUrl,
                     OwnerName = x.User.Username,
                     IsPublic = x.IsPublic,
+                    IsVerified = x.IsVerified,
                     HubSocials = x.HubSocials != null
                             ? x.HubSocials.Select(s => new HubSocialDto
                             {
@@ -103,7 +105,8 @@ namespace GameHubz.Data.Repository
                     NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
                     AvatarUrl = x.AvatarUrl,
-                    IsPublic = x.IsPublic
+                    IsPublic = x.IsPublic,
+                    IsVerified = x.IsVerified
                 })
                 .ToListAsync();
         }

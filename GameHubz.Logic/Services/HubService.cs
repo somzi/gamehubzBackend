@@ -79,6 +79,12 @@ namespace GameHubz.Logic.Services
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
             hubDto.IsUserFollowHub = isFollowing;
 
+            if (!hubDto.IsUserOwner)
+            {
+                var callerRole = await this.AppUnitOfWork.UserHubRepository.GetRole(user.UserId, id);
+                hubDto.IsUserAdmin = callerRole == HubRole.HubAdmin;
+            }
+
             if (!hubDto.IsPublic && !isFollowing && !hubDto.IsUserOwner)
             {
                 hubDto.HasPendingJoinRequest = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(id, user.UserId);
@@ -129,7 +135,12 @@ namespace GameHubz.Logic.Services
 
         public async Task<HubOverviewDto> UpdateDetails(HubPost request)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(request.Id!.Value);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can edit hub details.");
 
             hub.Name = request.Name;
             hub.Description = request.Description;
@@ -184,6 +195,12 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeDelete(Guid entityId)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(entityId);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can delete the hub.");
+
             var activities = await this.AppUnitOfWork.HubActivityRepository.GetByHubId(entityId);
 
             foreach (var act in activities)
@@ -250,7 +267,12 @@ namespace GameHubz.Logic.Services
 
         public async Task UploadAvatar(Guid id, IFormFile file)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can change the hub avatar.");
 
             string fileName = $"avatar";
             string folderPath = $"hubs/{hub!.Name}";

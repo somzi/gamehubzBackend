@@ -49,6 +49,12 @@ namespace GameHubz.Logic.Services
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             await this.EnsureCallerCanManage(hubId, caller.UserId);
 
+            // Only the Owner can grant admin privileges.
+            if (role == HubRole.HubAdmin)
+            {
+                await this.EnsureCallerIsOwner(hubId, caller.UserId);
+            }
+
             var existing = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (existing != null)
             {
@@ -78,8 +84,9 @@ namespace GameHubz.Logic.Services
                 throw new Exception("Owner role cannot be assigned. The hub already has an owner.");
             }
 
+            // Only the Owner can change roles (grant or revoke admin).
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            await this.EnsureCallerCanManage(hubId, caller.UserId);
+            await this.EnsureCallerIsOwner(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
                 ?? throw new Exception("Membership not found.");
@@ -113,6 +120,28 @@ namespace GameHubz.Logic.Services
             }
 
             await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(member, this.UserContextReader);
+            await this.SaveAsync();
+
+            await this.InvalidateHubCaches(userId, hubId);
+        }
+
+        public async Task<List<HubBanOverview>> GetBans(Guid hubId)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            await this.EnsureCallerCanManage(hubId, caller.UserId);
+
+            return await this.AppUnitOfWork.UserHubBanRepository.GetBansByHub(hubId);
+        }
+
+        public async Task UnbanMember(Guid hubId, Guid userId)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            await this.EnsureCallerCanManage(hubId, caller.UserId);
+
+            var ban = await this.AppUnitOfWork.UserHubBanRepository.FindActiveBan(userId, hubId)
+                ?? throw new Exception("This user is not banned from this hub.");
+
+            await this.AppUnitOfWork.UserHubBanRepository.SoftDeleteEntity(ban, this.UserContextReader);
             await this.SaveAsync();
 
             await this.InvalidateHubCaches(userId, hubId);
@@ -184,6 +213,16 @@ namespace GameHubz.Logic.Services
             var role = await this.AppUnitOfWork.UserHubRepository.GetRole(callerUserId, hubId);
 
             if (role != HubRole.HubOwner && role != HubRole.HubAdmin)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
+        }
+
+        public async Task EnsureCallerIsOwner(Guid hubId, Guid callerUserId)
+        {
+            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(callerUserId, hubId);
+
+            if (role != HubRole.HubOwner)
             {
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }

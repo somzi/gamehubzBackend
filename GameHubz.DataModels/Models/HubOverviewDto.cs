@@ -14,6 +14,7 @@
 
         public bool IsUserFollowHub { get; set; }
         public bool IsUserOwner { get; set; }
+        public bool IsUserAdmin { get; set; }
         public List<HubSocialDto> HubSocials { get; set; } = [];
         public Guid UserId { get; set; }
         public string? AvatarUrl { get; set; }
