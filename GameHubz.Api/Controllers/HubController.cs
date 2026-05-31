@@ -12,13 +12,16 @@ namespace GameHubz.Api.Controllers
     {
         private readonly HubService hubService;
         private readonly UserHubRequestService hubJoinRequestService;
+        private readonly UserHubService userHubService;
 
         public HubController(
             HubService service,
-            UserHubRequestService hubJoinRequestService)
+            UserHubRequestService hubJoinRequestService,
+            UserHubService userHubService)
         {
             this.hubService = service;
             this.hubJoinRequestService = hubJoinRequestService;
+            this.userHubService = userHubService;
         }
 
         [HttpGet("getAll")]
@@ -81,6 +84,30 @@ namespace GameHubz.Api.Controllers
         public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
         {
             return await hubService.GetMembers(id);
+        }
+
+        [HttpPost("{id}/members")]
+        public async Task<UserHubDto> AddMember(Guid id, [FromBody] AddHubMemberRequest request)
+        {
+            return await userHubService.AddMember(id, request.UserId, request.Role);
+        }
+
+        [HttpPut("{id}/members/{userId}")]
+        public async Task<UserHubDto> ChangeMemberRole(Guid id, Guid userId, [FromBody] ChangeHubMemberRoleRequest request)
+        {
+            return await userHubService.ChangeMemberRole(id, userId, request.Role);
+        }
+
+        [HttpDelete("{id}/members/{userId}")]
+        public async Task RemoveMember(Guid id, Guid userId)
+        {
+            await userHubService.RemoveMember(id, userId);
+        }
+
+        [HttpPost("{id}/members/{userId}/ban")]
+        public async Task BanMember(Guid id, Guid userId)
+        {
+            await userHubService.BanMember(id, userId);
         }
 
         [HttpPost("{id}/user/{userId}/kick")]

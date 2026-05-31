@@ -1,6 +1,7 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
@@ -26,15 +27,30 @@ namespace GameHubz.Data.Repository
                 .FirstAsync(uh => uh.UserId == userId && uh.HubId == hubId)!;
         }
 
+        public Task<UserHubEntity?> FindByUserAndHub(Guid userId, Guid hubId)
+        {
+            return this.BaseDbSet()
+                .FirstOrDefaultAsync(uh => uh.UserId == userId && uh.HubId == hubId);
+        }
+
+        public Task<HubRole?> GetRole(Guid userId, Guid hubId)
+        {
+            return this.BaseDbSet()
+                .Where(uh => uh.UserId == userId && uh.HubId == hubId)
+                .Select(uh => (HubRole?)uh.HubRole)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()
-                .Where(uh => uh.HubId == hubId && uh.HubId != null)
+                .Where(uh => uh.HubId == hubId && uh.HubId != null && uh.HubRole != HubRole.HubOwner)
                 .Select(x => new UserHubOverview
                 {
                     UserId = x.UserId!.Value,
                     Username = x.User!.Username,
-                    PushToken = x.User!.PushToken
+                    PushToken = x.User!.PushToken,
+                    HubRole = x.HubRole
                 })
                 .ToListAsync();
         }

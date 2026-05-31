@@ -6,6 +6,7 @@ namespace GameHubz.Logic.Services
     public class UserHubRequestService : AppBaseServiceGeneric<UserHubRequestEntity, UserHubRequestDto, UserHubRequestPost, UserHubRequestEdit>
     {
         private readonly ICacheService cacheService;
+        private readonly UserHubService userHubService;
 
         public UserHubRequestService(
             IUnitOfWorkFactory factory,
@@ -15,7 +16,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            UserHubService userHubService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -25,6 +27,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.cacheService = cacheService;
+            this.userHubService = userHubService;
         }
 
         public async Task RequestJoin(Guid hubId)
@@ -35,6 +38,10 @@ namespace GameHubz.Logic.Services
 
             if (hub.UserId == user.UserId)
                 throw new Exception("You already own this hub.");
+
+            var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(user.UserId, hubId);
+            if (isBanned)
+                throw new Exception("You are banned from this hub.");
 
             var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(user.UserId, hubId);
             if (alreadyFollowing)
@@ -76,10 +83,7 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
-
-            if (hub.UserId != user.UserId)
-                throw new Exception("Only the hub owner can view join requests.");
+            await this.userHubService.EnsureCallerCanManage(hubId, user.UserId);
 
             return await this.AppUnitOfWork.UserHubRequestRepository.GetPendingRequestsByHubId(hubId);
         }
@@ -92,8 +96,7 @@ namespace GameHubz.Logic.Services
             if (request == null) throw new Exception("Request not found.");
             if (request.Hub == null) throw new Exception("Hub not found.");
 
-            if (request.Hub.UserId != user.UserId)
-                throw new Exception("Only the hub owner can approve requests.");
+            await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
                 throw new Exception("Request is no longer pending.");
@@ -127,8 +130,7 @@ namespace GameHubz.Logic.Services
             if (request == null) throw new Exception("Request not found.");
             if (request.Hub == null) throw new Exception("Hub not found.");
 
-            if (request.Hub.UserId != user.UserId)
-                throw new Exception("Only the hub owner can reject requests.");
+            await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
                 throw new Exception("Request is no longer pending.");

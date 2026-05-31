@@ -11,7 +11,9 @@
       "Bash(mv GameHubz.DataModels/Models/HubJoinRequestDto.cs GameHubz.DataModels/Models/UserHubRequestDto.cs)",
       "Bash(mv GameHubz.DataModels/Models/HubJoinRequestPost.cs GameHubz.DataModels/Models/UserHubRequestPost.cs)",
       "Bash(mv GameHubz.DataModels/Models/HubJoinRequestEdit.cs GameHubz.DataModels/Models/UserHubRequestEdit.cs)",
-      "Bash(mv GameHubz.Logic/Interfaces/IHubJoinRequestRepository.cs GameHubz.Logic/Interfaces/IUserHubRequestRepository.cs)"
+      "Bash(mv GameHubz.Logic/Interfaces/IHubJoinRequestRepository.cs GameHubz.Logic/Interfaces/IUserHubRequestRepository.cs)",
+      "Bash(ls C:/projects/turnir/)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }

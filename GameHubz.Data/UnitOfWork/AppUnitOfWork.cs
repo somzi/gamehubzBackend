@@ -51,6 +51,8 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
         public ITeamMatchRepository TeamMatchRepository => this.GetRepository<TeamMatchRepository>();
         public IUserHubRequestRepository UserHubRequestRepository => this.GetRepository<UserHubRequestRepository>();
 
+        public IUserHubBanRepository UserHubBanRepository => this.GetRepository<UserHubBanRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

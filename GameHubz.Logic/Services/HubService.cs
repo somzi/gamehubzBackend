@@ -1,4 +1,5 @@
 ﻿using FluentValidation;
+using GameHubz.DataModels.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 
@@ -161,6 +162,15 @@ namespace GameHubz.Logic.Services
             };
 
             await this.AppUnitOfWork.HubRepository.AddEntity(hub, this.UserContextReader);
+
+            var ownerMembership = new UserHubEntity
+            {
+                UserId = hub.UserId,
+                HubId = hub.Id,
+                HubRole = HubRole.HubOwner
+            };
+
+            await this.AppUnitOfWork.UserHubRepository.AddEntity(ownerMembership, this.UserContextReader);
 
             await this.SaveAsync();
 

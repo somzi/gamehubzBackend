@@ -1,9 +1,8 @@
 using GameHubz.Common;
-using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
 {
-    public class UserHubEntity : BaseEntity
+    public class UserHubBanEntity : BaseEntity
     {
         public Guid? UserId { get; set; }
 
@@ -13,6 +12,6 @@ namespace GameHubz.DataModels.Domain
 
         public HubEntity? Hub { get; set; }
 
-        public HubRole HubRole { get; set; } = HubRole.HubMember;
+        public Guid? BannedById { get; set; }
     }
 }
