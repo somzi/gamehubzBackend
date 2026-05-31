@@ -30,6 +30,8 @@ namespace GameHubz.DataModels.Models
 
         public TeamWinCondition TeamWinCondition { get; set; }
 
+        public bool HasThirdPlaceMatch { get; set; }
+
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();

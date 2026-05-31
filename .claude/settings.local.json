@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dotnet build *)"
+      "Bash(dotnet build *)",
+      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile status)",
+      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile branch --show-current)",
+      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile diff)",
+      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile grep -n -i \"Completed\\\\|status ===\\\\|canSubmit\\\\|isCompleted\" -- \"src/components/modals/MatchDetailsModal.tsx\")",
+      "Bash(ls C:/projects/turnir/)"
     ]
   }
 }

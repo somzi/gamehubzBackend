@@ -202,7 +202,8 @@ namespace GameHubz.Data.Repository
                       HubName = x.Hub!.Name,
                       IsTeamTournament = x.IsTeamTournament,
                       TeamSize = x.TeamSize,
-                      TeamWinCondition = x.TeamWinCondition
+                      TeamWinCondition = x.TeamWinCondition,
+                      HasThirdPlaceMatch = x.HasThirdPlaceMatch
                   }).FirstOrDefaultAsync();
         }
 

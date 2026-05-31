@@ -211,7 +211,7 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
 
-            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, bracketSlots);
+            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, bracketSlots, tournament.HasThirdPlaceMatch);
 
             foreach (var match in allMatches)
             {
@@ -648,6 +648,9 @@ namespace GameHubz.Logic.Services
             // Auto-advance byes for TeamMatches
             AutoAdvanceTeamByes(allTeamMatches);
 
+            if (tournament.HasThirdPlaceMatch)
+                BuildThirdPlaceTeamMatchIfApplicable(allTeamMatches, totalRounds, shuffled.Count, tournamentId, stage.Id);
+
             // Save all TeamMatchEntities
             foreach (var tm in allTeamMatches)
             {
@@ -730,6 +733,14 @@ namespace GameHubz.Logic.Services
                     ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
             }
 
+            // Semi-finals with a third-place play-off link their loser into this match.
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+            {
+                loserBracketMatch = match.NextMatchLoserBracket
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+            }
+
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
 
@@ -739,9 +750,38 @@ namespace GameHubz.Logic.Services
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
             {
-                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                if (match.TeamMatchId.HasValue)
                 {
-                    throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    // Team sub-matches don't carry the Next* links (those live on TeamMatchEntity), so the
+                    // solo guards below never fire for them. Mirror the lock at the team-match level, otherwise
+                    // reverting a semi-final would silently cascade-delete an already-played final / third-place.
+                    var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                    if (parentTeamMatch.NextTeamMatchId.HasValue)
+                    {
+                        var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                        if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                            throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    }
+
+                    if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                    {
+                        var thirdPlaceTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                        if (thirdPlaceTeamMatch.Status != TeamMatchStatus.Pending)
+                            throw new Exception("This match is locked because the third-place match has already progressed. To edit this, you must revert the third-place match first.");
+                    }
+                }
+                else
+                {
+                    if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                    {
+                        throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    }
+
+                    if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+                    {
+                        throw new Exception("This match is locked because the third-place match has already progressed. To edit this, you must revert the third-place match first.");
+                    }
                 }
 
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
@@ -756,7 +796,7 @@ namespace GameHubz.Logic.Services
                     if (match.TeamMatchId.HasValue)
                         await RevertTeamMatchResult(match);
                     else
-                        await RevertEliminationResult(match, nextMatch);
+                        await RevertEliminationResult(match, nextMatch, loserBracketMatch);
                 }
             }
 
@@ -783,6 +823,14 @@ namespace GameHubz.Logic.Services
             }
 
             match.WinnerParticipantId = winnerParticipientId;
+
+            Guid? loserParticipantId = null;
+            if (winnerParticipientId.HasValue)
+            {
+                loserParticipantId = winnerParticipientId.Value == match.HomeParticipantId
+                    ? match.AwayParticipantId
+                    : match.HomeParticipantId;
+            }
 
             // 4. Update match entity
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
@@ -832,6 +880,10 @@ namespace GameHubz.Logic.Services
                         throw new Exception("Draws not allowed in elimination matches. Someone must win!");
 
                     await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
+
+                    if (loserBracketMatch != null && loserParticipantId.HasValue)
+                        await AdvanceLoserToThirdPlace(match, loserParticipantId.Value, loserBracketMatch);
+
                     await this.SaveAsync();
                 }
             }
@@ -871,6 +923,29 @@ namespace GameHubz.Logic.Services
 
             if (!isParticipant)
                 return false;
+
+            if (match.TeamMatchId.HasValue)
+            {
+                // Team sub-matches don't carry the Next* links; the downstream links live on the parent
+                // team match (next round + third-place play-off). Mirror the lock from UpdateMatchResult.
+                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                if (parentTeamMatch.NextTeamMatchId.HasValue)
+                {
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                        return false;
+                }
+
+                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                {
+                    var thirdPlaceTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                    if (thirdPlaceTeamMatch.Status != TeamMatchStatus.Pending)
+                        return false;
+                }
+
+                return true;
+            }
 
             if (!match.NextMatchId.HasValue)
                 return true;
@@ -1004,10 +1079,12 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
         }
 
-        private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch)
+        private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch)
         {
             if (nextMatch == null)
             {
+                // Reverting either terminal match (the final or the third-place play-off) means the
+                // tournament is no longer fully played, so roll back a previously-published winner/status.
                 if (match.WinnerParticipantId.HasValue)
                 {
                     var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
@@ -1046,6 +1123,41 @@ namespace GameHubz.Logic.Services
                         nextMatch.WinnerParticipantId = null;
                     }
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
+                }
+            }
+
+            // Reverting a semi-final must also pull its loser back out of the third-place play-off.
+            if (loserBracketMatch != null && match.WinnerParticipantId.HasValue)
+            {
+                Guid? loserId = match.WinnerParticipantId.Value == match.HomeParticipantId
+                    ? match.AwayParticipantId
+                    : match.HomeParticipantId;
+
+                if (loserId.HasValue)
+                {
+                    bool loserChanged = false;
+                    if (loserBracketMatch.HomeParticipantId == loserId)
+                    {
+                        loserBracketMatch.HomeParticipantId = null;
+                        loserChanged = true;
+                    }
+                    else if (loserBracketMatch.AwayParticipantId == loserId)
+                    {
+                        loserBracketMatch.AwayParticipantId = null;
+                        loserChanged = true;
+                    }
+
+                    if (loserChanged)
+                    {
+                        if (loserBracketMatch.Status == MatchStatus.Completed)
+                        {
+                            loserBracketMatch.Status = MatchStatus.Pending;
+                            loserBracketMatch.HomeUserScore = 0;
+                            loserBracketMatch.AwayUserScore = 0;
+                            loserBracketMatch.WinnerParticipantId = null;
+                        }
+                        await this.AppUnitOfWork.MatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
+                    }
                 }
             }
         }
@@ -1091,7 +1203,40 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
                 }
             }
-            else if (!teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+
+            // Reverting a semi-final must also pull its loser back out of the third-place play-off.
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue && oldWinner.HasValue)
+            {
+                var loserId = oldWinner.Value == teamMatch.HomeTeamParticipantId
+                    ? teamMatch.AwayTeamParticipantId
+                    : teamMatch.HomeTeamParticipantId;
+
+                var thirdPlaceMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchLoserBracketId.Value);
+                if (thirdPlaceMatch != null && loserId.HasValue)
+                {
+                    bool loserIsHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                    if (loserIsHomeSlot)
+                        thirdPlaceMatch.HomeTeamParticipantId = null;
+                    else
+                        thirdPlaceMatch.AwayTeamParticipantId = null;
+
+                    foreach (var sm in thirdPlaceMatch.SubMatches)
+                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+
+                    if (thirdPlaceMatch.Status == TeamMatchStatus.Completed)
+                    {
+                        thirdPlaceMatch.WinnerTeamParticipantId = null;
+                        thirdPlaceMatch.Status = TeamMatchStatus.Pending;
+                    }
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(thirdPlaceMatch, this.UserContextReader);
+                }
+            }
+
+            // Reverting any completed elimination result means the tournament is no longer fully played,
+            // so roll back a previously-published winner/Completed status (covers final, third-place and
+            // semi-final cascades alike).
+            if (oldWinner.HasValue)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
                 if (tournament.Status == TournamentStatus.Completed)
@@ -1122,14 +1267,50 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                // Terminal match: the championship final or the third-place play-off. With a third-place
+                // play-off the tournament is finished only once BOTH are played, and the champion is always
+                // the winner of the final (never the third-place match).
+                var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(match.TournamentStageId!.Value);
+                var finalMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
+                var thirdPlaceMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.ThirdPlace);
 
-                tournament.WinnerUserId = winnerUserId;
-                tournament.Status = TournamentStatus.Completed;
-                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                // The in-flight match isn't saved as Completed yet, so treat it as done via the Id shortcut.
+                bool finalDone = finalMatch != null && (finalMatch.Id == match.Id || finalMatch.Status == MatchStatus.Completed);
+                bool thirdPlaceDone = thirdPlaceMatch == null || thirdPlaceMatch.Id == match.Id || thirdPlaceMatch.Status == MatchStatus.Completed;
 
-                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                if (finalDone && thirdPlaceDone)
+                {
+                    var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+
+                    tournament.WinnerUserId = finalMatch!.Id == match.Id
+                        ? winnerUserId
+                        : await ResolveParticipantUserId(finalMatch.WinnerParticipantId);
+                    tournament.Status = TournamentStatus.Completed;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+                    await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                }
             }
+        }
+
+        private async Task<Guid?> ResolveParticipantUserId(Guid? participantId)
+        {
+            if (!participantId.HasValue) return null;
+            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(participantId.Value);
+            return participant.UserId;
+        }
+
+        private async Task AdvanceLoserToThirdPlace(MatchEntity match, Guid loserId, MatchEntity thirdPlaceMatch)
+        {
+            // Loser of semi-final order 0 takes the home slot, loser of order 1 the away slot.
+            bool isHomeSlot = (match.MatchOrder % 2) == 0;
+
+            if (isHomeSlot)
+                thirdPlaceMatch.HomeParticipantId = loserId;
+            else
+                thirdPlaceMatch.AwayParticipantId = loserId;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(thirdPlaceMatch, this.UserContextReader);
         }
 
         private async Task CheckAndCompleteLeague(Guid tournamentId)
@@ -1321,6 +1502,31 @@ namespace GameHubz.Logic.Services
             teamMatch.Status = TeamMatchStatus.Completed;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            // Route the semi-final loser into the third-place play-off (if configured).
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue)
+            {
+                var loserTeamParticipantId = winnerTeamParticipantId == teamMatch.HomeTeamParticipantId
+                    ? teamMatch.AwayTeamParticipantId
+                    : teamMatch.HomeTeamParticipantId;
+
+                if (loserTeamParticipantId.HasValue)
+                {
+                    var thirdPlaceMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchLoserBracketId.Value);
+
+                    bool loserIsHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                    if (loserIsHomeSlot)
+                        thirdPlaceMatch.HomeTeamParticipantId = loserTeamParticipantId;
+                    else
+                        thirdPlaceMatch.AwayTeamParticipantId = loserTeamParticipantId;
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(thirdPlaceMatch, this.UserContextReader);
+
+                    // Once both losers are in, create the play-off's sub-matches.
+                    if (thirdPlaceMatch.HomeTeamParticipantId.HasValue && thirdPlaceMatch.AwayTeamParticipantId.HasValue)
+                        await CreateSubMatchesForTeamMatch(thirdPlaceMatch);
+                }
+            }
+
             // Advance or complete
             if (teamMatch.NextTeamMatchId.HasValue)
             {
@@ -1342,17 +1548,33 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                // Tournament is over
-                var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(winnerTeamParticipantId!.Value);
+                // Terminal team match: the championship final or the third-place play-off. With a third-place
+                // play-off the tournament is finished only once BOTH are played, and the champion is always
+                // the winner of the final (never the third-place match).
+                var stageMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(teamMatch.TournamentStageId!.Value);
+                var finalTeamMatch = stageMatches.FirstOrDefault(tm => !tm.NextTeamMatchId.HasValue && !tm.IsThirdPlace);
+                var thirdPlaceTeamMatch = stageMatches.FirstOrDefault(tm => tm.IsThirdPlace);
 
-                if (winnerParticipant.TeamId.HasValue)
+                // The in-flight match isn't saved as Completed yet, so treat it as done via the Id shortcut.
+                bool finalDone = finalTeamMatch != null && (finalTeamMatch.Id == teamMatch.Id || finalTeamMatch.Status == TeamMatchStatus.Completed);
+                bool thirdPlaceDone = thirdPlaceTeamMatch == null || thirdPlaceTeamMatch.Id == teamMatch.Id || thirdPlaceTeamMatch.Status == TeamMatchStatus.Completed;
+
+                if (finalDone && thirdPlaceDone)
                 {
-                    tournament.WinnerTeamId = winnerParticipant.TeamId;
-                }
+                    var championParticipantId = finalTeamMatch!.Id == teamMatch.Id
+                        ? winnerTeamParticipantId
+                        : finalTeamMatch.WinnerTeamParticipantId;
+                    var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(championParticipantId!.Value);
 
-                tournament.Status = TournamentStatus.Completed;
-                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                    if (winnerParticipant.TeamId.HasValue)
+                    {
+                        tournament.WinnerTeamId = winnerParticipant.TeamId;
+                    }
+
+                    tournament.Status = TournamentStatus.Completed;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                    await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                }
             }
 
             await this.SaveAsync();
@@ -1621,6 +1843,9 @@ namespace GameHubz.Logic.Services
 
                 var teamMatches = GenerateEliminationTeamMatches(tournamentId, knockoutStage.Id!.Value, bracketSlots);
 
+                if (tournament.HasThirdPlaceMatch)
+                    BuildThirdPlaceTeamMatchIfApplicable(teamMatches, (int)Math.Log2(playerCount), bracketSeeded.Count, tournamentId, knockoutStage.Id);
+
                 foreach (var tm in teamMatches)
                     await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
 
@@ -1638,7 +1863,7 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded);
+                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded, tournament.HasThirdPlaceMatch);
 
                 foreach (var m in matches)
                 {
@@ -1650,7 +1875,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity?> participants)
+        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity?> participants, bool includeThirdPlace = false)
         {
             int playerCount = participants.Count;
             int totalRounds = (int)Math.Log2(playerCount);
@@ -1683,6 +1908,24 @@ namespace GameHubz.Logic.Services
             }
 
             AutoAdvanceByes(allMatches);
+
+            if (includeThirdPlace)
+            {
+                // A meaningful third-place play-off needs two semi-finals that each produce a real loser.
+                // With fewer than 4 actual participants a semi-final would be a bye (no loser), so skip it.
+                int realCount = participants.Count(p => p != null);
+                var semiFinals = allMatches.Where(m => m.Stage == MatchStage.SemiFinal).ToList();
+                var final = allMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
+
+                if (realCount >= 4 && semiFinals.Count == 2 && final != null)
+                {
+                    // Shares the final's round, ordered after it; semi-final losers feed in via the loser-bracket link.
+                    var thirdPlace = CreateMatch(tournamentId, stageId, final.RoundNumber!.Value, MatchStage.ThirdPlace, 1);
+                    foreach (var sf in semiFinals)
+                        sf.NextMatchLoserBracketId = thirdPlace.Id;
+                    allMatches.Add(thirdPlace);
+                }
+            }
 
             return allMatches;
         }
@@ -2006,23 +2249,58 @@ namespace GameHubz.Logic.Services
         }
 
         private static MatchStage GetMatchStage(int totalPlayers, int roundNumber)
+            => StageFromRoundsFromEnd((int)Math.Log2(totalPlayers) - roundNumber + 1);
+
+        // Creates the optional third-place TeamMatch and links both semi-finals' loser pointer into it.
+        // Shared between pure single-elimination and groups-then-knockout team paths to keep generation logic in one place.
+        // Returns null when the play-off is not applicable (too few real teams, or no two semi-finals).
+        private static TeamMatchEntity? BuildThirdPlaceTeamMatchIfApplicable(
+            List<TeamMatchEntity> allTeamMatches,
+            int totalRounds,
+            int realParticipantCount,
+            Guid tournamentId,
+            Guid? stageId)
         {
-            int totalRounds = (int)Math.Log2(totalPlayers);
-            int roundsFromEnd = totalRounds - roundNumber + 1;
-            return roundsFromEnd switch
+            // A meaningful third-place play-off needs two semi-finals that each produce a real loser (no bye).
+            if (realParticipantCount < 4 || totalRounds < 2) return null;
+
+            var semiFinals = allTeamMatches.Where(tm => tm.RoundNumber == totalRounds - 1).ToList();
+            var final = allTeamMatches.FirstOrDefault(tm => tm.RoundNumber == totalRounds);
+
+            if (semiFinals.Count != 2 || final == null) return null;
+
+            var thirdPlace = new TeamMatchEntity
             {
-                1 => MatchStage.Final,
-                2 => MatchStage.SemiFinal,
-                3 => MatchStage.QuarterFinal,
-                4 => MatchStage.RoundOf16,
-                5 => MatchStage.RoundOf32,
-                6 => MatchStage.RoundOf64,
-                7 => MatchStage.RoundOf128,
-                8 => MatchStage.RoundOf256,
-                9 => MatchStage.RoundOf512,
-                _ => MatchStage.RoundOf1024
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                TournamentStageId = stageId,
+                RoundNumber = totalRounds,
+                MatchOrder = 1,
+                Status = TeamMatchStatus.Pending,
+                IsThirdPlace = true
             };
+            foreach (var sf in semiFinals)
+                sf.NextTeamMatchLoserBracketId = thirdPlace.Id;
+
+            allTeamMatches.Add(thirdPlace);
+            return thirdPlace;
         }
+
+        // Shared between solo (stage stored on MatchEntity at generation) and team (derived at DTO mapping,
+        // since TeamMatchEntity has no Stage column). Keeps the mapping in one place.
+        private static MatchStage StageFromRoundsFromEnd(int roundsFromEnd) => roundsFromEnd switch
+        {
+            1 => MatchStage.Final,
+            2 => MatchStage.SemiFinal,
+            3 => MatchStage.QuarterFinal,
+            4 => MatchStage.RoundOf16,
+            5 => MatchStage.RoundOf32,
+            6 => MatchStage.RoundOf64,
+            7 => MatchStage.RoundOf128,
+            8 => MatchStage.RoundOf256,
+            9 => MatchStage.RoundOf512,
+            _ => MatchStage.RoundOf1024
+        };
 
         private static bool IsPowerOfTwo(int n) => n > 0 && (n & (n - 1)) == 0;
 
@@ -2163,6 +2441,9 @@ namespace GameHubz.Logic.Services
             var rounds = new List<BracketRoundDto>();
             if (teamMatches == null || !teamMatches.Any()) return rounds;
 
+            // The third-place play-off shares the final's RoundNumber, so Max gives the true depth of the tree.
+            int totalRounds = teamMatches.Max(m => m.RoundNumber ?? 1);
+
             var grouped = teamMatches.GroupBy(m => m.RoundNumber ?? 1).OrderBy(g => g.Key);
 
             foreach (var grp in grouped)
@@ -2173,23 +2454,28 @@ namespace GameHubz.Logic.Services
                     RoundDeadline = grp.SelectMany(m => m.SubMatches).Max(sm => sm.RoundDeadline),
                     Name = $"Round {grp.Key}",
                     Matches = grp.OrderBy(m => m.MatchOrder)
-                                 .Select(tm => MapTeamMatchToDto(tm))
+                                 .Select(tm => MapTeamMatchToDto(tm, totalRounds))
                                  .ToList()
                 });
             }
             return rounds;
         }
 
-        private MatchStructureDto MapTeamMatchToDto(TeamMatchEntity tm)
+        private MatchStructureDto MapTeamMatchToDto(TeamMatchEntity tm, int totalRounds)
         {
+            int round = tm.RoundNumber ?? 1;
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
-                Round = tm.RoundNumber ?? 1,
+                Round = round,
                 Order = tm.MatchOrder ?? 0,
+                Stage = tm.IsThirdPlace
+                    ? MatchStage.ThirdPlace
+                    : StageFromRoundsFromEnd(totalRounds - round + 1),
                 Status = MapTeamMatchStatus(tm.Status),
                 TeamMatchId = tm.Id,
                 NextTeamMatchId = tm.NextTeamMatchId,
+                NextTeamMatchLoserBracketId = tm.NextTeamMatchLoserBracketId,
                 Evidences = [],
                 Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
                 {
@@ -2310,6 +2596,7 @@ namespace GameHubz.Logic.Services
                 Id = m.Id!.Value,
                 Round = m.RoundNumber ?? 1,
                 Order = m.MatchOrder ?? 0,
+                Stage = m.Stage,
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,
                 RoundDeadline = m.RoundDeadline,
@@ -2365,10 +2652,24 @@ namespace GameHubz.Logic.Services
 
                 bool isParticipant = match.Home?.UserId == currentUserId || match.Away?.UserId == currentUserId;
 
-                bool isNextMatchPending = match.NextMatchId == null ||
-                    (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                bool downstreamPending;
+                if (match.TeamMatchId.HasValue)
+                {
+                    // Team matches link forward via NextTeamMatchId (next round) and
+                    // NextTeamMatchLoserBracketId (third-place play-off) instead of NextMatchId.
+                    bool nextPending = match.NextTeamMatchId == null ||
+                        (matchById.TryGetValue(match.NextTeamMatchId.Value, out var nextTm) && nextTm.Status == MatchStatus.Pending);
+                    bool thirdPlacePending = match.NextTeamMatchLoserBracketId == null ||
+                        (matchById.TryGetValue(match.NextTeamMatchLoserBracketId.Value, out var thirdTm) && thirdTm.Status == MatchStatus.Pending);
+                    downstreamPending = nextPending && thirdPlacePending;
+                }
+                else
+                {
+                    downstreamPending = match.NextMatchId == null ||
+                        (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                }
 
-                match.CanRevert = isNextMatchPending && (isPrivileged || isParticipant);
+                match.CanRevert = downstreamPending && (isPrivileged || isParticipant);
             }
         }
 

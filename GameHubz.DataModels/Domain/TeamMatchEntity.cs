@@ -21,6 +21,15 @@ namespace GameHubz.DataModels.Domain
         public Guid? WinnerTeamParticipantId { get; set; }
         public Guid? NextTeamMatchId { get; set; }
         public TeamMatchEntity? NextTeamMatch { get; set; }
+
+        // Semi-final losers advance here when the tournament has a third-place play-off.
+        public Guid? NextTeamMatchLoserBracketId { get; set; }
+
+        public TeamMatchEntity? NextTeamMatchLoserBracket { get; set; }
+
+        // Marks the third-place play-off itself, so it is not mistaken for the championship final.
+        public bool IsThirdPlace { get; set; }
+
         public List<MatchEntity> SubMatches { get; set; } = new();
     }
 }

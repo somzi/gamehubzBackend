@@ -504,6 +504,12 @@ namespace GameHubz.Data.Context
                 .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.NextTeamMatchLoserBracket)
+                .WithMany()
+                .HasForeignKey(x => x.NextTeamMatchLoserBracketId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
                 .HasMany(x => x.SubMatches)
                 .WithOne(x => x.TeamMatch)
                 .HasForeignKey(x => x.TeamMatchId)

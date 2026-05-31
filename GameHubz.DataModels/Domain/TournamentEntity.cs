@@ -30,6 +30,11 @@ namespace GameHubz.DataModels.Domain
         public int? QualifiersPerGroup { get; set; }
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }
+
+        // When true, single-elimination brackets also generate a play-off match
+        // between the two semi-final losers. Default false for all existing tournaments.
+        public bool HasThirdPlaceMatch { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();
