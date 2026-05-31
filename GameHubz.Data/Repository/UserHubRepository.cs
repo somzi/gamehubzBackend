@@ -44,12 +44,15 @@ namespace GameHubz.Data.Repository
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()
-                .Where(uh => uh.HubId == hubId && uh.HubId != null && uh.HubRole != HubRole.HubOwner)
+                .Where(uh => uh.HubId == hubId && uh.HubId != null)
+                .OrderBy(uh => uh.HubRole)
+                .ThenBy(uh => uh.User!.Username)
                 .Select(x => new UserHubOverview
                 {
                     UserId = x.UserId!.Value,
                     Username = x.User!.Username,
                     PushToken = x.User!.PushToken,
+                    AvatarUrl = x.User!.AvatarUrl,
                     HubRole = x.HubRole
                 })
                 .ToListAsync();
@@ -58,7 +61,7 @@ namespace GameHubz.Data.Repository
         public async Task<List<UserHubOverview>> GetUsersByHubPaged(Guid hubId, int pageNumber, int pageSize, string? search)
         {
             var query = this.BaseDbSet()
-                .Where(uh => uh.HubId == hubId && uh.HubId != null && uh.HubRole != HubRole.HubOwner);
+                .Where(uh => uh.HubId == hubId && uh.HubId != null);
 
             if (!string.IsNullOrWhiteSpace(search))
             {
@@ -67,7 +70,8 @@ namespace GameHubz.Data.Repository
             }
 
             return await query
-                .OrderBy(uh => uh.User!.Username)
+                .OrderBy(uh => uh.HubRole)
+                .ThenBy(uh => uh.User!.Username)
                 .Skip(pageNumber * pageSize)
                 .Take(pageSize)
                 .Select(x => new UserHubOverview
@@ -75,6 +79,7 @@ namespace GameHubz.Data.Repository
                     UserId = x.UserId!.Value,
                     Username = x.User!.Username,
                     PushToken = x.User!.PushToken,
+                    AvatarUrl = x.User!.AvatarUrl,
                     HubRole = x.HubRole
                 })
                 .ToListAsync();

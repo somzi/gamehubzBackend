@@ -241,7 +241,7 @@ namespace GameHubz.Logic.Services
             if (hubId.HasValue)
             {
                 await this.cacheService.RemoveAsync($"hub_overview:{hubId}");
-                await this.cacheService.RemoveAsync($"hubs:{hubId}:members");
+                await this.cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
             }
         }
     }

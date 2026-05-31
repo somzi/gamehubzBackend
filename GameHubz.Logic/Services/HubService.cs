@@ -227,7 +227,7 @@ namespace GameHubz.Logic.Services
 
         public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
         {
-            string cacheKey = $"hubs:{id}:members";
+            string cacheKey = $"hubs:{id}:members:v2";
 
             var cachedHubs = await cacheService.GetAsync<IEnumerable<UserHubOverview>>(cacheKey);
 
@@ -262,7 +262,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"hubs:{hubId}:members");
+            await cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
         }
 
         public async Task UploadAvatar(Guid id, IFormFile file)

@@ -161,7 +161,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"hubs:{hubId}:members");
+            await cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
         }
     }
 }

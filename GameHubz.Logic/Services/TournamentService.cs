@@ -308,7 +308,7 @@ namespace GameHubz.Logic.Services
                     if (hubMembers == null || hubMembers.Count == 0) return;
 
                     var pushTokens = hubMembers
-                        .Where(m => !string.IsNullOrEmpty(m.PushToken))
+                        .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
                         .Select(m => m.PushToken)
                         .Distinct()
                         .ToList();
