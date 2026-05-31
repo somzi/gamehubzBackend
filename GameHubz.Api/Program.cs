@@ -86,6 +86,7 @@ namespace GameHubz.Api
             ConfigurePipeline(app, builder.Configuration);
 
             app.MapHub<MatchChatHub>("/hubs/chat");
+            app.MapHub<DirectChatHub>("/hubs/dm");
 
             app.Run();
         }

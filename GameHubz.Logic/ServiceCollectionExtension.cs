@@ -97,6 +97,9 @@ namespace GameHubz.Logic
 
             services.AddTransient<INotificationService, NotificationService>();
 
+            services.AddTransient<FriendService>();
+            services.AddTransient<DirectChatService>();
+
             services.AddSingleton<TranslationService>();
 
             // DO NOT DELETE - Generated Service Tag
@@ -138,6 +141,12 @@ namespace GameHubz.Logic
             services.AddTransient<IValidator<MatchChatEntity>, MatchChatValidator>();
 
             services.AddTransient<IValidator<UserHubRequestEntity>, UserHubRequestValidator>();
+
+            services.AddTransient<IValidator<FriendshipEntity>, FriendshipValidator>();
+            services.AddTransient<IValidator<FriendRequestEntity>, FriendRequestValidator>();
+            services.AddTransient<IValidator<DirectChatEntity>, DirectChatValidator>();
+            services.AddTransient<IValidator<DirectMessageEntity>, DirectMessageValidator>();
+            services.AddTransient<IValidator<UserBlockEntity>, UserBlockValidator>();
 
             // DO NOT DELETE - Generated Validator Tag
         }

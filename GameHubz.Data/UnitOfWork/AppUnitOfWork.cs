@@ -55,6 +55,16 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public IHubVerificationRequestRepository HubVerificationRequestRepository => this.GetRepository<HubVerificationRequestRepository>();
 
+        public IFriendshipRepository FriendshipRepository => this.GetRepository<FriendshipRepository>();
+
+        public IFriendRequestRepository FriendRequestRepository => this.GetRepository<FriendRequestRepository>();
+
+        public IDirectChatRepository DirectChatRepository => this.GetRepository<DirectChatRepository>();
+
+        public IDirectMessageRepository DirectMessageRepository => this.GetRepository<DirectMessageRepository>();
+
+        public IUserBlockRepository UserBlockRepository => this.GetRepository<UserBlockRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

@@ -47,6 +47,16 @@ namespace GameHubz.Logic.Interfaces
 
         IHubVerificationRequestRepository HubVerificationRequestRepository { get; }
 
+        IFriendshipRepository FriendshipRepository { get; }
+
+        IFriendRequestRepository FriendRequestRepository { get; }
+
+        IDirectChatRepository DirectChatRepository { get; }
+
+        IDirectMessageRepository DirectMessageRepository { get; }
+
+        IUserBlockRepository UserBlockRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }
