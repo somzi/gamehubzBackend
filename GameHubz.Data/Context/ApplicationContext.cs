@@ -319,6 +319,23 @@ namespace GameHubz.Data.Context
             modelBuilder.Entity<UserHubEntity>()
                 .HasIndex(x => new { x.UserId, x.HubId });
 
+            modelBuilder.Entity<UserHubRequestEntity>().ToTable("UserHubRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasOne(x => x.Hub)
+                .WithMany(x => x.JoinRequests)
+                .HasForeignKey(x => x.HubId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasIndex(x => new { x.HubId, x.Status });
+
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
 
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence")

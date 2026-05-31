@@ -14,5 +14,6 @@ namespace GameHubz.DataModels.Models
         public int NumberOfTournaments { get; set; }
         public List<HubSocialDto>? HubSocials { get; set; } = new();
         public string? AvatarUrl { get; set; }
+        public bool IsPublic { get; set; } = true;
     }
 }

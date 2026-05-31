@@ -18,5 +18,7 @@
         public Guid UserId { get; set; }
         public string? AvatarUrl { get; set; }
         public string OwnerName { get; set; }
+        public bool IsPublic { get; set; } = true;
+        public bool HasPendingJoinRequest { get; set; }
     }
 }

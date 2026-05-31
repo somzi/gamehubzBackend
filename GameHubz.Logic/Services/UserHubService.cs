@@ -43,6 +43,13 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeSave(UserHubEntity entity, UserHubPost inputDto, bool isNew)
         {
+            if (isNew && inputDto.HubId.HasValue)
+            {
+                var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(inputDto.HubId.Value);
+                if (!hub.IsPublic && hub.UserId != inputDto.UserId)
+                    throw new Exception("This hub is private. You need to request to join.");
+            }
+
             await cacheService.RemoveAsync($"dashboard_highlights:{inputDto.UserId}");
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{inputDto.UserId}");

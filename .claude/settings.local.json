@@ -2,11 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build *)",
-      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile status)",
-      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile branch --show-current)",
-      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile diff)",
-      "Bash(git -C C:/projects/turnir/mobile/gamehubz-mobile grep -n -i \"Completed\\\\|status ===\\\\|canSubmit\\\\|isCompleted\" -- \"src/components/modals/MatchDetailsModal.tsx\")",
-      "Bash(ls C:/projects/turnir/)"
+      "Bash(Get-ChildItem -Path \"C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend\" -Recurse -Directory | Select-Object -ExpandProperty FullName | Where-Object {$_ -match '\\(Models|Controllers|Services|DTOs|Migrations\\)' -or $_ -match 'gamehubz'} | head -50)",
+      "Bash(npx tsc *)",
+      "Bash(git mv *)",
+      "Bash(mv GameHubz.DataModels/Domain/HubJoinRequestEntity.cs GameHubz.DataModels/Domain/UserHubRequestEntity.cs)",
+      "Bash(mv GameHubz.DataModels/Models/HubJoinRequestDto.cs GameHubz.DataModels/Models/UserHubRequestDto.cs)",
+      "Bash(mv GameHubz.DataModels/Models/HubJoinRequestPost.cs GameHubz.DataModels/Models/UserHubRequestPost.cs)",
+      "Bash(mv GameHubz.DataModels/Models/HubJoinRequestEdit.cs GameHubz.DataModels/Models/UserHubRequestEdit.cs)",
+      "Bash(mv GameHubz.Logic/Interfaces/IHubJoinRequestRepository.cs GameHubz.Logic/Interfaces/IUserHubRequestRepository.cs)"
     ]
   }
 }

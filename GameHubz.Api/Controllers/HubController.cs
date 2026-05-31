@@ -11,11 +11,14 @@ namespace GameHubz.Api.Controllers
     public class HubController : ControllerBase
     {
         private readonly HubService hubService;
+        private readonly UserHubRequestService hubJoinRequestService;
 
         public HubController(
-            HubService service)
+            HubService service,
+            UserHubRequestService hubJoinRequestService)
         {
             this.hubService = service;
+            this.hubJoinRequestService = hubJoinRequestService;
         }
 
         [HttpGet("getAll")]
@@ -103,6 +106,40 @@ namespace GameHubz.Api.Controllers
         {
             await hubService.DeleteEntity(id);
 
+            return Ok();
+        }
+
+        [HttpPost("{id}/join-request")]
+        public async Task<IActionResult> RequestJoin(Guid id)
+        {
+            await hubJoinRequestService.RequestJoin(id);
+            return Ok();
+        }
+
+        [HttpDelete("{id}/join-request")]
+        public async Task<IActionResult> CancelMyJoinRequest(Guid id)
+        {
+            await hubJoinRequestService.CancelMyRequest(id);
+            return Ok();
+        }
+
+        [HttpGet("{id}/join-requests")]
+        public async Task<IEnumerable<UserHubRequestDto>> GetJoinRequests(Guid id)
+        {
+            return await hubJoinRequestService.GetPendingRequests(id);
+        }
+
+        [HttpPost("join-request/{requestId}/approve")]
+        public async Task<IActionResult> ApproveJoinRequest(Guid requestId)
+        {
+            await hubJoinRequestService.ApproveRequest(requestId);
+            return Ok();
+        }
+
+        [HttpPost("join-request/{requestId}/reject")]
+        public async Task<IActionResult> RejectJoinRequest(Guid requestId)
+        {
+            await hubJoinRequestService.RejectRequest(requestId);
             return Ok();
         }
     }

@@ -78,6 +78,11 @@ namespace GameHubz.Logic.Services
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
             hubDto.IsUserFollowHub = isFollowing;
 
+            if (!hubDto.IsPublic && !isFollowing && !hubDto.IsUserOwner)
+            {
+                hubDto.HasPendingJoinRequest = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(id, user.UserId);
+            }
+
             return hubDto;
         }
 
@@ -127,12 +132,14 @@ namespace GameHubz.Logic.Services
 
             hub.Name = request.Name;
             hub.Description = request.Description;
+            hub.IsPublic = request.IsPublic;
 
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"hub_overview:{request.Id}");
+            await cacheService.RemoveAsync($"hubs_overview_all");
 
             return this.Mapper.Map<HubOverviewDto>(hub);
         }
@@ -149,7 +156,8 @@ namespace GameHubz.Logic.Services
             {
                 Name = request.Name,
                 Description = request.Description,
-                UserId = user.UserId
+                UserId = user.UserId,
+                IsPublic = request.IsPublic
             };
 
             await this.AppUnitOfWork.HubRepository.AddEntity(hub, this.UserContextReader);

@@ -89,6 +89,7 @@ namespace GameHubz.Logic
 
             services.AddTransient<TournamentTeamService>();
             services.AddTransient<TeamMatchService>();
+            services.AddTransient<UserHubRequestService>();
 
             services.AddTransient<TournamentExportService>();
 
@@ -133,6 +134,8 @@ namespace GameHubz.Logic
             services.AddTransient<IValidator<HubSocialEntity>, HubSocialValidator>();
 
             services.AddTransient<IValidator<MatchChatEntity>, MatchChatValidator>();
+
+            services.AddTransient<IValidator<UserHubRequestEntity>, UserHubRequestValidator>();
 
             // DO NOT DELETE - Generated Validator Tag
         }

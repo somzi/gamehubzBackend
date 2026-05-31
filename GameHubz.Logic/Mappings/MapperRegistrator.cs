@@ -36,6 +36,8 @@ namespace GameHubz.Logic.Mappings
 
             mapperConfiguration.AddProfile(new MatchChatProfile(localizationService));
 
+            mapperConfiguration.AddProfile(new UserHubRequestProfile(localizationService));
+
             // DO NOT DELETE - Generated Mappers Tag
         }
     }
