@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -19,7 +20,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService) : base(
+            INotificationService notificationService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -31,6 +33,7 @@ namespace GameHubz.Logic.Services
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
             this.notificationService = notificationService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -151,6 +154,20 @@ namespace GameHubz.Logic.Services
             return data!;
         }
 
+        /// <summary>
+        /// v2 of the overview endpoint. Same payload as v1 plus <see cref="TournamentOverview.CanManage"/>
+        /// so the client can surface owner-level controls to hub admins / platform admins as well.
+        /// CanManage is computed per request and never cached (v1 omits it entirely).
+        /// </summary>
+        public async Task<TournamentOverview> GetOverviewV2(Guid id)
+        {
+            var data = await GetOverview(id);
+
+            data.CanManage = await this.tournamentAuth.CanManageTournamentAsync(id);
+
+            return data;
+        }
+
         private async Task RejectPendings(TournamentEntity tournament)
         {
             foreach (var registration in tournament.TournamentRegistrations!)
@@ -175,11 +192,8 @@ namespace GameHubz.Logic.Services
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
 
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
-
-            if (tournament.Hub!.UserId != currentUser.UserId)
-                throw new Exception("Only tournament admin can manage round deadlines.");
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
 
             var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
@@ -244,12 +258,11 @@ namespace GameHubz.Logic.Services
 
         private async Task<TournamentEntity> GetHubOwnedTournamentOrThrow(Guid tournamentId)
         {
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
 
-            if (tournament.Hub?.UserId != currentUser.UserId)
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
             {
-                throw new Exception("Only hub owner can manage this tournament.");
+                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             return tournament;
@@ -346,11 +359,8 @@ namespace GameHubz.Logic.Services
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
 
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
-
-            if (tournament.Hub!.UserId != currentUser.UserId)
-                throw new Exception("Only tournament admin can manage round deadlines.");
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
 
             var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)

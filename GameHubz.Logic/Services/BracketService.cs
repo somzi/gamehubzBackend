@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -15,12 +16,14 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            TournamentAuthorizationService tournamentAuth)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
             this.notificationService = notificationService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -49,6 +52,55 @@ namespace GameHubz.Logic.Services
                 return cachedBracket;
             }
 
+            var response = await BuildStructureResponse(tournament!, currentUserId, isPrivileged, cacheKey);
+
+            // Patch CanRevert after caching so the cached copy stays user-agnostic
+            PatchCanRevert(response, currentUserId, isPrivileged);
+
+            return response;
+        }
+
+        /// <summary>
+        /// v2 of the structure endpoint. Identical payload to v1 plus <see cref="TournamentStructureDto.CanManage"/>,
+        /// and it recognises hub admins (not just the owner / platform admin) as privileged so they receive the
+        /// same CanRevert flags. v1 is left untouched so the legacy client in review keeps its exact behaviour.
+        /// </summary>
+        public async Task<TournamentStructureDto> GetTournamentStructureV2(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
+            Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
+
+            string cacheKey = $"bracket:{tournamentId}";
+            var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
+
+            var tournament = cachedBracket == null
+                            ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
+                            : null;
+
+            if (cachedBracket == null && tournament == null)
+                throw new Exception("Tournament not found");
+
+            bool canManage = currentUser != null
+                && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
+
+            if (cachedBracket != null)
+            {
+                PatchCanRevert(cachedBracket, currentUserId, canManage);
+                cachedBracket.CanManage = canManage;
+                return cachedBracket;
+            }
+
+            var response = await BuildStructureResponse(tournament!, currentUserId, canManage, cacheKey);
+
+            PatchCanRevert(response, currentUserId, canManage);
+            response.CanManage = canManage;
+
+            return response;
+        }
+
+        private async Task<TournamentStructureDto> BuildStructureResponse(
+            TournamentEntity tournament, Guid currentUserId, bool isPrivileged, string cacheKey)
+        {
             var response = new TournamentStructureDto
             {
                 TournamentId = tournament!.Id!.Value,
@@ -86,9 +138,6 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
-
-            // Patch CanRevert after caching so the cached copy stays user-agnostic
-            PatchCanRevert(response, currentUserId, isPrivileged);
 
             return response;
         }

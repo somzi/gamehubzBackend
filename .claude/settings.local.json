@@ -13,7 +13,11 @@
       "Bash(mv GameHubz.DataModels/Models/HubJoinRequestEdit.cs GameHubz.DataModels/Models/UserHubRequestEdit.cs)",
       "Bash(mv GameHubz.Logic/Interfaces/IHubJoinRequestRepository.cs GameHubz.Logic/Interfaces/IUserHubRequestRepository.cs)",
       "Bash(ls C:/projects/turnir/)",
-      "Bash(echo \"Exit: $?\")"
+      "Bash(echo \"Exit: $?\")",
+      "Bash(npx --no-install tsc --noEmit -p tsconfig.json)",
+      "Bash(tee /tmp/tsc_out.txt)",
+      "Bash(git -C C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend diff --stat HEAD)",
+      "PowerShell(git -C \"C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile\" status)"
     ]
   }
 }

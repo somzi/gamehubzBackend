@@ -45,6 +45,14 @@ namespace GameHubz.Api.Controllers
             return Ok(structure);
         }
 
+        [HttpGet("{tournamentId}/structure/v2")]
+        public async Task<IActionResult> GetTournamentStructureV2(Guid tournamentId)
+        {
+            var structure = await this.bracketService.GetTournamentStructureV2(tournamentId);
+
+            return Ok(structure);
+        }
+
         [HttpPost("matchResult")]
         public async Task<IActionResult> UpdateMatchResult([FromBody] MatchResultDto request)
         {
@@ -89,6 +97,14 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> GetOverview([FromRoute] Guid id)
         {
             var data = await this.Service.GetOverview(id);
+
+            return Ok(data);
+        }
+
+        [HttpGet("{id}/overview/v2")]
+        public async Task<IActionResult> GetOverviewV2([FromRoute] Guid id)
+        {
+            var data = await this.Service.GetOverviewV2(id);
 
             return Ok(data);
         }

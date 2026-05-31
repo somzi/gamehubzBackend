@@ -70,6 +70,7 @@ namespace GameHubz.Logic
             //***********************************************
 
             services.AddTransient<UserHubService>();
+            services.AddTransient<TournamentAuthorizationService>();
             services.AddTransient<TournamentService>();
             services.AddTransient<BracketService>();
             services.AddTransient<TournamentRegistrationService>();

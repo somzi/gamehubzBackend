@@ -293,5 +293,17 @@ namespace GameHubz.Data.Repository
                 .Select(t => t.Hub!.UserId)
                 .FirstOrDefaultAsync();
         }
+
+        public async Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId && t.Hub != null)
+                .Select(t => new HubOwnershipInfo
+                {
+                    HubId = t.Hub!.Id!.Value,
+                    OwnerUserId = t.Hub!.UserId
+                })
+                .FirstOrDefaultAsync();
+        }
     }
 }
