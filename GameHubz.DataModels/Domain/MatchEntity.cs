@@ -67,5 +67,11 @@ namespace GameHubz.DataModels.Domain
         public UserEntity? HomeUser { get; set; }
         public Guid? AwayUserId { get; set; }
         public UserEntity? AwayUser { get; set; }
+
+        // Pending proposal state for tournaments with result approval enabled.
+        // Non-null ProposedByUserId marks an active proposal awaiting opponent / admin approval.
+        public int? ProposedHomeScore { get; set; }
+        public int? ProposedAwayScore { get; set; }
+        public Guid? ProposedByUserId { get; set; }
     }
 }

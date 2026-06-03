@@ -29,5 +29,7 @@ namespace GameHubz.Logic.Interfaces
         Task<Guid?> GetHubOwnerUserId(Guid tournamentId);
 
         Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId);
+
+        Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId);
     }
 }

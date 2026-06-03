@@ -15,6 +15,12 @@ namespace GameHubz.DataModels.Models
         public int? QualifiersPerGroup { get; set; }
 
         /// <summary>
+        /// Mirrors <see cref="TournamentEntity.RequireResultApproval"/>. Lets the client decide
+        /// whether a participant's result submission is a final report or just a proposal.
+        /// </summary>
+        public bool RequireResultApproval { get; set; }
+
+        /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or
         /// platform admin). Only populated by the v2 structure endpoint; omitted from the v1 payload
         /// so the legacy client keeps receiving an unchanged response.

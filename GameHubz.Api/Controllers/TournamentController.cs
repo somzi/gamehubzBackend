@@ -61,6 +61,22 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("matchResult/approve")]
+        public async Task<IActionResult> ApproveMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.ApproveProposedResult(request.MatchId);
+
+            return Ok();
+        }
+
+        [HttpPost("matchResult/reject")]
+        public async Task<IActionResult> RejectMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.RejectProposedResult(request.MatchId);
+
+            return Ok();
+        }
+
         [HttpGet("{id}/details")]
         public async Task<IActionResult> GetDetails(Guid id)
         {

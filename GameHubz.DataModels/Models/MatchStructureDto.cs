@@ -22,5 +22,11 @@ namespace GameHubz.DataModels.Models
         public bool IsRoundLocked { get; set; }
         public DateTime? MatchOpensAt { get; set; }
         public bool CanRevert { get; set; }
+
+        // Pending proposal info — populated when the tournament requires result approval
+        // and a participant has reported a score that has not yet been confirmed.
+        public int? ProposedHomeScore { get; set; }
+        public int? ProposedAwayScore { get; set; }
+        public Guid? ProposedByUserId { get; set; }
     }
 }

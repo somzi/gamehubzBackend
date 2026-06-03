@@ -110,7 +110,8 @@ namespace GameHubz.Logic.Services
                 IsTeamTournament = tournament.IsTeamTournament,
                 Stages = new List<TournamentStageStructureDto>(),
                 HubOwnerId = tournament.Hub!.UserId,
-                QualifiersPerGroup = tournament.QualifiersPerGroup
+                QualifiersPerGroup = tournament.QualifiersPerGroup,
+                RequireResultApproval = tournament.RequireResultApproval
             };
 
             foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
@@ -793,8 +794,26 @@ namespace GameHubz.Logic.Services
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
 
-            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new Exception("Tournament not found");
+            var hubOwnerId = approvalCtx.HubOwnerUserId;
             bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+
+            // When the tournament requires result approval and the caller is a participant
+            // (not an admin / hub owner), persist a proposal instead of completing the match.
+            if (approvalCtx.RequireResultApproval && !isPrivileged)
+            {
+                if (!IsMatchParticipant(match, currentUser.UserId))
+                    throw new Exception("You are not a participant of this match.");
+
+                // Once a result is confirmed in approval mode, only an admin / hub owner can change it.
+                // Otherwise the approval gate could be bypassed via the edit path.
+                if (match.Status == MatchStatus.Completed)
+                    throw new Exception("This result is final. Ask the hub owner or an admin to amend it.");
+
+                await SaveProposal(match, request.HomeScore, request.AwayScore, currentUser);
+                return;
+            }
 
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
@@ -849,12 +868,115 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            int homeScore = request.HomeScore;
-            int awayScore = request.AwayScore;
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, request.HomeScore, request.AwayScore, request.TournamentId);
+        }
 
+        /// <summary>
+        /// Approves the pending proposal stored on the match: commits the proposed scores,
+        /// clears proposal fields, advances the bracket. Caller must be the opposing participant
+        /// or an admin / hub owner.
+        /// </summary>
+        public async Task ApproveProposedResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (match.ProposedByUserId == null || match.ProposedHomeScore == null || match.ProposedAwayScore == null)
+                throw new Exception("No pending result to approve for this match.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new Exception("This match is already completed.");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
+            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
+            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+
+            if (!isPrivileged)
+            {
+                if (!IsMatchParticipant(match, currentUser.UserId))
+                    throw new Exception("You are not a participant of this match.");
+
+                // The proposer cannot also be the approver — the opponent (or admin) confirms.
+                if (match.ProposedByUserId == currentUser.UserId)
+                    throw new Exception("Your opponent must approve the result you reported.");
+            }
+
+            MatchEntity? nextMatch = null;
+            if (match.NextMatchId.HasValue)
+                nextMatch = match.NextMatch ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+                loserBracketMatch = match.NextMatchLoserBracket ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+
+            int homeScore = match.ProposedHomeScore!.Value;
+            int awayScore = match.ProposedAwayScore!.Value;
+            var proposerId = match.ProposedByUserId!.Value;
+
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
+
+            SendResultDecisionNotification(matchId, proposerId, currentUser, approved: true);
+        }
+
+        /// <summary>
+        /// Rejects the pending proposal: clears proposal fields and notifies the proposer so they
+        /// can submit a corrected result. Match stays in its pre-proposal state.
+        /// </summary>
+        public async Task RejectProposedResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (match.ProposedByUserId == null)
+                throw new Exception("No pending result to reject for this match.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new Exception("This match is already completed.");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
+            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
+            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+
+            if (!isPrivileged)
+            {
+                var fullMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+                if (fullMatch == null || !IsMatchParticipant(fullMatch, currentUser.UserId))
+                    throw new Exception("You are not a participant of this match.");
+
+                if (match.ProposedByUserId == currentUser.UserId)
+                    throw new Exception("You can't reject your own proposal — submit a corrected result instead.");
+            }
+
+            var proposerId = match.ProposedByUserId!.Value;
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+
+            SendResultDecisionNotification(matchId, proposerId, currentUser, approved: false);
+        }
+
+        private async Task FinalizeMatchResult(
+            MatchEntity match,
+            MatchEntity? nextMatch,
+            MatchEntity? loserBracketMatch,
+            int homeScore,
+            int awayScore,
+            Guid tournamentId)
+        {
             match.HomeUserScore = homeScore;
             match.AwayUserScore = awayScore;
             match.Status = MatchStatus.Completed;
+
+            // Clear any proposal — the result is now official.
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
 
             // 3. Determine Winner
             Guid? winnerParticipientId = null;
@@ -953,8 +1075,117 @@ namespace GameHubz.Logic.Services
             foreach (var userId in affectedUserIds)
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
-            await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{request.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+        }
+
+        private async Task SaveProposal(MatchEntity match, int homeScore, int awayScore, TokenUserInfo currentUser)
+        {
+            match.ProposedHomeScore = homeScore;
+            match.ProposedAwayScore = awayScore;
+            match.ProposedByUserId = currentUser.UserId;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+
+            // Notify the opposing side that a result is awaiting their approval.
+            SendProposalNotification(match, currentUser, homeScore, awayScore);
+        }
+
+        private static bool IsMatchParticipant(MatchEntity match, Guid userId)
+        {
+            // Team sub-matches carry the player ids on the match itself; solo matches use the participants.
+            if (match.TeamMatchId.HasValue)
+                return match.HomeUserId == userId || match.AwayUserId == userId;
+
+            if (match.HomeParticipant?.UserId == userId || match.AwayParticipant?.UserId == userId)
+                return true;
+
+            // Team-tournament finals/group matches with a captain-led team can have the team members
+            // registered against the participant via the Team relationship.
+            if (match.HomeParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
+            if (match.AwayParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
+
+            return false;
+        }
+
+        private void SendProposalNotification(MatchEntity match, TokenUserInfo proposer, int homeScore, int awayScore)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Notify everyone on the opposing side: solo opponent, or all members of the opposing team.
+                    var opponentUserIds = GetOpponentUserIds(match, proposer.UserId);
+                    if (opponentUserIds.Count == 0) return;
+
+                    string body = $"{proposer.Username} reported {homeScore}-{awayScore}. Tap to approve or reject.";
+                    foreach (var uid in opponentUserIds)
+                    {
+                        var user = await this.AppUnitOfWork.UserRepository.GetById(uid);
+                        if (user?.PushToken == null) continue;
+                        await notificationService.SendToOneAsync(user.PushToken, "Result awaiting approval", body, new { matchId = match.Id!.Value.ToString() });
+                    }
+                }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        private void SendResultDecisionNotification(Guid matchId, Guid proposerId, TokenUserInfo decider, bool approved)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var proposer = await this.AppUnitOfWork.UserRepository.GetById(proposerId);
+                    if (proposer?.PushToken == null) return;
+
+                    string title = approved ? "Result approved" : "Result rejected";
+                    string body = approved
+                        ? $"{decider.Username} approved your reported result."
+                        : $"{decider.Username} rejected your reported result. Please submit a corrected one.";
+
+                    await notificationService.SendToOneAsync(proposer.PushToken, title, body, new { matchId = matchId.ToString() });
+                }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        private static List<Guid> GetOpponentUserIds(MatchEntity match, Guid currentUserId)
+        {
+            var ids = new HashSet<Guid>();
+
+            if (match.TeamMatchId.HasValue)
+            {
+                // Sub-match: opponent is the other slot's user.
+                if (match.HomeUserId.HasValue && match.HomeUserId.Value != currentUserId) ids.Add(match.HomeUserId.Value);
+                if (match.AwayUserId.HasValue && match.AwayUserId.Value != currentUserId) ids.Add(match.AwayUserId.Value);
+                return ids.ToList();
+            }
+
+            // Solo: the other participant. For team-tournament parent matches notify the whole opposing team.
+            var homeSideUsers = CollectParticipantUsers(match.HomeParticipant);
+            var awaySideUsers = CollectParticipantUsers(match.AwayParticipant);
+
+            bool currentIsHome = homeSideUsers.Contains(currentUserId);
+            var opponentUsers = currentIsHome ? awaySideUsers : homeSideUsers;
+
+            foreach (var uid in opponentUsers)
+                if (uid != currentUserId) ids.Add(uid);
+
+            return ids.ToList();
+        }
+
+        private static HashSet<Guid> CollectParticipantUsers(TournamentParticipantEntity? participant)
+        {
+            var set = new HashSet<Guid>();
+            if (participant == null) return set;
+            if (participant.UserId.HasValue) set.Add(participant.UserId.Value);
+            if (participant.Team?.Members != null)
+                foreach (var m in participant.Team.Members)
+                    if (m.UserId.HasValue) set.Add(m.UserId.Value);
+            return set;
         }
 
         public async Task<bool> GetCanRevert(Guid matchId)
@@ -971,6 +1202,13 @@ namespace GameHubz.Logic.Services
                 : match.HomeParticipant?.UserId == currentUser.UserId || match.AwayParticipant?.UserId == currentUser.UserId;
 
             if (!isParticipant)
+                return false;
+
+            // In approval-required tournaments, confirmed results are locked to participants.
+            // Only admin / hub owner can revert (the structure endpoint's CanRevert is the
+            // authoritative source for the UI; this is the matching guard for direct callers).
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+            if (approvalCtx?.RequireResultApproval == true)
                 return false;
 
             if (match.TeamMatchId.HasValue)
@@ -2654,6 +2892,9 @@ namespace GameHubz.Logic.Services
                 MatchOpensAt = m.RoundOpenAt,
                 CanRevert = canRevert,
                 Evidences = m.MatchEvidences?.Select(x => x.Url!).ToList() ?? [],
+                ProposedHomeScore = m.ProposedHomeScore,
+                ProposedAwayScore = m.ProposedAwayScore,
+                ProposedByUserId = m.ProposedByUserId,
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,
@@ -2718,7 +2959,11 @@ namespace GameHubz.Logic.Services
                         (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
                 }
 
-                match.CanRevert = downstreamPending && (isPrivileged || isParticipant);
+                // In approval-required tournaments, only privileged users (admin / hub owner / hub admin)
+                // can revert a confirmed result. Participants must contact an admin to dispute it,
+                // otherwise the approval gate could be bypassed via the edit flow.
+                bool participantCanRevert = isParticipant && !structure.RequireResultApproval;
+                match.CanRevert = downstreamPending && (isPrivileged || participantCanRevert);
             }
         }
 

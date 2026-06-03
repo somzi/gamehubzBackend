@@ -272,6 +272,11 @@ namespace GameHubz.Data.Repository
                     ScheduledTime = x.ScheduledStartTime,
                     HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
                     AwayUserAvatarUrl = x.AwayParticipant.User.AvatarUrl,
+                    RequireResultApproval = x.Tournament!.RequireResultApproval,
+                    ProposedHomeScore = x.ProposedHomeScore,
+                    ProposedAwayScore = x.ProposedAwayScore,
+                    ProposedByUserId = x.ProposedByUserId,
+                    HubOwnerUserId = x.Tournament!.Hub!.UserId,
                 })
                 .FirstAsync();
         }

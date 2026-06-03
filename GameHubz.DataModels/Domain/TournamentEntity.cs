@@ -35,6 +35,10 @@ namespace GameHubz.DataModels.Domain
         // between the two semi-final losers. Default false for all existing tournaments.
         public bool HasThirdPlaceMatch { get; set; }
 
+        // When true, a reported match result becomes a pending proposal that the opponent
+        // (or an admin / hub owner) must approve before the bracket advances.
+        public bool RequireResultApproval { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

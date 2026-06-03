@@ -12,5 +12,11 @@
         public DateTime? ScheduledTime { get; set; }
         public string? AwayUserAvatarUrl { get; set; }
         public string? HomeUserAvatarUrl { get; set; }
+
+        public bool RequireResultApproval { get; set; }
+        public int? ProposedHomeScore { get; set; }
+        public int? ProposedAwayScore { get; set; }
+        public Guid? ProposedByUserId { get; set; }
+        public Guid? HubOwnerUserId { get; set; }
     }
 }

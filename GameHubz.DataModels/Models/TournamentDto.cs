@@ -32,6 +32,8 @@ namespace GameHubz.DataModels.Models
 
         public bool HasThirdPlaceMatch { get; set; }
 
+        public bool RequireResultApproval { get; set; }
+
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();

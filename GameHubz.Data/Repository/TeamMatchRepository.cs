@@ -77,6 +77,7 @@ namespace GameHubz.Data.Repository
                     HomeTeamRepresentativeUserId = tm.HomeTeamRepresentativeUserId,
                     AwayTeamRepresentativeUserId = tm.AwayTeamRepresentativeUserId,
                     MatchOrder = tm.MatchOrder,
+                    RequireResultApproval = tm.Tournament!.RequireResultApproval,
                     HomeTeam = tm.HomeTeamParticipant != null && tm.HomeTeamParticipant.Team != null
                         ? new TeamMatchTeamProjection
                         {
@@ -143,7 +144,10 @@ namespace GameHubz.Data.Repository
                                 : null),
                         Evidences = sm.MatchEvidences != null
                             ? sm.MatchEvidences.Select(e => e.Url!).ToList()
-                            : new List<string>()
+                            : new List<string>(),
+                        ProposedHomeScore = sm.ProposedHomeScore,
+                        ProposedAwayScore = sm.ProposedAwayScore,
+                        ProposedByUserId = sm.ProposedByUserId
                     }).ToList()
                 })
                 .FirstOrDefaultAsync();

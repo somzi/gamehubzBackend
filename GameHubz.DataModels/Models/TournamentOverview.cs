@@ -27,6 +27,7 @@ namespace GameHubz.DataModels.Models
         public int? TeamSize { get; set; }
         public TeamWinCondition? TeamWinCondition { get; set; }
         public bool HasThirdPlaceMatch { get; set; }
+        public bool RequireResultApproval { get; set; }
 
         /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or

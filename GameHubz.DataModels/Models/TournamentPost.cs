@@ -29,6 +29,8 @@ namespace GameHubz.DataModels.Models
 
         public bool HasThirdPlaceMatch { get; set; }
 
+        public bool RequireResultApproval { get; set; }
+
         public bool IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
         public TeamWinCondition TeamWinCondition { get; set; }

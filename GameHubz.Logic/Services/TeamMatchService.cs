@@ -191,7 +191,10 @@ namespace GameHubz.Logic.Services
                     Status = sm.Status,
                     WinnerUserId = winnerUserId,
                     IsTieBreakMatch = isTieBreakMatch,
-                    Evidences = sm.Evidences
+                    Evidences = sm.Evidences,
+                    ProposedHomeScore = sm.ProposedHomeScore,
+                    ProposedAwayScore = sm.ProposedAwayScore,
+                    ProposedByUserId = sm.ProposedByUserId
                 };
             }).ToList();
 
@@ -241,7 +244,8 @@ namespace GameHubz.Logic.Services
                     IsRequired = projection.Status == TeamMatchStatus.TieBreakRequired,
                     HomeRepresentative = homeRepresentative,
                     AwayRepresentative = awayRepresentative
-                }
+                },
+                RequireResultApproval = projection.RequireResultApproval
             };
         }
 

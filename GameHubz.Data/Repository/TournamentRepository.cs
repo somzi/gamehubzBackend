@@ -203,7 +203,8 @@ namespace GameHubz.Data.Repository
                       IsTeamTournament = x.IsTeamTournament,
                       TeamSize = x.TeamSize,
                       TeamWinCondition = x.TeamWinCondition,
-                      HasThirdPlaceMatch = x.HasThirdPlaceMatch
+                      HasThirdPlaceMatch = x.HasThirdPlaceMatch,
+                      RequireResultApproval = x.RequireResultApproval
                   }).FirstOrDefaultAsync();
         }
 
@@ -302,6 +303,18 @@ namespace GameHubz.Data.Repository
                 {
                     HubId = t.Hub!.Id!.Value,
                     OwnerUserId = t.Hub!.UserId
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => new TournamentApprovalContext
+                {
+                    HubOwnerUserId = t.Hub!.UserId,
+                    RequireResultApproval = t.RequireResultApproval
                 })
                 .FirstOrDefaultAsync();
         }

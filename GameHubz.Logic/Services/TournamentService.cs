@@ -290,6 +290,10 @@ namespace GameHubz.Logic.Services
             else
             {
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
+                // Tournament-level settings (e.g. RequireResultApproval) are projected into the
+                // bracket structure response, so flush the bracket cache too — otherwise the new
+                // setting won't be visible until the 5-minute cache window expires.
+                await cacheService.RemoveAsync($"bracket:{model.Id}");
             }
 
             await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");

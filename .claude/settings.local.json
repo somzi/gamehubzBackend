@@ -17,7 +17,12 @@
       "Bash(npx --no-install tsc --noEmit -p tsconfig.json)",
       "Bash(tee /tmp/tsc_out.txt)",
       "Bash(git -C C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend diff --stat HEAD)",
-      "PowerShell(git -C \"C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile\" status)"
+      "PowerShell(git -C \"C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile\" status)",
+      "Bash(pushd C:/projects/turnir/mobile/gamehubz-mobile)",
+      "Bash(popd)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(cat /tmp/tsc_output.txt 2>&1)",
+      "Bash(./node_modules/.bin/tsc --noEmit)"
     ]
   }
 }
