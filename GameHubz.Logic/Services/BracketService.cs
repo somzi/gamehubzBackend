@@ -915,8 +915,6 @@ namespace GameHubz.Logic.Services
             var proposerId = match.ProposedByUserId!.Value;
 
             await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
-
-            SendResultDecisionNotification(matchId, proposerId, currentUser, approved: true);
         }
 
         /// <summary>
@@ -949,7 +947,6 @@ namespace GameHubz.Logic.Services
                     throw new Exception("You can't reject your own proposal — submit a corrected result instead.");
             }
 
-            var proposerId = match.ProposedByUserId!.Value;
             match.ProposedHomeScore = null;
             match.ProposedAwayScore = null;
             match.ProposedByUserId = null;
@@ -957,8 +954,6 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-
-            SendResultDecisionNotification(matchId, proposerId, currentUser, approved: false);
         }
 
         private async Task FinalizeMatchResult(
@@ -1088,9 +1083,6 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-
-            // Notify the opposing side that a result is awaiting their approval.
-            SendProposalNotification(match, currentUser, homeScore, awayScore);
         }
 
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)
@@ -1108,84 +1100,6 @@ namespace GameHubz.Logic.Services
             if (match.AwayParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
 
             return false;
-        }
-
-        private void SendProposalNotification(MatchEntity match, TokenUserInfo proposer, int homeScore, int awayScore)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Notify everyone on the opposing side: solo opponent, or all members of the opposing team.
-                    var opponentUserIds = GetOpponentUserIds(match, proposer.UserId);
-                    if (opponentUserIds.Count == 0) return;
-
-                    string body = $"{proposer.Username} reported {homeScore}-{awayScore}. Tap to approve or reject.";
-                    foreach (var uid in opponentUserIds)
-                    {
-                        var user = await this.AppUnitOfWork.UserRepository.GetById(uid);
-                        if (user?.PushToken == null) continue;
-                        await notificationService.SendToOneAsync(user.PushToken, "Result awaiting approval", body, new { matchId = match.Id!.Value.ToString() });
-                    }
-                }
-                catch { /* fire-and-forget */ }
-            });
-        }
-
-        private void SendResultDecisionNotification(Guid matchId, Guid proposerId, TokenUserInfo decider, bool approved)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var proposer = await this.AppUnitOfWork.UserRepository.GetById(proposerId);
-                    if (proposer?.PushToken == null) return;
-
-                    string title = approved ? "Result approved" : "Result rejected";
-                    string body = approved
-                        ? $"{decider.Username} approved your reported result."
-                        : $"{decider.Username} rejected your reported result. Please submit a corrected one.";
-
-                    await notificationService.SendToOneAsync(proposer.PushToken, title, body, new { matchId = matchId.ToString() });
-                }
-                catch { /* fire-and-forget */ }
-            });
-        }
-
-        private static List<Guid> GetOpponentUserIds(MatchEntity match, Guid currentUserId)
-        {
-            var ids = new HashSet<Guid>();
-
-            if (match.TeamMatchId.HasValue)
-            {
-                // Sub-match: opponent is the other slot's user.
-                if (match.HomeUserId.HasValue && match.HomeUserId.Value != currentUserId) ids.Add(match.HomeUserId.Value);
-                if (match.AwayUserId.HasValue && match.AwayUserId.Value != currentUserId) ids.Add(match.AwayUserId.Value);
-                return ids.ToList();
-            }
-
-            // Solo: the other participant. For team-tournament parent matches notify the whole opposing team.
-            var homeSideUsers = CollectParticipantUsers(match.HomeParticipant);
-            var awaySideUsers = CollectParticipantUsers(match.AwayParticipant);
-
-            bool currentIsHome = homeSideUsers.Contains(currentUserId);
-            var opponentUsers = currentIsHome ? awaySideUsers : homeSideUsers;
-
-            foreach (var uid in opponentUsers)
-                if (uid != currentUserId) ids.Add(uid);
-
-            return ids.ToList();
-        }
-
-        private static HashSet<Guid> CollectParticipantUsers(TournamentParticipantEntity? participant)
-        {
-            var set = new HashSet<Guid>();
-            if (participant == null) return set;
-            if (participant.UserId.HasValue) set.Add(participant.UserId.Value);
-            if (participant.Team?.Members != null)
-                foreach (var m in participant.Team.Members)
-                    if (m.UserId.HasValue) set.Add(m.UserId.Value);
-            return set;
         }
 
         public async Task<bool> GetCanRevert(Guid matchId)
