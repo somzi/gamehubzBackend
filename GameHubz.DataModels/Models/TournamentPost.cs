@@ -39,5 +39,12 @@ namespace GameHubz.DataModels.Models
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
+
+        /// <summary>
+        /// Optional ISO 3166-1 alpha-2 country codes. When non-empty, the tournament is country-scoped
+        /// (visible only to users from one of these countries) and Region is derived from the first.
+        /// Null/empty = region-scoped.
+        /// </summary>
+        public List<string>? Countries { get; set; }
     }
 }

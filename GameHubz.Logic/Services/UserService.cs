@@ -2,6 +2,7 @@ using Azure.Core;
 using FluentValidation;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Api;
+using GameHubz.DataModels.Catalog;
 using GameHubz.Logic.Crypto;
 using GameHubz.Logic.Queuing.Queues;
 using Microsoft.Extensions.Configuration;
@@ -108,6 +109,9 @@ namespace GameHubz.Logic.Services
             }
 
             UserEntity user = this.Mapper.Map<UserEntity>(registerUserPostDto);
+
+            // Country (optional at registration) dictates region when provided.
+            ApplyCountry(user, registerUserPostDto.Country);
 
             ValidateEmailField(user);
 
@@ -314,11 +318,44 @@ namespace GameHubz.Logic.Services
             user.Nickname = request.Nickname;
             user.Username = request.Username;
 
+            // Country is set-once-then-locked: applied only while the user has none.
+            if (!string.IsNullOrWhiteSpace(request.Country))
+            {
+                if (string.IsNullOrWhiteSpace(user.Country))
+                {
+                    ApplyCountry(user, request.Country);
+                }
+                else if (!string.Equals(user.Country, request.Country, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Already set to a different value — locked, reject the change.
+                    throw new Exception("Country is already set and cannot be changed.");
+                }
+            }
+
             await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
 
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"user_profile:{request.UserId}");
+        }
+
+        /// <summary>
+        /// Applies an optional ISO country code to a user: validates it against the catalog, stores
+        /// the canonical code, and derives the user's Region from it (country dictates region).
+        /// A null/empty code is a no-op (keeps the user's current country/region).
+        /// </summary>
+        private void ApplyCountry(UserEntity user, string? countryCode)
+        {
+            if (string.IsNullOrWhiteSpace(countryCode))
+            {
+                return;
+            }
+
+            var country = CountryCatalog.Get(countryCode)
+                ?? throw new Exception($"Unknown country code '{countryCode}'.");
+
+            user.Country = country.Code;
+            user.Region = country.Region;
         }
 
         public async Task DeleteAccount()

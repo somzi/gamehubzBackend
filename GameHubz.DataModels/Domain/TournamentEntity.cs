@@ -18,6 +18,14 @@ namespace GameHubz.DataModels.Domain
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
+
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country codes when the tournament is country-scoped, or null when it
+        /// is region-scoped (uses <see cref="Region"/>). When set, the tournament is visible only to
+        /// users whose country is in this list. Stored as a Postgres text[] array. Null (never empty)
+        /// means region-scoped. <see cref="Region"/> is derived from the first country for display.
+        /// </summary>
+        public List<string>? Countries { get; set; }
         public Guid? WinnerUserId { get; set; }
         public UserEntity? WinnerUser { get; set; }
 

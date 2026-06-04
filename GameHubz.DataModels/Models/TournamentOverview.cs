@@ -1,4 +1,6 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Linq;
+using System.Text.Json.Serialization;
+using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
@@ -9,6 +11,23 @@ namespace GameHubz.DataModels.Models
         public Guid Id { get; set; }
         public Guid HubId { get; set; }
         public RegionType Region { get; set; }
+
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country codes when the tournament is country-scoped, else null
+        /// (region-scoped). Omitted from JSON when null so region tournaments look unchanged.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string>? Countries { get; set; }
+
+        /// <summary>Display names for <see cref="Countries"/> (from the catalog). Omitted when none.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string>? CountryNames =>
+            Countries?.Select(c => CountryCatalog.Get(c)?.Name).Where(n => n != null).Select(n => n!).ToList();
+
+        /// <summary>Flag emojis for <see cref="Countries"/> (from the catalog). Omitted when none.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string>? CountryFlags =>
+            Countries?.Select(c => CountryCatalog.Get(c)?.Flag).Where(f => f != null).Select(f => f!).ToList();
         public DateTime StartDate { get; set; }
         public int NumberOfParticipants { get; set; }
         public int MaxPlayers { get; set; }

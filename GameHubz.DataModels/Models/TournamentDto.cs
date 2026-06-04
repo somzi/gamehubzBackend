@@ -23,6 +23,9 @@ namespace GameHubz.DataModels.Models
         public DateTime? RegistrationDeadline { get; set; }
         public RegionType Region { get; set; }
 
+        /// <summary>ISO 3166-1 alpha-2 country codes when country-scoped, else null (region-scoped).</summary>
+        public List<string>? Countries { get; set; }
+
         public int Prize { get; set; }
 
         public Guid CreatedBy { get; set; }

@@ -54,6 +54,7 @@ namespace GameHubz.Data.Repository
                  {
                      Name = x.Name,
                      Region = x.Region,
+                     Countries = x.Countries,
                      StartDate = x.StartDate ?? DateTime.MinValue,
                      NumberOfParticipants = x.TournamentParticipants!.Count(),
                      Prize = x.Prize,
@@ -72,10 +73,11 @@ namespace GameHubz.Data.Repository
             List<Guid> hubIds,
             TournamentUserStatus filter,
             RegionType region,
+            string? userCountry,
             int page,
             int pageSize)
         {
-            var query = ApplyFilters(userId, hubIds, region, filter);
+            var query = ApplyFilters(userId, hubIds, region, userCountry, filter);
 
             return await query
                 .OrderByDescending(x => x.StartDate)
@@ -85,6 +87,7 @@ namespace GameHubz.Data.Repository
                 {
                     Name = x.Name,
                     Region = x.Region,
+                    Countries = x.Countries,
                     StartDate = x.StartDate ?? DateTime.MinValue,
                     NumberOfParticipants = x.TournamentParticipants!.Count(),
                     Prize = x.Prize,
@@ -105,9 +108,10 @@ namespace GameHubz.Data.Repository
             Guid userId,
             List<Guid> hubIds,
             RegionType region,
+            string? userCountry,
             TournamentUserStatus filter)
         {
-            var query = ApplyFilters(userId, hubIds, region, filter);
+            var query = ApplyFilters(userId, hubIds, region, userCountry, filter);
             return await query.CountAsync();
         }
 
@@ -185,6 +189,7 @@ namespace GameHubz.Data.Repository
                   {
                       Name = x.Name,
                       Region = x.Region,
+                      Countries = x.Countries,
                       StartDate = x.StartDate ?? DateTime.MinValue,
                       NumberOfParticipants = x.TournamentParticipants!.Count(),
                       Prize = x.Prize,
@@ -212,11 +217,28 @@ namespace GameHubz.Data.Repository
             Guid userId,
             List<Guid> hubIds,
             RegionType region,
+            string? userCountry,
             TournamentUserStatus filter)
         {
-            var query = this.BaseDbSet()
-                .AsNoTracking()
-                .Where(x => hubIds.Contains(x.HubId!.Value) && (x.Region == region || x.Region == RegionType.GLOBAL));
+            // Visibility:
+            //  - Region-scoped tournaments (Countries == null): match the user's region or GLOBAL.
+            //  - Country-scoped tournaments (Countries set): visible only to users whose country is
+            //    in the list (Npgsql translates Contains to "userCountry = ANY(\"Countries\")").
+            // A user with no country sees only region/global tournaments. Codes are canonical ISO codes.
+            IQueryable<TournamentEntity> query = this.BaseDbSet().AsNoTracking();
+
+            if (string.IsNullOrEmpty(userCountry))
+            {
+                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
+                    && x.Countries == null
+                    && (x.Region == region || x.Region == RegionType.GLOBAL));
+            }
+            else
+            {
+                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
+                    && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
+                        || (x.Countries != null && x.Countries.Contains(userCountry))));
+            }
 
             switch (filter)
             {

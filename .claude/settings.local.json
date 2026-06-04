@@ -23,7 +23,8 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(cat /tmp/tsc_output.txt 2>&1)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
-      "Bash(dir C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend)"
+      "Bash(dir C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend)",
+      "Bash(node C:/projects/turnir/mobile/gamehubz-mobile/node_modules/typescript/bin/tsc --noEmit -p C:/projects/turnir/mobile/gamehubz-mobile/tsconfig.json)"
     ]
   }
 }

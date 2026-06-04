@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
@@ -75,12 +76,15 @@ namespace GameHubz.Logic.Services
 
             List<Guid> hubIds = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
-            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var userRegion = (RegionType)user.Region!.Value;
+            // Read region + country from the DB (not the token): selecting a country changes the
+            // user's region, and the JWT's region claim can be stale until the next token refresh.
+            var userEntity = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(userId);
+            var userRegion = userEntity.Region;
+            var userCountry = userEntity.Country;
 
-            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, request.Page, request.PageSize);
+            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize);
 
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, request.Status);
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, userCountry, request.Status);
 
             var response = new TournamentPagedResponse
             {
@@ -300,6 +304,40 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
+        }
+
+        /// <summary>
+        /// When a tournament is created/edited with one or more countries, it becomes country-scoped
+        /// and its Region is derived from the first country (country dictates region). An empty/null
+        /// list leaves the tournament region-scoped using the explicitly chosen Region. Stored as
+        /// canonical, de-duplicated ISO codes (null when none — never an empty array).
+        /// </summary>
+        protected override async Task BeforeSave(TournamentEntity entity, TournamentPost inputDto, bool isNew)
+        {
+            var codes = inputDto.Countries?
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c =>
+                {
+                    var country = CountryCatalog.Get(c)
+                        ?? throw new Exception($"Unknown country code '{c}'.");
+                    return country.Code;
+                })
+                .Distinct()
+                .ToList();
+
+            if (codes is null || codes.Count == 0)
+            {
+                entity.Countries = null;
+            }
+            else
+            {
+                entity.Countries = codes;
+                // Region is cosmetic for country-scoped tournaments (filtering uses Countries);
+                // derive it from the first country so the displayed region stays sensible.
+                entity.Region = CountryCatalog.Get(codes[0])!.Region;
+            }
+
+            await Task.CompletedTask;
         }
 
         private void SendNotification(TournamentDto model)

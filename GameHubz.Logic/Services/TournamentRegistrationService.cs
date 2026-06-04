@@ -38,6 +38,42 @@ namespace GameHubz.Logic.Services
             await Task.CompletedTask;
         }
 
+        /// <summary>
+        /// Enforces region/country eligibility for solo registrations so the loophole of reaching a
+        /// tournament via the hub (which doesn't apply the feed's visibility filter) can't be used to
+        /// join a tournament the user isn't eligible for. Team registrations have no single country,
+        /// so the country gate is skipped for them.
+        /// </summary>
+        protected override async Task BeforeSave(TournamentRegistrationEntity entity, TournamentRegistrationPost inputDto, bool isNew)
+        {
+            if (isNew && entity.UserId.HasValue && entity.TournamentId.HasValue)
+            {
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
+                var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(entity.UserId.Value);
+
+                if (!IsEligibleToJoin(tournament, user))
+                {
+                    throw new Exception("You can't join this tournament — it's restricted to a different region or country.");
+                }
+            }
+
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Mirrors the tournament-feed visibility rules: country-scoped tournaments require the user's
+        /// country to be in the list; region-scoped tournaments require the user's region (or GLOBAL).
+        /// </summary>
+        private static bool IsEligibleToJoin(TournamentEntity tournament, UserEntity user)
+        {
+            if (tournament.Countries != null && tournament.Countries.Count > 0)
+            {
+                return !string.IsNullOrEmpty(user.Country) && tournament.Countries.Contains(user.Country!);
+            }
+
+            return tournament.Region == RegionType.GLOBAL || tournament.Region == user.Region;
+        }
+
         public async Task ApproveRegistration(Guid registrationId)
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
