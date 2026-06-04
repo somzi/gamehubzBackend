@@ -1,4 +1,5 @@
 ﻿using GameHubz.Api.BackgroundTasks;
+using GameHubz.Api.Json;
 using GameHubz.Api.Middleware;
 using GameHubz.Api.Startup;
 using GameHubz.Common.Interfaces;
@@ -40,7 +41,13 @@ namespace GameHubz.Api
             ConfigureDataContext(builder);
 
             // Add services to the container.
-            builder.Services.AddControllers();
+            builder.Services.AddControllers().AddJsonOptions(opts =>
+            {
+                // Always emit DateTime values with an explicit UTC marker ("Z") so the
+                // client knows to parse as UTC and render in the user's local timezone.
+                opts.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+                opts.JsonSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+            });
 
             builder.Configuration.AddEnvironmentVariables();
 
@@ -66,7 +73,13 @@ namespace GameHubz.Api
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);
-            builder.Services.AddSignalR();
+            builder.Services.AddSignalR().AddJsonProtocol(opts =>
+            {
+                // Same UTC marker treatment for messages pushed through SignalR hubs
+                // (chat, DM, live updates) — otherwise client-side timestamps drift.
+                opts.PayloadSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+                opts.PayloadSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+            });
 
             builder.Services.AddCors(options =>
             {
