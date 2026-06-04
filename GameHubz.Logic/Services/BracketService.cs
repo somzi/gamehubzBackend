@@ -1860,12 +1860,13 @@ namespace GameHubz.Logic.Services
 
             foreach (var group in groupStage.TournamentGroups.OrderBy(g => g.Name))
             {
-                var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(group.Id!.Value);
+                var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdWithNames(group.Id!.Value);
 
                 var sorted = groupParticipants
                     .OrderByDescending(p => p.Points)
                     .ThenByDescending(p => p.GoalsFor - p.GoalsAgainst)
                     .ThenByDescending(p => p.GoalsFor)
+                    .ThenBy(p => p.Team?.TeamName ?? p.User?.Username ?? p.UserId!.Value.ToString(), StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 for (int rank = 0; rank < Math.Min(qualifiersPerGroup, sorted.Count); rank++)
@@ -2900,6 +2901,7 @@ namespace GameHubz.Logic.Services
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
             .ThenByDescending(s => s.GoalsFor)
+            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
             for (int i = 0; i < standings.Count; i++) standings[i].Position = i + 1;

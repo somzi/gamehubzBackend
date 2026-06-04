@@ -22,7 +22,8 @@
       "Bash(popd)",
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(cat /tmp/tsc_output.txt 2>&1)",
-      "Bash(./node_modules/.bin/tsc --noEmit)"
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(dir C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend)"
     ]
   }
 }
