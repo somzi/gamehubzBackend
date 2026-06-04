@@ -1019,6 +1019,12 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.HomeParticipant);
                     await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.AwayParticipant);
 
+                    // Defensive resync from the matches table — the source of truth. Prevents stat drift
+                    // from concurrent UpdateMatchResult/ApproveProposedResult calls or any path that
+                    // applies/reverts inconsistently. Idempotent: a no-op when stats are already correct.
+                    await ResyncSoloLeagueStatistics(match);
+                    await this.SaveAsync();
+
                     if (match.TournamentStage?.Type == StageType.GroupStage)
                     {
                         await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
@@ -1224,6 +1230,64 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+        }
+
+        // Recomputes participant stats for the solo group / league scope from completed matches.
+        // The matches table is the source of truth; this resync makes drift impossible regardless of
+        // how UpdateLeagueStatistics / RevertLeagueStatistics were invoked upstream.
+        private async Task ResyncSoloLeagueStatistics(MatchEntity match)
+        {
+            if (!match.TournamentStageId.HasValue) return;
+
+            var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(match.TournamentStageId.Value);
+
+            var scopedMatches = stageMatches.Where(m =>
+                m.TeamMatchId == null &&
+                m.Status == MatchStatus.Completed &&
+                m.HomeParticipantId.HasValue &&
+                m.AwayParticipantId.HasValue &&
+                m.TournamentGroupId == match.TournamentGroupId
+            ).ToList();
+
+            List<TournamentParticipantEntity> participants;
+            if (match.TournamentGroupId.HasValue)
+            {
+                participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(match.TournamentGroupId.Value);
+            }
+            else
+            {
+                var all = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(null);
+                participants = all.Where(p => p.TournamentId == match.TournamentId).ToList();
+            }
+
+            if (participants.Count == 0) return;
+
+            var byId = participants.Where(p => p.Id.HasValue).ToDictionary(p => p.Id!.Value, p => p);
+
+            foreach (var p in participants)
+            {
+                p.Points = 0; p.Wins = 0; p.Draws = 0; p.Losses = 0;
+                p.GoalsFor = 0; p.GoalsAgainst = 0;
+            }
+
+            foreach (var m in scopedMatches)
+            {
+                if (!byId.TryGetValue(m.HomeParticipantId!.Value, out var home)) continue;
+                if (!byId.TryGetValue(m.AwayParticipantId!.Value, out var away)) continue;
+
+                int hs = m.HomeUserScore ?? 0;
+                int aw = m.AwayUserScore ?? 0;
+
+                home.GoalsFor += hs; home.GoalsAgainst += aw;
+                away.GoalsFor += aw; away.GoalsAgainst += hs;
+
+                if (hs > aw) { home.Wins++; home.Points += 3; away.Losses++; }
+                else if (aw > hs) { away.Wins++; away.Points += 3; home.Losses++; }
+                else { home.Draws++; home.Points += 1; away.Draws++; away.Points += 1; }
+            }
+
+            foreach (var p in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
         }
 
         private async Task RevertTeamLeagueMatchStats(MatchEntity subMatch)
