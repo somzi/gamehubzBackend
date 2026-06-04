@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Interfaces
     {
         Task<List<TournamentParticipantEntity>> GetByGroupId(Guid? id);
 
+        Task<List<TournamentParticipantEntity>> GetForLeagueResync(Guid tournamentId);
+
         Task<List<TournamentParticipantEntity>> GetByGroupIdWithNames(Guid? id);
 
         Task<List<TournamentParticipantEntity>> GetByGroupIdsWithNames(List<Guid> groupIds);

@@ -54,6 +54,29 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId)
+        {
+            return this.BaseDbSet()
+                .AsNoTracking()
+                .Where(m =>
+                    m.TournamentStageId == stageId &&
+                    m.TournamentGroupId == groupId &&
+                    m.TeamMatchId == null &&
+                    m.Status == MatchStatus.Completed &&
+                    m.HomeParticipantId.HasValue &&
+                    m.AwayParticipantId.HasValue &&
+                    (excludeMatchId == null || m.Id != excludeMatchId))
+                .Select(m => new GroupMatchStatsRow
+                {
+                    HomeParticipantId = m.HomeParticipantId!.Value,
+                    AwayParticipantId = m.AwayParticipantId!.Value,
+                    HomeScore = m.HomeUserScore ?? 0,
+                    AwayScore = m.AwayUserScore ?? 0,
+                    WinnerParticipantId = m.WinnerParticipantId
+                })
+                .ToListAsync();
+        }
+
         public Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber)
         {
             return this.BaseDbSet()

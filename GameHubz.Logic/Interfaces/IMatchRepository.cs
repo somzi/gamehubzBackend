@@ -24,6 +24,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchEntity>> GetByStageId(Guid groupStageId);
 
+        Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId);
+
         Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber);
 
         Task<MatchResultDetailDto> GetWithEvidence(Guid id);
