@@ -24,7 +24,8 @@
       "Bash(cat /tmp/tsc_output.txt 2>&1)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(dir C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend)",
-      "Bash(node C:/projects/turnir/mobile/gamehubz-mobile/node_modules/typescript/bin/tsc --noEmit -p C:/projects/turnir/mobile/gamehubz-mobile/tsconfig.json)"
+      "Bash(node C:/projects/turnir/mobile/gamehubz-mobile/node_modules/typescript/bin/tsc --noEmit -p C:/projects/turnir/mobile/gamehubz-mobile/tsconfig.json)",
+      "PowerShell(Push-Location 'C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile'; npx --no-install tsc --noEmit 2>&1 > \"$env:TEMP\\\\tsc-out.txt\"; \"Exit: $LASTEXITCODE\"; Get-Content \"$env:TEMP\\\\tsc-out.txt\" -Tail 50; Pop-Location)"
     ]
   }
 }

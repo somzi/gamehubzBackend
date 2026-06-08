@@ -73,5 +73,13 @@ namespace GameHubz.DataModels.Domain
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }
+
+        // Explicit destination slot overrides. Default (null) preserves the legacy MatchOrder%2
+        // pairing used by single-elimination. Double-elimination sets these because LB drop-in
+        // edges don't follow the bracket-pair convention (e.g. a WB loser entering an LB match
+        // must always take the away slot, regardless of its source MatchOrder).
+        // 0 = home slot, 1 = away slot.
+        public int? NextMatchHomeAwaySlot { get; set; }
+        public int? NextMatchLoserBracketHomeAwaySlot { get; set; }
     }
 }

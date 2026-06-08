@@ -124,11 +124,17 @@ namespace GameHubz.Logic.Services
                     Name = stageEntity.Name ?? stageEntity.Type.ToString()
                 };
 
-                if (stageEntity.Type == StageType.SingleEliminationBracket)
+                if (stageEntity.Type == StageType.SingleEliminationBracket
+                    || stageEntity.Type == StageType.DoubleEliminationWinnersBracket
+                    || stageEntity.Type == StageType.DoubleEliminationLosersBracket)
                 {
+                    // LB matches that the DE generator collapsed (no participants, no winner —
+                    // both upstream feeders were byes) get filtered out of the structure so the
+                    // UI doesn't render empty "TBD vs TBD" placeholders for bypassed rounds.
+                    bool dropCollapsedByes = stageEntity.Type == StageType.DoubleEliminationLosersBracket;
                     stageDto.Rounds = tournament.IsTeamTournament
                         ? MapTeamBracketRounds(stageEntity.TeamMatches)
-                        : MapBracketRounds(stageEntity.Matches, currentUserId, isPrivileged);
+                        : MapBracketRounds(stageEntity.Matches, currentUserId, isPrivileged, dropCollapsedByes);
                 }
                 else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
                 {
@@ -605,7 +611,304 @@ namespace GameHubz.Logic.Services
 
         public async Task GenerateDoubleEliminationBracket(Guid tournamentId)
         {
-            throw new NotImplementedException("Double Elimination logic is coming soon!");
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+            var participants = tournament!.TournamentParticipants?.ToList();
+
+            if (participants == null || participants.Count < 4)
+                throw new Exception("Double elimination requires at least 4 participants.");
+
+            // Team double-elimination is not yet wired up — the LB drop-in routing and slot
+            // overrides only exist on MatchEntity, not TeamMatchEntity. Surface a clear error
+            // instead of silently producing a half-built bracket.
+            if (tournament.IsTeamTournament)
+                throw new Exception("Team double-elimination tournaments are not supported yet.");
+
+            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                shuffled[i].Seed = i + 1;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
+            }
+
+            // Non-power-of-two counts are padded up to the next power of two — the standard
+            // bracket-seeding spread leaves the bye slots on the top-seed side so the byes
+            // get auto-advanced in WB R1 and the LB cascade below collapses any LB match
+            // that would otherwise have nothing to play.
+            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+            var participantsBySeed = shuffled
+                .Where(p => p.Seed.HasValue)
+                .ToDictionary(p => p.Seed!.Value, p => p);
+            var bracketSlots = seedOrder
+                .Select(s => participantsBySeed.TryGetValue(s, out var p) ? p : null)
+                .ToList();
+
+            // Two stages: Winners + Losers. The Grand Final lives in the Winners Bracket stage
+            // as a separate match flagged with MatchStage.GrandFinal so the structure endpoint
+            // can return both rounds cleanly without a dedicated "GF stage".
+            var wbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationWinnersBracket,
+                Order = 1,
+                Name = "Winners Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(wbStage, this.UserContextReader);
+
+            var lbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationLosersBracket,
+                Order = 2,
+                Name = "Losers Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(lbStage, this.UserContextReader);
+
+            var allMatches = GenerateDoubleEliminationMatches(
+                tournamentId, wbStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+
+            foreach (var match in allMatches)
+                await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
+
+            tournament.Status = TournamentStatus.InProgress;
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// Builds a double-elimination bracket: Winners Bracket (single-elim tree), Losers Bracket
+        /// (with WB losers dropping in via reverse placement to avoid early rematches), and a
+        /// single-match Grand Final fed by the WB champion (home) and the LB champion (away).
+        /// </summary>
+        /// <remarks>
+        /// LB shape for bracket size C = 2^k (k ≥ 2):
+        ///   • LB Round 1 (major, takes WB R1 losers):           C/4 matches
+        ///   • LB Round 2 (major, takes WB R2 losers + LB R1):   C/4 matches
+        ///   • LB Round 3 (minor, LB R2 winners):                C/8 matches
+        ///   • LB Round 4 (major, takes WB R3 losers + LB R3):   C/8 matches
+        ///   • ... alternating minor/major down to a single LB Final fed by the WB Final loser.
+        /// Total LB rounds = 2(k-1).
+        ///
+        /// Non-power-of-two participant counts pad up to bracket size 2^k with bye slots in
+        /// WB R1. WB R1 byes auto-advance their lone participant to WB R2 (no loser produced),
+        /// and any LB match that would otherwise have nothing to play (both upstream WB sources
+        /// were byes) is collapsed: its single live upstream is re-routed to skip past it, so
+        /// at runtime the bracket plays without spurious 1-player matches.
+        /// </remarks>
+        private List<MatchEntity> GenerateDoubleEliminationMatches(
+            Guid tournamentId, Guid wbStageId, Guid lbStageId,
+            List<TournamentParticipantEntity?> bracketSlots)
+        {
+            int bracketSize = bracketSlots.Count;
+            int wbRounds = (int)Math.Log2(bracketSize);
+
+            // -- Winners Bracket --
+            var wbByRound = new Dictionary<int, List<MatchEntity>>();
+            int matchesInRound = bracketSize / 2;
+
+            var firstRoundWb = new List<MatchEntity>();
+            for (int i = 0; i < matchesInRound; i++)
+            {
+                var m = CreateMatch(tournamentId, wbStageId, 1, GetMatchStage(bracketSize, 1), i);
+                m.HomeParticipantId = bracketSlots[i * 2]?.Id;
+                m.AwayParticipantId = bracketSlots[i * 2 + 1]?.Id;
+                firstRoundWb.Add(m);
+            }
+            wbByRound[1] = firstRoundWb;
+
+            var current = firstRoundWb;
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                matchesInRound /= 2;
+                var next = new List<MatchEntity>();
+                for (int i = 0; i < matchesInRound; i++)
+                {
+                    var m = CreateMatch(tournamentId, wbStageId, r, GetMatchStage(bracketSize, r), i);
+                    current[i * 2].NextMatchId = m.Id;
+                    current[i * 2 + 1].NextMatchId = m.Id;
+                    next.Add(m);
+                }
+                wbByRound[r] = next;
+                current = next;
+            }
+
+            // -- Losers Bracket --
+            int lbRoundCount = 2 * (wbRounds - 1);
+            var lbByRound = new Dictionary<int, List<MatchEntity>>();
+            for (int l = 1; l <= lbRoundCount; l++)
+            {
+                int count = LosersBracketMatchCount(bracketSize, l);
+                var list = new List<MatchEntity>();
+                for (int i = 0; i < count; i++)
+                {
+                    var m = CreateMatch(tournamentId, lbStageId, l, MatchStage.LosersBracket, i);
+                    m.IsUpperBracket = false;
+                    list.Add(m);
+                }
+                lbByRound[l] = list;
+            }
+
+            // Wire LB → LB forward links.
+            for (int l = 1; l < lbRoundCount; l++)
+            {
+                var currentLb = lbByRound[l];
+                var nextLb = lbByRound[l + 1];
+
+                if (nextLb.Count == currentLb.Count)
+                {
+                    // Same-count step: previous round is the minor consolidation feeding a
+                    // major round (or LB R1 → LB R2 at the start). Winner takes home; the WB
+                    // drop fills away later.
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextMatchId = nextLb[i].Id;
+                        currentLb[i].NextMatchHomeAwaySlot = 0;
+                    }
+                }
+                else
+                {
+                    // Halving step: a major round feeds the next minor round — matches pair up
+                    // in the standard bracket-pair convention.
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextMatchId = nextLb[i / 2].Id;
+                        currentLb[i].NextMatchHomeAwaySlot = i % 2;
+                    }
+                }
+            }
+
+            // Wire WB losers → LB. WB R1 losers pair into LB R1 in the natural order
+            // (no rematch risk since they just played each other). All later WB rounds use
+            // REVERSE placement into the matching LB round — the seed-1 side of WB is sent to
+            // the seed-N side of LB so a WB-R(r) loser cannot face the player who just sent
+            // them down without first surviving the LB.
+            var wbR1 = wbByRound[1];
+            var lbR1 = lbByRound[1];
+            for (int i = 0; i < wbR1.Count; i++)
+            {
+                wbR1[i].NextMatchLoserBracketId = lbR1[i / 2].Id;
+                wbR1[i].NextMatchLoserBracketHomeAwaySlot = i % 2;
+            }
+
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                int targetLbRound = 2 * r - 2;
+                var wbRound = wbByRound[r];
+                var lbRound = lbByRound[targetLbRound];
+                int count = lbRound.Count; // matches WB round count by construction
+
+                for (int i = 0; i < count; i++)
+                {
+                    wbRound[i].NextMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextMatchLoserBracketHomeAwaySlot = 1; // away — LB winner already holds home
+                }
+            }
+
+            // -- Grand Final --
+            // Lives in the WB stage but flagged so the UI can pull it out and render separately.
+            // WB champion → home, LB champion → away.
+            var grandFinal = CreateMatch(tournamentId, wbStageId, wbRounds + 1, MatchStage.GrandFinal, 0);
+
+            var wbFinal = wbByRound[wbRounds].Single();
+            wbFinal.NextMatchId = grandFinal.Id;
+            wbFinal.NextMatchHomeAwaySlot = 0;
+
+            var lbFinal = lbByRound[lbRoundCount].Single();
+            lbFinal.NextMatchId = grandFinal.Id;
+            lbFinal.NextMatchHomeAwaySlot = 1;
+
+            var allMatches = new List<MatchEntity>();
+            foreach (var list in wbByRound.Values) allMatches.AddRange(list);
+            foreach (var list in lbByRound.Values) allMatches.AddRange(list);
+            allMatches.Add(grandFinal);
+
+            // WB R1 byes: auto-advance the lone participant to WB R2 (no loser is produced —
+            // the matching LB R1 slot stays empty and gets handled by the cascade below).
+            // We scope the auto-advance to WB matches because the shared AutoAdvanceByes()
+            // helper matches by RoundNumber and would otherwise mark every freshly-created
+            // LB R1 match (also RoundNumber=1, both slots null) as Completed prematurely.
+            var wbMatchesList = wbByRound.Values.SelectMany(x => x).Concat(new[] { grandFinal }).ToList();
+            AutoAdvanceByes(wbMatchesList);
+
+            // LB cascade: bypass any LB match whose upstream feeders won't both deliver a
+            // participant. 0 live sources → mark it Completed (empty); 1 live source → re-route
+            // that source's downstream pointer to skip this match. This keeps the runtime
+            // advance logic free of bye-special-casing — every match that's still Pending after
+            // generation is guaranteed to receive both participants once its feeders resolve.
+            CollapseLbByeCascade(allMatches, lbByRound);
+
+            return allMatches;
+        }
+
+        private static void CollapseLbByeCascade(
+            List<MatchEntity> allMatches,
+            Dictionary<int, List<MatchEntity>> lbByRound)
+        {
+            foreach (var lbRound in lbByRound.Keys.OrderBy(k => k))
+            {
+                foreach (var lbMatch in lbByRound[lbRound].OrderBy(m => m.MatchOrder))
+                {
+                    if (lbMatch.Status == MatchStatus.Completed) continue;
+
+                    var liveSources = new List<(MatchEntity Src, bool WinnerEdge)>();
+                    foreach (var s in allMatches)
+                    {
+                        if (s.NextMatchId == lbMatch.Id && SourceProducesWinner(s))
+                            liveSources.Add((s, true));
+                        if (s.NextMatchLoserBracketId == lbMatch.Id && SourceProducesLoser(s))
+                            liveSources.Add((s, false));
+                    }
+
+                    if (liveSources.Count >= 2)
+                        continue;
+
+                    if (liveSources.Count == 0)
+                    {
+                        // Both upstream feeders are dead — nothing to play, never will play.
+                        lbMatch.Status = MatchStatus.Completed;
+                        continue;
+                    }
+
+                    // Exactly one live source — re-route it past lbMatch so the participant
+                    // lands directly in lbMatch's downstream slot, preserving the bracket shape
+                    // for everything beyond this point.
+                    var (src, winnerEdge) = liveSources[0];
+                    if (winnerEdge)
+                    {
+                        src.NextMatchId = lbMatch.NextMatchId;
+                        src.NextMatchHomeAwaySlot = lbMatch.NextMatchHomeAwaySlot;
+                    }
+                    else
+                    {
+                        src.NextMatchLoserBracketId = lbMatch.NextMatchId;
+                        src.NextMatchLoserBracketHomeAwaySlot = lbMatch.NextMatchHomeAwaySlot;
+                    }
+                    lbMatch.Status = MatchStatus.Completed;
+                }
+            }
+        }
+
+        // A "live" winner source is any match that will eventually have a winner — either a
+        // bye that already has one (Status=Completed with WinnerParticipantId) or a Pending
+        // match (which by construction will be played and yield a winner).
+        private static bool SourceProducesWinner(MatchEntity src) =>
+            src.Status != MatchStatus.Completed || src.WinnerParticipantId.HasValue;
+
+        // A "live" loser source is any Pending match (Completed ones are either byes — which
+        // don't produce a loser — or already-collapsed LB matches, which produce nothing).
+        // WB R(≥2) matches are always Pending at generation time and always end up with two
+        // participants once R(r-1) winners advance, so they're guaranteed loser producers.
+        private static bool SourceProducesLoser(MatchEntity src) =>
+            src.Status != MatchStatus.Completed;
+
+        // Match count for LB round l with bracket size C: pairs of rounds share a count.
+        //   l=1,2 → C/4 ; l=3,4 → C/8 ; l=5,6 → C/16 ; …
+        private static int LosersBracketMatchCount(int bracketSize, int lbRound)
+        {
+            int exponent = ((lbRound - 1) / 2) + 2;
+            return Math.Max(1, bracketSize >> exponent);
         }
 
         public async Task GenerateTeamSingleEliminationBracket(Guid tournamentId)
@@ -849,7 +1152,11 @@ namespace GameHubz.Logic.Services
 
                     if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
                     {
-                        throw new Exception("This match is locked because the third-place match has already progressed. To edit this, you must revert the third-place match first.");
+                        // Single-elim → third-place play-off. DE → the Losers Bracket match that
+                        // received this WB match's loser. Same lock applies in both cases.
+                        bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
+                        var label = isThirdPlace ? "third-place match" : "loser bracket match";
+                        throw new Exception($"This match is locked because the {label} has already progressed. To edit this, you must revert the downstream {label} first.");
                     }
                 }
 
@@ -1505,7 +1812,12 @@ namespace GameHubz.Logic.Services
         {
             if (nextMatch != null)
             {
-                bool isHomeSlot = (match.MatchOrder % 2) == 0;
+                // DE pre-computes the destination slot to handle LB drop-ins (WB-loser → away,
+                // LB-winner → home) where the legacy MatchOrder%2 pairing doesn't hold. Single
+                // elimination leaves the override null and falls through to MatchOrder%2.
+                bool isHomeSlot = match.NextMatchHomeAwaySlot.HasValue
+                    ? match.NextMatchHomeAwaySlot.Value == 0
+                    : (match.MatchOrder % 2) == 0;
 
                 if (isHomeSlot)
                     nextMatch.HomeParticipantId = winnerId;
@@ -1514,11 +1826,20 @@ namespace GameHubz.Logic.Services
 
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
             }
+            else if (match.Stage == MatchStage.GrandFinal)
+            {
+                // DE terminal: the Grand Final winner is the tournament champion.
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                tournament.WinnerUserId = winnerUserId;
+                tournament.Status = TournamentStatus.Completed;
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+            }
             else
             {
-                // Terminal match: the championship final or the third-place play-off. With a third-place
-                // play-off the tournament is finished only once BOTH are played, and the champion is always
-                // the winner of the final (never the third-place match).
+                // Single-elim terminal: the championship final or the third-place play-off. With a
+                // third-place play-off the tournament is finished only once BOTH are played, and the
+                // champion is always the winner of the final (never the third-place match).
                 var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(match.TournamentStageId!.Value);
                 var finalMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
                 var thirdPlaceMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.ThirdPlace);
@@ -1551,8 +1872,12 @@ namespace GameHubz.Logic.Services
 
         private async Task AdvanceLoserToThirdPlace(MatchEntity match, Guid loserId, MatchEntity thirdPlaceMatch)
         {
-            // Loser of semi-final order 0 takes the home slot, loser of order 1 the away slot.
-            bool isHomeSlot = (match.MatchOrder % 2) == 0;
+            // Default (single-elim 3rd-place): semi-final order 0 loser → home, order 1 loser → away.
+            // DE overrides this via NextMatchLoserBracketHomeAwaySlot — the WB loser always takes
+            // the away slot of its target LB match (the home slot is reserved for the LB winner).
+            bool isHomeSlot = match.NextMatchLoserBracketHomeAwaySlot.HasValue
+                ? match.NextMatchLoserBracketHomeAwaySlot.Value == 0
+                : (match.MatchOrder % 2) == 0;
 
             if (isHomeSlot)
                 thirdPlaceMatch.HomeParticipantId = loserId;
@@ -2678,7 +3003,9 @@ namespace GameHubz.Logic.Services
         }
 
         private bool IsElimination(StageType? type)
-            => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
+            => type == StageType.SingleEliminationBracket
+            || type == StageType.DoubleEliminationWinnersBracket
+            || type == StageType.DoubleEliminationLosersBracket;
 
         private string GetGroupName(int index)
         {
@@ -2753,10 +3080,26 @@ namespace GameHubz.Logic.Services
                 _ => MatchStatus.Pending
             };
 
-        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged)
+        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged, bool dropCollapsedByes = false)
         {
             var rounds = new List<BracketRoundDto>();
             if (matches == null || !matches.Any()) return rounds;
+
+            if (dropCollapsedByes)
+            {
+                // A collapsed bye is a Completed match with no participants and no winner —
+                // the DE LB cascade flips its status when both upstream feeders turned out to
+                // be byes. We strip them here so the LB tab shows only matches that actually
+                // get played; the cascade has already re-routed the routing for what remains.
+                matches = matches
+                    .Where(m => !(m.Status == MatchStatus.Completed
+                                  && !m.HomeParticipantId.HasValue
+                                  && !m.AwayParticipantId.HasValue
+                                  && !m.WinnerParticipantId.HasValue))
+                    .ToList();
+
+                if (matches.Count == 0) return rounds;
+            }
 
             var matchById = matches
                 .Where(m => m.Id.HasValue)
@@ -2838,7 +3181,16 @@ namespace GameHubz.Logic.Services
                 bool isNextMatchPending = !m.NextMatchId.HasValue ||
                     (matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch) && nextMatch.Status == MatchStatus.Pending);
 
-                canRevert = isNextMatchPending && (isPrivileged || isParticipant);
+                // Loser-side downstream lock — third-place play-off for single-elim, LB drop
+                // for DE. Mirrors the server-side guard in UpdateMatchResult so the UI doesn't
+                // offer a revert that will be rejected. Loser-bracket targets may live in a
+                // different stage (LB stage for DE), so a missing entry in this stage's map
+                // means the lookup just couldn't see it — treat as pending (cross-stage).
+                bool isLoserBracketPending = !m.NextMatchLoserBracketId.HasValue
+                    || !matchById.TryGetValue(m.NextMatchLoserBracketId.Value, out var lbMatch)
+                    || lbMatch.Status == MatchStatus.Pending;
+
+                canRevert = isNextMatchPending && isLoserBracketPending && (isPrivileged || isParticipant);
             }
 
             return new MatchStructureDto
@@ -2851,6 +3203,8 @@ namespace GameHubz.Logic.Services
                 StartTime = m.ScheduledStartTime,
                 RoundDeadline = m.RoundDeadline,
                 NextMatchId = m.NextMatchId,
+                NextMatchLoserBracketId = m.NextMatchLoserBracketId,
+                IsUpperBracket = m.IsUpperBracket,
                 IsRoundLocked = m.RoundOpenAt.HasValue && m.RoundOpenAt.Value > DateTime.UtcNow,
                 MatchOpensAt = m.RoundOpenAt,
                 CanRevert = canRevert,
@@ -2918,8 +3272,15 @@ namespace GameHubz.Logic.Services
                 }
                 else
                 {
-                    downstreamPending = match.NextMatchId == null ||
+                    bool nextPending = match.NextMatchId == null ||
                         (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                    // Loser-side downstream — third-place play-off (single-elim) or LB drop (DE).
+                    // A miss in matchById means the target is in another stage we couldn't see
+                    // from this match's vantage; treat as pending and let the server enforce.
+                    bool loserDownstreamPending = match.NextMatchLoserBracketId == null
+                        || !matchById.TryGetValue(match.NextMatchLoserBracketId.Value, out var lbM)
+                        || lbM.Status == MatchStatus.Pending;
+                    downstreamPending = nextPending && loserDownstreamPending;
                 }
 
                 // In approval-required tournaments, only privileged users (admin / hub owner / hub admin)

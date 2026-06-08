@@ -87,7 +87,15 @@ namespace GameHubz.Logic.Services
                 foreach (var stage in structure.Stages)
                 {
                     if (stage.Rounds is { Count: > 0 })
-                        CreateBracketPage(doc, structure, stage);
+                    {
+                        // The standard bracket page assumes a binary tree (each round halves the
+                        // previous one). The Losers Bracket alternates major / minor rounds with
+                        // equal match counts, so it needs a flat column-per-round layout instead.
+                        if (stage.Type == StageType.DoubleEliminationLosersBracket)
+                            CreateLosersBracketPage(doc, structure, stage);
+                        else
+                            CreateBracketPage(doc, structure, stage);
+                    }
 
                     if (stage.Groups is { Count: > 0 })
                         CreateGroupPage(doc, structure, stage);
@@ -125,6 +133,220 @@ namespace GameHubz.Logic.Services
                 page.Margin(0);
                 page.Content().Svg(SvgImage.FromText(svg));
             });
+        }
+
+        // ── Losers Bracket page (flat column-per-round layout) ─────────
+
+        private static void CreateLosersBracketPage(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage)
+        {
+            var rounds = stage.Rounds!;
+            int maxMatches = rounds.Max(r => r.Matches.Count);
+
+            float bracketW = rounds.Count * ColW - RoundGap;
+            float bracketH = maxMatches * (MatchBoxH + BaseGapY) - BaseGapY;
+            float pageW = Math.Max(bracketW + Pad * 2, 842);
+            float pageH = Math.Max(HeaderH + RoundLblH + bracketH + FooterH + 30, 420);
+
+            string svg = BuildLosersBracketSvg(pageW, pageH, structure, stage, rounds);
+
+            doc.Page(page =>
+            {
+                page.Size(pageW, pageH);
+                page.Margin(0);
+                page.Content().Svg(SvgImage.FromText(svg));
+            });
+        }
+
+        private static string BuildLosersBracketSvg(
+            float w, float h,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            List<BracketRoundDto> rounds)
+        {
+            var sb = new StringBuilder(65536);
+
+            sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{P(w)}\" height=\"{P(h)}\" viewBox=\"0 0 {P(w)} {P(h)}\">");
+
+            // Clip paths for match boxes
+            sb.Append("<defs>");
+            int idx = 0;
+            foreach (var round in rounds)
+                foreach (var _ in round.Matches)
+                {
+                    sb.Append($"<clipPath id=\"lcp{idx}\"><rect x=\"0\" y=\"0\" width=\"{P(MatchBoxW)}\" height=\"{P(MatchBoxH)}\" rx=\"{P(BoxR)}\"/></clipPath>");
+                    idx++;
+                }
+            sb.Append("</defs>");
+
+            // Header
+            sb.Append($"<rect width=\"{P(w)}\" height=\"{P(HeaderH)}\" fill=\"{CHeaderBg}\"/>");
+            sb.Append($"<line x1=\"0\" y1=\"{P(HeaderH)}\" x2=\"{P(w)}\" y2=\"{P(HeaderH)}\" stroke=\"{CAccent}\" stroke-width=\"3\"/>");
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"38\" fill=\"{CWhite}\" font-size=\"26\" font-weight=\"bold\" font-family=\"{Font}\">{Esc(structure.Name)}</text>");
+
+            string sub = $"{structure.Format}  •  {(structure.IsTeamTournament ? "Teams" : "Solo")}  •  {stage.Name}";
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"58\" fill=\"{CMuted}\" font-size=\"13\" font-family=\"{Font}\">{Esc(sub)}</text>");
+
+            string statusTxt = structure.Status.ToString().ToUpper();
+            string statusCol = structure.Status switch
+            {
+                TournamentStatus.InProgress => "#22C55E",
+                TournamentStatus.Completed => CAccent,
+                _ => CMuted,
+            };
+            float stW = statusTxt.Length * 6.5f + 16;
+            float stX = w - stW - 30;
+            sb.Append($"<rect x=\"{P(stX)}\" y=\"24\" width=\"{P(stW)}\" height=\"18\" rx=\"4\" fill=\"{statusCol}\" fill-opacity=\"0.12\"/>");
+            sb.Append($"<rect x=\"{P(stX)}\" y=\"24\" width=\"{P(stW)}\" height=\"18\" rx=\"4\" fill=\"none\" stroke=\"{statusCol}\"/>");
+            sb.Append($"<text x=\"{P(stX + 8)}\" y=\"37\" fill=\"{statusCol}\" font-size=\"11\" font-weight=\"bold\" font-family=\"{Font}\">{Esc(statusTxt)}</text>");
+
+            // Round labels — LB rounds get descriptive names ("LB Final", "LB Semifinal", …)
+            // so the reader can spot the terminal rounds without counting from the right.
+            // We anchor those names to the MAX persisted round number rather than rounds.Count
+            // so a DE bye cascade that collapses early LB rounds out of the structure doesn't
+            // shift every later round's label upward.
+            float rlY = HeaderH + 6;
+            int maxRound = rounds.Max(r => r.RoundNumber);
+            for (int i = 0; i < rounds.Count; i++)
+            {
+                float cx = Pad + i * ColW + MatchBoxW / 2;
+                int rn = rounds[i].RoundNumber;
+                string lbl = rn == maxRound
+                    ? "LB Final"
+                    : rn == maxRound - 1
+                        ? "LB Semifinal"
+                        : $"LB Round {rn}";
+                float bw = lbl.Length * 6f + 22;
+                sb.Append($"<rect x=\"{P(cx - bw / 2)}\" y=\"{P(rlY)}\" width=\"{P(bw)}\" height=\"22\" rx=\"11\" fill=\"{CRndBg}\"/>");
+                sb.Append($"<text x=\"{P(cx)}\" y=\"{P(rlY + 15)}\" fill=\"{CWhite}\" font-size=\"11\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"middle\">{Esc(lbl)}</text>");
+            }
+
+            // Positions: each column independently centers its matches in the column area.
+            float bTop = rlY + RoundLblH + 4;
+            int maxMatches = rounds.Max(r => r.Matches.Count);
+            float colH = maxMatches * (MatchBoxH + BaseGapY) - BaseGapY;
+
+            var positions = new List<List<float>>(rounds.Count);
+            foreach (var round in rounds)
+            {
+                int n = round.Matches.Count;
+                float thisColH = n * (MatchBoxH + BaseGapY) - BaseGapY;
+                float colTop = bTop + (colH - thisColH) / 2;
+                var list = new List<float>(n);
+                for (int i = 0; i < n; i++)
+                    list.Add(colTop + i * (MatchBoxH + BaseGapY) + MatchBoxH / 2);
+                positions.Add(list);
+            }
+
+            // Connectors: a same-count step (minor → major, or LB R1 → LB R2) draws straight
+            // lines between matching cards. A halving step (major → minor) draws a Y-junction
+            // pairing successive cards into the next round. WB-loser drop-ins enter from outside
+            // the LB page and are intentionally not drawn — they're hinted by a small "← WB" tag.
+            sb.Append($"<g stroke=\"{CConn}\" stroke-width=\"{P(ConnStroke)}\" stroke-linecap=\"round\" fill=\"none\">");
+            for (int r = 0; r < rounds.Count - 1; r++)
+            {
+                float srcR = Pad + r * ColW + MatchBoxW;
+                float midX = srcR + RoundGap / 2;
+                float dstL = Pad + (r + 1) * ColW;
+
+                int curCount = rounds[r].Matches.Count;
+                int nextCount = rounds[r + 1].Matches.Count;
+
+                if (nextCount == curCount)
+                {
+                    // 1:1 mapping — each match feeds the same-index match in the next column.
+                    for (int j = 0; j < curCount; j++)
+                    {
+                        float y = positions[r][j];
+                        float yD = positions[r + 1][j];
+                        sb.Append($"<line x1=\"{P(srcR)}\" y1=\"{P(y)}\" x2=\"{P(midX)}\" y2=\"{P(y)}\"/>");
+                        sb.Append($"<line x1=\"{P(midX)}\" y1=\"{P(y)}\" x2=\"{P(midX)}\" y2=\"{P(yD)}\"/>");
+                        sb.Append($"<line x1=\"{P(midX)}\" y1=\"{P(yD)}\" x2=\"{P(dstL)}\" y2=\"{P(yD)}\"/>");
+                    }
+                }
+                else if (curCount == 2 * nextCount)
+                {
+                    // 2:1 pairing — successive matches feed one next-round match.
+                    for (int j = 0; j < nextCount; j++)
+                    {
+                        int a = j * 2, b = a + 1;
+                        if (a >= positions[r].Count) continue;
+                        float y1 = positions[r][a];
+                        float y2 = b < positions[r].Count ? positions[r][b] : y1;
+                        float yD = positions[r + 1][j];
+
+                        sb.Append($"<line x1=\"{P(srcR)}\" y1=\"{P(y1)}\" x2=\"{P(midX)}\" y2=\"{P(y1)}\"/>");
+                        if (b < positions[r].Count)
+                            sb.Append($"<line x1=\"{P(srcR)}\" y1=\"{P(y2)}\" x2=\"{P(midX)}\" y2=\"{P(y2)}\"/>");
+                        sb.Append($"<line x1=\"{P(midX)}\" y1=\"{P(y1)}\" x2=\"{P(midX)}\" y2=\"{P(y2)}\"/>");
+                        sb.Append($"<line x1=\"{P(midX)}\" y1=\"{P(yD)}\" x2=\"{P(dstL)}\" y2=\"{P(yD)}\"/>");
+                    }
+                }
+                // Any other ratio is unexpected for an LB shape; leave it unconnected rather
+                // than guess wrong.
+            }
+            sb.Append("</g>");
+
+            // Match boxes
+            int ci = 0;
+            for (int r = 0; r < rounds.Count; r++)
+            {
+                float x = Pad + r * ColW;
+                for (int m = 0; m < rounds[r].Matches.Count && m < positions[r].Count; m++)
+                {
+                    float cy = positions[r][m];
+                    float by = cy - MatchBoxH / 2;
+                    AppendLosersMatchBox(sb, x, by, rounds[r].Matches[m], structure.IsTeamTournament, ci++);
+                }
+            }
+
+            // Footer
+            float fY = h - FooterH;
+            sb.Append($"<line x1=\"{P(Pad)}\" y1=\"{P(fY)}\" x2=\"{P(w - Pad)}\" y2=\"{P(fY)}\" stroke=\"#E2E8F0\"/>");
+            string ts = $"Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  •  GameHubz";
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"{P(fY + 16)}\" fill=\"{CMuted}\" font-size=\"10\" font-family=\"{Font}\">{Esc(ts)}</text>");
+            sb.Append($"<text x=\"{P(w - Pad)}\" y=\"{P(fY + 16)}\" fill=\"{CMuted}\" font-size=\"10\" font-family=\"{Font}\" text-anchor=\"end\">gamehubz.com</text>");
+
+            sb.Append("</svg>");
+            return sb.ToString();
+        }
+
+        // Mirror of AppendMatchBox but using its own clip-path id namespace so a single PDF
+        // with both the WB and the LB pages doesn't end up with two clipPaths sharing an id.
+        private static void AppendLosersMatchBox(
+            StringBuilder sb, float x, float y,
+            MatchStructureDto match, bool isTeam, int clipIdx)
+        {
+            string home = Trunc(GetName(match.Home, isTeam));
+            string away = Trunc(GetName(match.Away, isTeam));
+            bool hw = match.Home?.IsWinner == true;
+            bool aw = match.Away?.IsWinner == true;
+            bool done = match.Status == MatchStatus.Completed;
+            bool hasWinner = hw || aw;
+
+            sb.Append("<g>");
+
+            sb.Append($"<rect x=\"{P(x + 2)}\" y=\"{P(y + 2)}\" width=\"{P(MatchBoxW)}\" height=\"{P(MatchBoxH)}\" rx=\"{P(BoxR)}\" fill=\"#00000012\"/>");
+            sb.Append($"<rect x=\"{P(x)}\" y=\"{P(y)}\" width=\"{P(MatchBoxW)}\" height=\"{P(MatchBoxH)}\" rx=\"{P(BoxR)}\" fill=\"{CBoxBg}\"/>");
+
+            sb.Append($"<g transform=\"translate({P(x)},{P(y)})\" clip-path=\"url(#lcp{clipIdx})\">");
+            if (hw)
+                sb.Append($"<rect width=\"{P(MatchBoxW)}\" height=\"{P(RowH)}\" fill=\"{CWinBg}\"/>");
+            if (aw)
+                sb.Append($"<rect y=\"{P(RowH)}\" width=\"{P(MatchBoxW)}\" height=\"{P(RowH)}\" fill=\"{CWinBg}\"/>");
+            if (hasWinner)
+                sb.Append($"<rect width=\"{P(AccentW)}\" height=\"{P(MatchBoxH)}\" fill=\"{CWinBar}\"/>");
+            sb.Append("</g>");
+
+            sb.Append($"<rect x=\"{P(x)}\" y=\"{P(y)}\" width=\"{P(MatchBoxW)}\" height=\"{P(MatchBoxH)}\" rx=\"{P(BoxR)}\" fill=\"none\" stroke=\"{CBoxBrd}\"/>");
+            sb.Append($"<line x1=\"{P(x + 8)}\" y1=\"{P(y + RowH)}\" x2=\"{P(x + MatchBoxW - 8)}\" y2=\"{P(y + RowH)}\" stroke=\"{CSep}\"/>");
+
+            AppendRow(sb, x, y, home, match.Home?.Score, match.Home?.Seed, hw, match.Home == null, done);
+            AppendRow(sb, x, y + RowH, away, match.Away?.Score, match.Away?.Seed, aw, match.Away == null, done);
+
+            sb.Append("</g>");
         }
 
         // ── SVG builder ────────────────────────────────────────────────
@@ -179,7 +401,11 @@ namespace GameHubz.Logic.Services
             for (int i = 0; i < rounds.Count; i++)
             {
                 float cx = Pad + i * ColW + MatchBoxW / 2;
-                string lbl = rounds[i].Name;
+                // Pick the most descriptive label available: round-only rounds keep the
+                // generic "Round N" text from the DTO; rounds that are clearly a Grand Final,
+                // championship Final, or Semi/Quarter get their stage name so the PDF reads
+                // cleanly for both single-elim and the WB side of double-elim.
+                string lbl = ResolveRoundLabel(rounds[i]);
                 float bw = lbl.Length * 6f + 22;
                 sb.Append($"<rect x=\"{P(cx - bw / 2)}\" y=\"{P(rlY)}\" width=\"{P(bw)}\" height=\"22\" rx=\"11\" fill=\"{CRndBg}\"/>");
                 sb.Append($"<text x=\"{P(cx)}\" y=\"{P(rlY + 15)}\" fill=\"{CWhite}\" font-size=\"11\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"middle\">{Esc(lbl)}</text>");
@@ -555,5 +781,30 @@ namespace GameHubz.Logic.Services
             => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
         private static string P(float v) => v.ToString("0.###", Inv);
+
+        // Prefers the most descriptive label available for a bracket round. The DTO's default
+        // name ("Round N") is fine for the early WB rounds but obscures the meaning of the
+        // late-stage rounds (Quarter / Semi / Final / Grand Final). When the round contains a
+        // single match flagged with a recognised MatchStage, we surface that stage's name.
+        private static string ResolveRoundLabel(BracketRoundDto round)
+        {
+            if (round.Matches.Count == 0) return round.Name;
+
+            // The round can carry mixed stages only for ad-hoc third-place rounds (filtered out
+            // before we get here). For everything else the first match's stage represents the
+            // round; defer to it when the DTO name is the generic "Round N".
+            var firstStage = round.Matches[0].Stage;
+            return firstStage switch
+            {
+                MatchStage.GrandFinal => "Grand Final",
+                MatchStage.Final => "Final",
+                MatchStage.SemiFinal => "Semifinal",
+                MatchStage.QuarterFinal => "Quarterfinal",
+                MatchStage.RoundOf16 => "Round of 16",
+                MatchStage.RoundOf32 => "Round of 32",
+                MatchStage.RoundOf64 => "Round of 64",
+                _ => round.Name,
+            };
+        }
     }
 }
