@@ -24,7 +24,9 @@
       "Bash(cat /tmp/tsc_output.txt 2>&1)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(dir C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend)",
-      "Bash(node C:/projects/turnir/mobile/gamehubz-mobile/node_modules/typescript/bin/tsc --noEmit -p C:/projects/turnir/mobile/gamehubz-mobile/tsconfig.json)"
+      "Bash(node C:/projects/turnir/mobile/gamehubz-mobile/node_modules/typescript/bin/tsc --noEmit -p C:/projects/turnir/mobile/gamehubz-mobile/tsconfig.json)",
+      "Bash(Select-Object -Last 40)",
+      "PowerShell(dotnet build GameHubz.sln -nologo 2>&1)"
     ]
   }
 }

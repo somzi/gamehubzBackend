@@ -2068,7 +2068,11 @@ namespace GameHubz.Logic.Services
                 var participantId = q.participant.Id!.Value;
                 if (seedMap.TryGetValue(participantId, out int newSeed))
                 {
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(q.participant);
+                    // ResyncSoloLeagueStatistics ran earlier in this request and left
+                    // the participants of the just-completed group tracked. DetachEntity
+                    // by reference detaches the no-tracking copy, not the live tracked
+                    // instance — so we have to clear by Id before attaching `fresh`.
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachById(participantId);
                     var fresh = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(participantId);
                     fresh.Seed = newSeed;
                     await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(fresh, this.UserContextReader);
