@@ -1097,15 +1097,14 @@ namespace GameHubz.Logic.Services
             }
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
 
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
                 ?? throw new Exception("Tournament not found");
-            var hubOwnerId = approvalCtx.HubOwnerUserId;
-            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             // When the tournament requires result approval and the caller is a participant
-            // (not an admin / hub owner), persist a proposal instead of completing the match.
+            // (not a tournament manager — platform admin, hub owner, or hub admin),
+            // persist a proposal instead of completing the match.
             if (approvalCtx.RequireResultApproval && !isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
@@ -1198,16 +1197,14 @@ namespace GameHubz.Logic.Services
                 throw new Exception("This match is already completed.");
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
-            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
-            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             if (!isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
                     throw new Exception("You are not a participant of this match.");
 
-                // The proposer cannot also be the approver — the opponent (or admin) confirms.
+                // The proposer cannot also be the approver — the opponent (or a tournament manager) confirms.
                 if (match.ProposedByUserId == currentUser.UserId)
                     throw new Exception("Your opponent must approve the result you reported.");
             }
@@ -1243,9 +1240,7 @@ namespace GameHubz.Logic.Services
                 throw new Exception("This match is already completed.");
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
-            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
-            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             if (!isPrivileged)
             {
