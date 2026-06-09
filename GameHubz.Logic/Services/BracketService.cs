@@ -1616,6 +1616,7 @@ namespace GameHubz.Logic.Services
             teamMatch.WinnerTeamParticipantId = null;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            bool revertedTournament = false;
             if (subMatch.TournamentStage?.Type == StageType.League)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
@@ -1625,14 +1626,22 @@ namespace GameHubz.Logic.Services
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
+                    revertedTournament = true;
                 }
             }
 
             await this.SaveAsync();
 
+            // Detach AFTER SaveAsync. Detaching a Modified entry BEFORE save drops the change
+            // (the previous tournament DetachEntity above silently lost the InProgress revert),
+            // and leaving teamMatch tracked after save crashes the downstream
+            // ProcessTeamMatchResult -> ProcessTeamMatchResultInner reload+UpdateEntity at the
+            // "another instance with the same key is already tracked" check.
             await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
             await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+            if (revertedTournament)
+                await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
         }
 
         private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch)
@@ -1649,6 +1658,11 @@ namespace GameHubz.Logic.Services
                         tournament.Status = TournamentStatus.InProgress;
                         tournament.WinnerUserId = null;
                         await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        // Save+detach NOW. The previous detach-without-save dropped the Modified
+                        // state before the caller's SaveAsync ran, silently losing the revert.
+                        // The detach is still required so AdvanceWinnerToNextMatch's terminal branch
+                        // can reload the tournament without a tracking-key conflict.
+                        await this.SaveAsync();
                         await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
                     }
                 }
@@ -1732,8 +1746,6 @@ namespace GameHubz.Logic.Services
             teamMatch.Status = TeamMatchStatus.Pending;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
-            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
-
             if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
             {
                 var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
@@ -1792,6 +1804,7 @@ namespace GameHubz.Logic.Services
             // Reverting any completed elimination result means the tournament is no longer fully played,
             // so roll back a previously-published winner/Completed status (covers final, third-place and
             // semi-final cascades alike).
+            bool revertedTournament = false;
             if (oldWinner.HasValue)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
@@ -1801,11 +1814,25 @@ namespace GameHubz.Logic.Services
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
+                    revertedTournament = true;
                 }
             }
 
             await this.SaveAsync();
+
+            // Detach AFTER SaveAsync. The previous in-place DetachEntity calls (teamMatch above,
+            // tournament here) ran BEFORE this save and dropped their Modified state — so
+            // teamMatch.Status=Pending and tournament.Status=InProgress were silently never
+            // written. Leaving nextTeamMatch / thirdPlaceMatch tracked through the function
+            // return ALSO crashes the downstream ProcessTeamMatchResultInner reload+UpdateEntity
+            // at "another instance with the same key is already tracked".
+            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+            if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+                await this.AppUnitOfWork.TeamMatchRepository.DetachById(teamMatch.NextTeamMatchId.Value);
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue && oldWinner.HasValue)
+                await this.AppUnitOfWork.TeamMatchRepository.DetachById(teamMatch.NextTeamMatchLoserBracketId.Value);
+            if (revertedTournament)
+                await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
         }
 
         private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId, Guid? winnerUserId, MatchEntity? nextMatch)
