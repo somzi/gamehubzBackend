@@ -5,15 +5,119 @@ namespace GameHubz.Logic.Services
     public class FriendService : AppBaseService
     {
         private readonly INotificationService notificationService;
+        private readonly ICacheService cacheService;
+
+        // Friends_set / blocks_in / blocks_out TTL — long enough to coast through the
+        // common burst of relation checks during a chat session, short enough that any
+        // missed invalidation self-heals within a few minutes.
+        private static readonly TimeSpan SocialSetTtl = TimeSpan.FromMinutes(5);
 
         public FriendService(
             IUnitOfWorkFactory factory,
             ILocalizationService localizationService,
             IUserContextReader userContextReader,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            ICacheService cacheService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.notificationService = notificationService;
+            this.cacheService = cacheService;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // CACHED LOOKUPS — used by FriendService itself and by DirectChatService
+        // ─────────────────────────────────────────────────────────────────
+
+        public async Task<bool> AreFriendsCachedAsync(Guid userA, Guid userB)
+        {
+            var set = await GetFriendsSetAsync(userA);
+            return set.Contains(userB);
+        }
+
+        // Returns true if either side has blocked the other — for cases like sending a DM
+        // where direction doesn't matter, only "is there an active block between us".
+        public async Task<bool> EitherBlocksCachedAsync(Guid userA, Guid userB)
+        {
+            var outSet = await GetBlocksOutSetAsync(userA);
+            if (outSet.Contains(userB)) return true;
+            var inSet = await GetBlocksInSetAsync(userA);
+            return inSet.Contains(userB);
+        }
+
+        public async Task<bool> IsBlockedByCachedAsync(Guid blockerId, Guid blockedId)
+        {
+            var outSet = await GetBlocksOutSetAsync(blockerId);
+            return outSet.Contains(blockedId);
+        }
+
+        private async Task<HashSet<Guid>> GetFriendsSetAsync(Guid userId)
+        {
+            string key = $"friends_set:{userId}";
+            var cached = await this.cacheService.GetAsync<HashSet<Guid>>(key);
+            if (cached != null) return cached;
+
+            var ids = await this.AppUnitOfWork.FriendshipRepository.GetFriendIds(userId);
+            var set = new HashSet<Guid>(ids);
+            await this.cacheService.SetAsync(key, set, SocialSetTtl);
+            return set;
+        }
+
+        private async Task<HashSet<Guid>> GetBlocksOutSetAsync(Guid userId)
+        {
+            string key = $"blocks_out:{userId}";
+            var cached = await this.cacheService.GetAsync<HashSet<Guid>>(key);
+            if (cached != null) return cached;
+
+            var ids = await this.AppUnitOfWork.UserBlockRepository.GetBlockedIds(userId);
+            var set = new HashSet<Guid>(ids);
+            await this.cacheService.SetAsync(key, set, SocialSetTtl);
+            return set;
+        }
+
+        private async Task<HashSet<Guid>> GetBlocksInSetAsync(Guid userId)
+        {
+            string key = $"blocks_in:{userId}";
+            var cached = await this.cacheService.GetAsync<HashSet<Guid>>(key);
+            if (cached != null) return cached;
+
+            var ids = await this.AppUnitOfWork.UserBlockRepository.GetBlockerIds(userId);
+            var set = new HashSet<Guid>(ids);
+            await this.cacheService.SetAsync(key, set, SocialSetTtl);
+            return set;
+        }
+
+        // BILATERAL invalidation helpers — every state change between two users must
+        // invalidate cached sets on BOTH sides, or the other side will see stale data.
+
+        private async Task InvalidateFriendsBoth(Guid userA, Guid userB)
+        {
+            await this.cacheService.RemoveAsync($"friends_set:{userA}");
+            await this.cacheService.RemoveAsync($"friends_set:{userB}");
+        }
+
+        private async Task InvalidateBlocksBoth(Guid blocker, Guid blocked)
+        {
+            await this.cacheService.RemoveAsync($"blocks_out:{blocker}");
+            await this.cacheService.RemoveAsync($"blocks_in:{blocked}");
+            // Defensive: the OTHER side's caches also reflect this pair from the inverse angle.
+            // If a reverse block ever existed (e.g. both-direction blocks during simultaneous
+            // mutations), clearing both halves guarantees consistency.
+            await this.cacheService.RemoveAsync($"blocks_out:{blocked}");
+            await this.cacheService.RemoveAsync($"blocks_in:{blocker}");
+        }
+
+        // Friend-list (incoming / outgoing / my-friends) caches. A pending request between A
+        // and B appears on A's outgoing list and B's incoming list, so request-state changes
+        // need to clear both perspectives. An accepted request also touches both users'
+        // my-friends list.
+        private async Task InvalidateFriendListsBoth(Guid userA, Guid userB)
+        {
+            await this.cacheService.RemoveAsync($"friends_list:{userA}");
+            await this.cacheService.RemoveAsync($"friends_list:{userB}");
+            await this.cacheService.RemoveAsync($"friend_requests_in:{userA}");
+            await this.cacheService.RemoveAsync($"friend_requests_in:{userB}");
+            await this.cacheService.RemoveAsync($"friend_requests_out:{userA}");
+            await this.cacheService.RemoveAsync($"friend_requests_out:{userB}");
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -23,19 +127,50 @@ namespace GameHubz.Logic.Services
         public async Task<List<FriendDto>> GetMyFriends(string? search)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            return await this.AppUnitOfWork.FriendshipRepository.GetFriendsOf(user.UserId, search);
+
+            // Search variants would create unbounded cache keys — only cache the no-search case.
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.FriendshipRepository.GetFriendsOf(user.UserId, search);
+
+            string key = $"friends_list:{user.UserId}";
+            var cached = await this.cacheService.GetAsync<List<FriendDto>>(key);
+            if (cached != null) return cached;
+
+            var list = await this.AppUnitOfWork.FriendshipRepository.GetFriendsOf(user.UserId, null);
+            await this.cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<List<FriendRequestDto>> GetIncomingRequests(string? search)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            return await this.AppUnitOfWork.FriendRequestRepository.GetIncomingPending(user.UserId, search);
+
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.FriendRequestRepository.GetIncomingPending(user.UserId, search);
+
+            string key = $"friend_requests_in:{user.UserId}";
+            var cached = await this.cacheService.GetAsync<List<FriendRequestDto>>(key);
+            if (cached != null) return cached;
+
+            var list = await this.AppUnitOfWork.FriendRequestRepository.GetIncomingPending(user.UserId, null);
+            await this.cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<List<FriendRequestDto>> GetOutgoingRequests(string? search)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            return await this.AppUnitOfWork.FriendRequestRepository.GetOutgoingPending(user.UserId, search);
+
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.FriendRequestRepository.GetOutgoingPending(user.UserId, search);
+
+            string key = $"friend_requests_out:{user.UserId}";
+            var cached = await this.cacheService.GetAsync<List<FriendRequestDto>>(key);
+            if (cached != null) return cached;
+
+            var list = await this.AppUnitOfWork.FriendRequestRepository.GetOutgoingPending(user.UserId, null);
+            await this.cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<List<BlockedUserDto>> GetBlocked(string? search)
@@ -55,19 +190,19 @@ namespace GameHubz.Logic.Services
                 return result;
             }
 
-            if (await this.AppUnitOfWork.UserBlockRepository.IsBlocked(user.UserId, otherUserId))
+            if (await this.IsBlockedByCachedAsync(user.UserId, otherUserId))
             {
                 result.Status = FriendRelationStatus.BlockedByMe;
                 return result;
             }
 
-            if (await this.AppUnitOfWork.UserBlockRepository.IsBlocked(otherUserId, user.UserId))
+            if (await this.IsBlockedByCachedAsync(otherUserId, user.UserId))
             {
                 result.Status = FriendRelationStatus.BlockedByOther;
                 return result;
             }
 
-            if (await this.AppUnitOfWork.FriendshipRepository.AreFriends(user.UserId, otherUserId))
+            if (await this.AreFriendsCachedAsync(user.UserId, otherUserId))
             {
                 result.Status = FriendRelationStatus.Friends;
                 return result;
@@ -132,6 +267,9 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.FriendRequestRepository.AddEntity(request, this.UserContextReader);
             await this.SaveAsync();
 
+            // New pending request → both users' incoming/outgoing lists are stale.
+            await InvalidateFriendListsBoth(user.UserId, toUserId);
+
             // Fire-and-forget push notification
             SendNotification(target, user.Username, "New friend request",
                 $"{user.Username} sent you a friend request.",
@@ -186,6 +324,12 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
 
+            // Friendship formed → friends_set on BOTH sides must be invalidated so the
+            // new friend shows up in either direction's next relation check.
+            await InvalidateFriendsBoth(request.FromUserId, request.ToUserId);
+            // The request moved out of pending into accepted, and a new friend was added.
+            await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
+
             // Notify the original sender
             var sender = await this.AppUnitOfWork.UserRepository.GetById(request.FromUserId);
             SendNotification(sender, user.Username, "Friend request accepted",
@@ -210,6 +354,9 @@ namespace GameHubz.Logic.Services
             request.Status = FriendRequestStatus.Rejected;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
             await this.SaveAsync();
+
+            // Rejected request leaves pending lists on both sides.
+            await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
         }
 
         public async Task CancelRequest(Guid requestId)
@@ -229,6 +376,9 @@ namespace GameHubz.Logic.Services
             request.Status = FriendRequestStatus.Cancelled;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
             await this.SaveAsync();
+
+            // Cancelled request leaves pending lists on both sides.
+            await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
         }
 
         public async Task Unfriend(Guid otherUserId)
@@ -241,6 +391,11 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.FriendshipRepository.SoftDeleteEntity(friendship, this.UserContextReader);
             await this.SaveAsync();
+
+            // Friendship dropped → friends_set on BOTH sides is stale.
+            await InvalidateFriendsBoth(user.UserId, otherUserId);
+            // My-friends list on both sides loses an entry.
+            await InvalidateFriendListsBoth(user.UserId, otherUserId);
         }
 
         public async Task Block(Guid otherUserId)
@@ -292,6 +447,13 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
+
+            // Block created (or resurrected) → blocks_out:user / blocks_in:other are stale.
+            // Friendship may have been soft-deleted above → friends_set on both sides too.
+            // Pending request, if any, was cancelled → invalidate request lists too.
+            await InvalidateBlocksBoth(user.UserId, otherUserId);
+            await InvalidateFriendsBoth(user.UserId, otherUserId);
+            await InvalidateFriendListsBoth(user.UserId, otherUserId);
         }
 
         public async Task Unblock(Guid otherUserId)
@@ -304,6 +466,9 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.UserBlockRepository.SoftDeleteEntity(block, this.UserContextReader);
             await this.SaveAsync();
+
+            // Block removed → blocks_out:user / blocks_in:other are stale.
+            await InvalidateBlocksBoth(user.UserId, otherUserId);
         }
 
         // ─────────────────────────────────────────────────────────────────

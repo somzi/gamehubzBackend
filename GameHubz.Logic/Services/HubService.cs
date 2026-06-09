@@ -10,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly TournamentService tournamentService;
         private readonly ICacheService cacheService;
         private readonly CloudinaryStorageService storageService;
+        private readonly UserHubService userHubService;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -21,7 +22,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             TournamentService tournamentService,
             ICacheService cacheService,
-            CloudinaryStorageService storageService)
+            CloudinaryStorageService storageService,
+            UserHubService userHubService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -34,6 +36,7 @@ namespace GameHubz.Logic.Services
             this.tournamentService = tournamentService;
             this.cacheService = cacheService;
             this.storageService = storageService;
+            this.userHubService = userHubService;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -81,7 +84,7 @@ namespace GameHubz.Logic.Services
 
             if (!hubDto.IsUserOwner)
             {
-                var callerRole = await this.AppUnitOfWork.UserHubRepository.GetRole(user.UserId, id);
+                var callerRole = await this.userHubService.GetUserHubRoleCachedAsync(user.UserId, id);
                 hubDto.IsUserAdmin = callerRole == HubRole.HubAdmin;
             }
 
@@ -186,6 +189,11 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"hubs_overview_all");
+            // The new owner's joined-hubs list now includes this hub, and the discovery list
+            // (hubs the user hasn't joined) shrinks by one. Wipe both.
+            await cacheService.RemoveByPatternAsync($"user_joined_hubs:{hub.UserId}:*");
+            await cacheService.RemoveByPatternAsync($"user_discovery_hubs:{hub.UserId}:*");
+            await cacheService.RemoveAsync($"user_hubs_list:{hub.UserId}");
         }
 
         protected override IRepository<HubEntity> GetRepository()
@@ -213,16 +221,33 @@ namespace GameHubz.Logic.Services
 
         public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, search);
+            // Search variants would create unbounded cache keys — only cache no-search.
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, search);
 
-            return data;
+            string key = $"user_joined_hubs:{userId}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<List<HubDto>>(key);
+            if (cached != null) return cached;
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, null);
+            var list = data.ToList();
+            await cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, search);
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, search);
 
-            return data;
+            string key = $"user_discovery_hubs:{userId}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<List<HubDto>>(key);
+            if (cached != null) return cached;
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, null);
+            var list = data.ToList();
+            await cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
@@ -263,6 +288,10 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
             await cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
+            await cacheService.RemoveAsync($"user_hub_role:{userId}:{hubId}");
+            await cacheService.RemoveByPatternAsync($"user_joined_hubs:{userId}:*");
+            await cacheService.RemoveByPatternAsync($"user_discovery_hubs:{userId}:*");
+            await cacheService.RemoveByPatternAsync($"tournament_authz:{userId}:*");
         }
 
         public async Task UploadAvatar(Guid id, IFormFile file)

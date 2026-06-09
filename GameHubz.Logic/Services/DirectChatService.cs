@@ -7,17 +7,23 @@ namespace GameHubz.Logic.Services
     {
         private readonly IHubContext<DirectChatHub> hubContext;
         private readonly INotificationService notificationService;
+        private readonly FriendService friendService;
+        private readonly ICacheService cacheService;
 
         public DirectChatService(
             IUnitOfWorkFactory factory,
             ILocalizationService localizationService,
             IUserContextReader userContextReader,
             IHubContext<DirectChatHub> hubContext,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            FriendService friendService,
+            ICacheService cacheService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
             this.notificationService = notificationService;
+            this.friendService = friendService;
+            this.cacheService = cacheService;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -27,7 +33,19 @@ namespace GameHubz.Logic.Services
         public async Task<List<DirectChatDto>> GetMyChats(string? search)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            return await this.AppUnitOfWork.DirectChatRepository.GetChatsForUser(user.UserId, search);
+
+            // Only the no-search variant is cached — search variants would create
+            // unbounded keys.
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.DirectChatRepository.GetChatsForUser(user.UserId, search);
+
+            string key = $"direct_chats:{user.UserId}";
+            var cached = await this.cacheService.GetAsync<List<DirectChatDto>>(key);
+            if (cached != null) return cached;
+
+            var list = await this.AppUnitOfWork.DirectChatRepository.GetChatsForUser(user.UserId, null);
+            await this.cacheService.SetAsync(key, list, TimeSpan.FromSeconds(30));
+            return list;
         }
 
         public async Task<DirectChatDto> GetOrCreateChat(Guid otherUserId)
@@ -37,7 +55,7 @@ namespace GameHubz.Logic.Services
             if (otherUserId == user.UserId)
                 throw new Exception("You cannot chat with yourself.");
 
-            if (await this.AppUnitOfWork.UserBlockRepository.EitherBlocks(user.UserId, otherUserId))
+            if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
                 throw new Exception("Cannot open chat — there is an active block between the users.");
 
             var other = await this.AppUnitOfWork.UserRepository.GetById(otherUserId);
@@ -51,6 +69,10 @@ namespace GameHubz.Logic.Services
                 chat = new DirectChatEntity { UserAId = a, UserBId = b };
                 await this.AppUnitOfWork.DirectChatRepository.AddEntity(chat, this.UserContextReader);
                 await this.SaveAsync();
+
+                // A new chat row was created — both participants' cached chat lists are stale.
+                await this.cacheService.RemoveAsync($"direct_chats:{user.UserId}");
+                await this.cacheService.RemoveAsync($"direct_chats:{otherUserId}");
             }
 
             return new DirectChatDto
@@ -95,10 +117,10 @@ namespace GameHubz.Logic.Services
 
             Guid otherUserId = chat.UserAId == user.UserId ? chat.UserBId : chat.UserAId;
 
-            if (await this.AppUnitOfWork.UserBlockRepository.EitherBlocks(user.UserId, otherUserId))
+            if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
                 throw new Exception("Cannot send message — there is an active block between the users.");
 
-            if (!await this.AppUnitOfWork.FriendshipRepository.AreFriends(user.UserId, otherUserId))
+            if (!await this.friendService.AreFriendsCachedAsync(user.UserId, otherUserId))
                 throw new Exception("Cannot send message — you are no longer friends.");
 
             var message = new DirectMessageEntity
@@ -137,6 +159,11 @@ namespace GameHubz.Logic.Services
             await hubContext.Clients.Group(DirectChatHub.ChatGroupName(chatId))
                 .SendAsync("ReceiveMessage", dto);
 
+            // The DM list shows LastMessage / LastMessageAt / UnreadCount — all change here,
+            // for both participants.
+            await this.cacheService.RemoveAsync($"direct_chats:{user.UserId}");
+            await this.cacheService.RemoveAsync($"direct_chats:{otherUserId}");
+
             // Push notification to the OTHER user
             SendPushNotification(otherUserId, user.Username, content, chatId);
 
@@ -156,6 +183,12 @@ namespace GameHubz.Logic.Services
             // Inform the chat group so the sender's screen can update read receipts.
             await hubContext.Clients.Group(DirectChatHub.ChatGroupName(chatId))
                 .SendAsync("MessagesRead", new { chatId, readerUserId = user.UserId });
+
+            // UnreadCount changes for the reader; the sender's last-message read-receipt
+            // indicator may also depend on this state. Invalidate both for safety.
+            Guid otherUserId = chat.UserAId == user.UserId ? chat.UserBId : chat.UserAId;
+            await this.cacheService.RemoveAsync($"direct_chats:{user.UserId}");
+            await this.cacheService.RemoveAsync($"direct_chats:{otherUserId}");
         }
 
         // ─────────────────────────────────────────────────────────────────

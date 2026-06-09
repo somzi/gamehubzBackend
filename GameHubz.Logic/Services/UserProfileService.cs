@@ -25,8 +25,16 @@ namespace GameHubz.Logic.Services
         public async Task<List<MatchListItemDto>> GetMatches(Guid id, int pageNumber)
         {
             const int pageSize = 10;
+
+            // Short TTL — match results change but only when the user finishes a match.
+            // 30s lag is fine, no explicit invalidation needed.
+            string key = $"user_matches:{id}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<List<MatchListItemDto>>(key);
+            if (cached != null) return cached;
+
             var matches = await this.AppUnitOfWork.MatchRepository.GetLastMatchesByUserId(id, pageSize, pageNumber);
 
+            await cacheService.SetAsync(key, matches, TimeSpan.FromSeconds(30));
             return matches;
         }
 
@@ -57,8 +65,14 @@ namespace GameHubz.Logic.Services
         public async Task<EntityListDto<TournamentOverview>> GetTournaments(Guid id, int pageNumber)
         {
             const int pageSize = 10;
+
+            string key = $"user_profile_tournaments:{id}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<EntityListDto<TournamentOverview>>(key);
+            if (cached != null) return cached;
+
             var tournaments = await this.AppUnitOfWork.TournamentParticipantRepository.GetByUserIdPaged(id, pageNumber, pageSize);
 
+            await cacheService.SetAsync(key, tournaments, TimeSpan.FromMinutes(1));
             return tournaments;
         }
 

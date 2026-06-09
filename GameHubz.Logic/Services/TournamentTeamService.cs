@@ -351,6 +351,8 @@ namespace GameHubz.Logic.Services
         {
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
         }
 
         private static TeamDto MapTeamsToDto(TournamentTeamEntity team, IEnumerable<TournamentTeamMemberEntity> members, int? teamSize)

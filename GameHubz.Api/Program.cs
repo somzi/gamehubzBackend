@@ -63,9 +63,16 @@ namespace GameHubz.Api
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
             });
 
+            // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
+            // and the pattern-based delete path in RedisCacheService (used for invalidating
+            // every page of a paginated key family at once).
+            var redisConnectionString = builder.Configuration.GetConnectionString("Redis")!;
+            var sharedMultiplexer = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+            builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sharedMultiplexer);
+
             builder.Services.AddStackExchangeRedisCache(options =>
             {
-                options.Configuration = builder.Configuration.GetConnectionString("Redis");
+                options.ConnectionMultiplexerFactory = () => Task.FromResult<StackExchange.Redis.IConnectionMultiplexer>(sharedMultiplexer);
                 options.InstanceName = "GameHubz_";
             });
 

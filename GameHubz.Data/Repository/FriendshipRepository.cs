@@ -40,6 +40,16 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(x => x.UserAId == a && x.UserBId == b);
         }
 
+        public Task<List<Guid>> GetFriendIds(Guid userId)
+        {
+            // Project just the OTHER-side userId for every active friendship row touching
+            // this user. Small, no joins, perfect to populate the cached friends set.
+            return this.BaseDbSet()
+                .Where(x => x.UserAId == userId || x.UserBId == userId)
+                .Select(x => x.UserAId == userId ? x.UserBId : x.UserAId)
+                .ToListAsync();
+        }
+
         public async Task<List<FriendDto>> GetFriendsOf(Guid userId, string? search)
         {
             // EF Core can't translate a conditional that picks one of two

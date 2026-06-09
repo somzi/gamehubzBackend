@@ -7,6 +7,11 @@ namespace GameHubz.Logic.Services
     {
         private readonly ICacheService cacheService;
 
+        // Role lookups are read-heavy primitives (every hub view, every tournament authz check).
+        // 10-minute window is safe because every write path that changes a (user, hub) role
+        // explicitly invalidates the key.
+        private static readonly TimeSpan UserHubRoleTtl = TimeSpan.FromMinutes(10);
+
         public UserHubService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -25,6 +30,27 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.cacheService = cacheService;
+        }
+
+        // Cached (user, hub) → role lookup used by HubService.GetOverviewById and
+        // TournamentAuthorizationService. Returns null when the user is not a member.
+        public async Task<HubRole?> GetUserHubRoleCachedAsync(Guid userId, Guid hubId)
+        {
+            string key = $"user_hub_role:{userId}:{hubId}";
+
+            // Cache value encoding: 0 = not a member (sentinel — real HubRole values start at 1),
+            // 1/2/3 = HubOwner/HubAdmin/HubMember. We use int? so a true cache miss (HasValue==false)
+            // is distinguishable from a cached "not a member" (HasValue==true, Value==0).
+            var cached = await this.cacheService.GetAsync<int?>(key);
+            if (cached.HasValue)
+            {
+                return cached.Value == 0 ? null : (HubRole)cached.Value;
+            }
+
+            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(userId, hubId);
+            int toCache = role.HasValue ? (int)role.Value : 0;
+            await this.cacheService.SetAsync<int?>(key, toCache, UserHubRoleTtl);
+            return role;
         }
 
         public async Task Unfollow(Guid userId, Guid hubId)
@@ -210,7 +236,7 @@ namespace GameHubz.Logic.Services
 
         public async Task EnsureCallerCanManage(Guid hubId, Guid callerUserId)
         {
-            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(callerUserId, hubId);
+            var role = await this.GetUserHubRoleCachedAsync(callerUserId, hubId);
 
             if (role != HubRole.HubOwner && role != HubRole.HubAdmin)
             {
@@ -220,7 +246,7 @@ namespace GameHubz.Logic.Services
 
         public async Task EnsureCallerIsOwner(Guid hubId, Guid callerUserId)
         {
-            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(callerUserId, hubId);
+            var role = await this.GetUserHubRoleCachedAsync(callerUserId, hubId);
 
             if (role != HubRole.HubOwner)
             {
@@ -228,12 +254,24 @@ namespace GameHubz.Logic.Services
             }
         }
 
+        // Centralised cache invalidation for every write path that changes membership/role.
+        // Kept internal-ish (private) but mirrored in HubService.KickUserFromHub / Create,
+        // which need the same invalidations without taking a dependency on this service.
         private async Task InvalidateHubCaches(Guid? userId, Guid? hubId)
         {
             if (userId.HasValue)
             {
                 await this.cacheService.RemoveAsync($"dashboard_highlights:{userId}");
                 await this.cacheService.RemoveAsync($"user_hubs_list:{userId}");
+
+                // Joined/discovery lists are paginated — wipe every page for this user.
+                await this.cacheService.RemoveByPatternAsync($"user_joined_hubs:{userId}:*");
+                await this.cacheService.RemoveByPatternAsync($"user_discovery_hubs:{userId}:*");
+
+                // Hub role changes can change tournament-management permission for the user
+                // across every tournament owned by that hub. We don't know the affected
+                // tournamentIds at this point, and they're cheap to recompute on next access.
+                await this.cacheService.RemoveByPatternAsync($"tournament_authz:{userId}:*");
             }
 
             await this.cacheService.RemoveAsync("hubs_overview_all");
@@ -242,6 +280,11 @@ namespace GameHubz.Logic.Services
             {
                 await this.cacheService.RemoveAsync($"hub_overview:{hubId}");
                 await this.cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
+            }
+
+            if (userId.HasValue && hubId.HasValue)
+            {
+                await this.cacheService.RemoveAsync($"user_hub_role:{userId}:{hubId}");
             }
         }
     }

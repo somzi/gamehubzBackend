@@ -90,11 +90,16 @@ namespace GameHubz.Logic.Services
 
             if (tournamentRegistration.UserId.HasValue)
             {
-                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:AvailableToJoin:p:0:s:10");
-                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:Upcoming:p:0:s:10");
+                // Approving registration affects this user's feed across every status / page.
+                await cacheService.RemoveByPatternAsync($"user_feed:{tournamentRegistration.UserId}:*");
                 await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
                 await cacheService.RemoveAsync($"bracket:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.TournamentId}");
             }
+            // Post-commit invalidation of the participants list — BeforeSave in the participant
+            // service runs before the DB commit, so this catches the rare race where a concurrent
+            // read between BeforeSave and SaveAsync could re-cache the stale list.
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.TournamentId}");
         }
 
         public async Task ApproveRegistrations(List<Guid> registrationId)
@@ -119,11 +124,16 @@ namespace GameHubz.Logic.Services
                 if (registration.UserId.HasValue)
                 {
                     await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
+                    // Approval changes which feeds this user sees the tournament under.
+                    await cacheService.RemoveByPatternAsync($"user_feed:{registration.UserId}:*");
                 }
             }
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.First().TournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
+            // Post-commit safety net — see ApproveRegistration above.
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");
         }
 
         public async Task RejectRegistration(Guid registrationId)

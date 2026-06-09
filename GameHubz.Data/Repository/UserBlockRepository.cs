@@ -44,6 +44,22 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(x => x.BlockerId == blockerId && x.BlockedId == blockedId);
         }
 
+        public Task<List<Guid>> GetBlockedIds(Guid blockerId)
+        {
+            return this.BaseDbSet()
+                .Where(x => x.BlockerId == blockerId)
+                .Select(x => x.BlockedId)
+                .ToListAsync();
+        }
+
+        public Task<List<Guid>> GetBlockerIds(Guid blockedId)
+        {
+            return this.BaseDbSet()
+                .Where(x => x.BlockedId == blockedId)
+                .Select(x => x.BlockerId)
+                .ToListAsync();
+        }
+
         public async Task<List<BlockedUserDto>> GetBlockedList(Guid blockerId, string? search)
         {
             var query = this.BaseDbSet().Where(x => x.BlockerId == blockerId);

@@ -4,6 +4,8 @@ namespace GameHubz.Logic.Services
 {
     public class TournamentParticipantService : AppBaseServiceGeneric<TournamentParticipantEntity, TournamentParticipantDto, TournamentParticipantPost, TournamentParticipantEdit>
     {
+        private readonly ICacheService cacheService;
+
         public TournamentParticipantService(
             IUnitOfWorkFactory factory,
             IMapper mapper,
@@ -11,7 +13,8 @@ namespace GameHubz.Logic.Services
             IValidator<TournamentParticipantEntity> validator,
             SearchService searchService,
             ServiceFunctions serviceFunctions,
-            IUserContextReader userContextReader) : base(
+            IUserContextReader userContextReader,
+            ICacheService cacheService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -20,6 +23,7 @@ namespace GameHubz.Logic.Services
                 mapper,
                 serviceFunctions)
         {
+            this.cacheService = cacheService;
         }
 
         protected override IRepository<TournamentParticipantEntity> GetRepository()
@@ -27,13 +31,18 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<TournamentParticipantOverview>> GetByTournament(Guid tournamentId)
         {
+            string cacheKey = $"tournament_participants:{tournamentId}";
+            var cached = await cacheService.GetAsync<List<TournamentParticipantOverview>>(cacheKey);
+            if (cached != null) return cached;
+
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
 
+            List<TournamentParticipantOverview> result;
             if (tournament.IsTeamTournament)
             {
                 var teams = await this.AppUnitOfWork.TournamentTeamRepository.GetByTournamentId(tournamentId);
 
-                return teams.Select(team => new TournamentParticipantOverview
+                result = teams.Select(team => new TournamentParticipantOverview
                 {
                     Username = team.TeamName,
                     AvatarUrl = team.CaptainUser?.AvatarUrl,
@@ -52,10 +61,15 @@ namespace GameHubz.Logic.Services
                     }).ToList()
                 }).ToList();
             }
+            else
+            {
+                var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByTournamentId(tournamentId);
+                result = participants ?? new List<TournamentParticipantOverview>();
+            }
 
-            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByTournamentId(tournamentId);
+            await cacheService.SetAsync(cacheKey, result, TimeSpan.FromMinutes(2));
 
-            return participants ?? new List<TournamentParticipantOverview>();
+            return result;
         }
 
         public async Task RemoveUser(Guid tournamentId, Guid userId)
@@ -68,6 +82,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
         }
 
         public async Task RemoveTeam(Guid tournamentId, Guid teamId)
@@ -91,6 +107,19 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
 
             await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
+        }
+
+        // SaveEntity is the only path that adds a new participant (called from registration approval
+        // and team registration flow). Invalidate the participants cache so the next read sees the
+        // new participant immediately instead of waiting for the 2-minute TTL.
+        protected override async Task BeforeSave(TournamentParticipantEntity entity, TournamentParticipantPost inputDto, bool isNew)
+        {
+            if (entity.TournamentId.HasValue)
+            {
+                await cacheService.RemoveAsync($"tournament_participants:{entity.TournamentId.Value}");
+            }
         }
     }
 }

@@ -11,5 +11,9 @@ namespace GameHubz.Logic.Interfaces
         Task<FriendshipEntity?> FindIncludingDeleted(Guid userAId, Guid userBId);
 
         Task<List<FriendDto>> GetFriendsOf(Guid userId, string? search);
+
+        // Lightweight projection of the friend graph for the user — just the other-side
+        // userIds, used to populate the cached friends_set HashSet.
+        Task<List<Guid>> GetFriendIds(Guid userId);
     }
 }

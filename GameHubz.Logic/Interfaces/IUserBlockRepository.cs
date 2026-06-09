@@ -13,5 +13,11 @@ namespace GameHubz.Logic.Interfaces
         Task<UserBlockEntity?> FindIncludingDeleted(Guid blockerId, Guid blockedId);
 
         Task<List<BlockedUserDto>> GetBlockedList(Guid blockerId, string? search);
+
+        // userIds the given user has blocked (outgoing) — for the blocks_out:{userId} cache.
+        Task<List<Guid>> GetBlockedIds(Guid blockerId);
+
+        // userIds that have blocked the given user (incoming) — for the blocks_in:{userId} cache.
+        Task<List<Guid>> GetBlockerIds(Guid blockedId);
     }
 }

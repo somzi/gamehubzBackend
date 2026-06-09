@@ -123,6 +123,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{id}");
             await cacheService.RemoveAsync($"bracket:{id}");
+            await cacheService.RemoveAsync($"league_standings:{id}");
         }
 
         public async Task Publish(Guid id)
@@ -212,6 +213,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
@@ -298,9 +300,12 @@ namespace GameHubz.Logic.Services
                 // bracket structure response, so flush the bracket cache too — otherwise the new
                 // setting won't be visible until the 5-minute cache window expires.
                 await cacheService.RemoveAsync($"bracket:{model.Id}");
+                await cacheService.RemoveAsync($"league_standings:{model.Id}");
             }
 
-            await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");
+            // Wipe every paginated tournament list cached for this hub — the new (or edited)
+            // tournament could appear on any page, not just page 0.
+            await cacheService.RemoveByPatternAsync($"tournaments:hub:{inputDto.HubId}:*");
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
@@ -386,14 +391,12 @@ namespace GameHubz.Logic.Services
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{1}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{1}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{1}:s:{10}");
+            // Wipes every cached page of every status for this hub — replaces the old
+            // p:0/p:1 hand-listed invalidation that left page 2+ stale.
+            await cacheService.RemoveByPatternAsync($"tournaments:hub:{hubId}:*");
         }
 
         private async Task UpdateRoundSchedule(Guid tournamentId, int roundNumber, DateTime? opensAt = null, DateTime? deadline = null)
@@ -417,6 +420,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
     }

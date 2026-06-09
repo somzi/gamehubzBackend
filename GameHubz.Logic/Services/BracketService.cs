@@ -220,6 +220,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
 
@@ -1263,6 +1264,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
         }
 
         private async Task FinalizeMatchResult(
@@ -1380,6 +1382,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
         }
 
@@ -1392,6 +1395,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
         }
 
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)
@@ -1475,6 +1479,12 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<LeagueStandingDto>> GetLeagueStandings(Guid tournamentId)
         {
+            // Cache key intentionally mirrors the bracket: any write path that invalidates
+            // `bracket:{tournamentId}` also invalidates `league_standings:{tournamentId}`.
+            string cacheKey = $"league_standings:{tournamentId}";
+            var cached = await cacheService.GetAsync<List<LeagueStandingDto>>(cacheKey);
+            if (cached != null) return cached;
+
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             if (tournament == null) throw new Exception("Tournament not found");
 
@@ -1498,6 +1508,8 @@ namespace GameHubz.Logic.Services
                 .ToList();
 
             for (int i = 0; i < standings!.Count; i++) standings[i].Position = i + 1;
+
+            await cacheService.SetAsync(cacheKey, standings, TimeSpan.FromMinutes(5));
 
             return standings;
         }
@@ -2081,6 +2093,7 @@ namespace GameHubz.Logic.Services
                     await CheckAndCompleteLeague(teamMatch.TournamentId);
 
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
@@ -2093,6 +2106,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
                 await this.SaveAsync();
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
@@ -2181,6 +2195,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
         }
