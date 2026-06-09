@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly CloudinaryStorageService storageService;
         private readonly INotificationService notificationService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public MatchService(
             IUnitOfWorkFactory factory,
@@ -18,7 +19,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             CloudinaryStorageService storageService,
-            INotificationService notificationService) : base(
+            INotificationService notificationService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -29,6 +31,7 @@ namespace GameHubz.Logic.Services
         {
             this.storageService = storageService;
             this.notificationService = notificationService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -202,6 +205,140 @@ namespace GameHubz.Logic.Services
 
             // 4. Obriši keš (jer se meč promenio)
             // await _cacheService.RemoveAsync($"match:{matchId}");
+        }
+
+        public async Task RequestAdminHelp(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (!IsMatchParticipant(match, user.UserId))
+                throw new Exception("Only match participants can request admin help");
+
+            // Idempotent: a second tap must not spam the admins with notifications.
+            if (match.AdminHelpRequested) return;
+
+            match.AdminHelpRequested = true;
+            match.AdminHelpRequestedByUserId = user.UserId;
+            match.AdminHelpRequestedOn = DateTime.UtcNow;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+
+            NotifyAdminsHelpRequested(match, user);
+        }
+
+        public async Task ResolveAdminHelp(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+                throw new Exception("Only tournament admins can resolve help requests");
+
+            if (!match.AdminHelpRequested) return;
+
+            var requesterUserId = match.AdminHelpRequestedByUserId;
+            match.AdminHelpRequested = false;
+            match.AdminHelpRequestedByUserId = null;
+            match.AdminHelpRequestedOn = null;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+
+            NotifyHelpResolved(matchId, requesterUserId);
+        }
+
+        public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
+                throw new Exception("Only tournament admins can view help requests");
+
+            return await this.AppUnitOfWork.MatchRepository.GetAdminHelpRequests(tournamentId);
+        }
+
+        private static bool IsMatchParticipant(MatchEntity match, Guid userId)
+        {
+            // Team sub-matches carry the player ids on the match itself; solo matches use the participants.
+            if (match.HomeUserId == userId || match.AwayUserId == userId) return true;
+
+            return (match.HomeParticipant != null &&
+                        (match.HomeParticipant.UserId == userId ||
+                         match.HomeParticipant.Team?.Members.Any(m => m.UserId == userId) == true)) ||
+                   (match.AwayParticipant != null &&
+                        (match.AwayParticipant.UserId == userId ||
+                         match.AwayParticipant.Team?.Members.Any(m => m.UserId == userId) == true));
+        }
+
+        private void NotifyAdminsHelpRequested(MatchEntity match, TokenUserInfo requester)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(match.TournamentId);
+                    if (ownership == null) return;
+
+                    var tournament = await this.AppUnitOfWork.TournamentRepository.GetById(match.TournamentId);
+
+                    var hubUsers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
+                    var pushTokens = hubUsers
+                        .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
+                                    && m.UserId != requester.UserId
+                                    && !string.IsNullOrEmpty(m.PushToken))
+                        .Select(m => m.PushToken!)
+                        .ToList();
+
+                    // The hub owner may not have a UserHub membership row — include them explicitly.
+                    if (ownership.OwnerUserId != requester.UserId &&
+                        !hubUsers.Any(m => m.UserId == ownership.OwnerUserId))
+                    {
+                        var owner = await this.AppUnitOfWork.UserRepository.GetById(ownership.OwnerUserId);
+                        if (!string.IsNullOrEmpty(owner?.PushToken)) pushTokens.Add(owner!.PushToken!);
+                    }
+
+                    if (pushTokens.Count == 0) return;
+
+                    await notificationService.SendToManyAsync(
+                        pushTokens.Distinct(),
+                        tournament?.Name ?? "Admin help needed",
+                        $"{requester.Username} requested admin help in their match.",
+                        new
+                        {
+                            matchId = match.Id!.Value.ToString(),
+                            tournamentId = match.TournamentId.ToString(),
+                            type = "adminHelp"
+                        });
+                }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        private void NotifyHelpResolved(Guid matchId, Guid? requesterUserId)
+        {
+            if (requesterUserId == null) return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);
+                    if (requester?.PushToken == null) return;
+
+                    await notificationService.SendToOneAsync(
+                        requester.PushToken,
+                        "Help request resolved",
+                        "An admin reviewed your match and marked the issue as resolved.",
+                        new { matchId = matchId.ToString(), type = "adminHelpResolved" });
+                }
+                catch { /* fire-and-forget */ }
+            });
         }
 
         private static Guid? GetParticipantUserId(MatchEntity match, bool isHome) =>

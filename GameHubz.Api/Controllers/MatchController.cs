@@ -79,6 +79,26 @@ namespace GameHubz.Api.Controllers
             return Ok(new { message = "Match scheduled successfully." });
         }
 
+        [HttpPost("{id}/adminHelp")]
+        public async Task<IActionResult> RequestAdminHelp(Guid id)
+        {
+            await this.Service.RequestAdminHelp(id);
+            return Ok(new { message = "Tournament admins have been notified." });
+        }
+
+        [HttpPost("{id}/adminHelp/resolve")]
+        public async Task<IActionResult> ResolveAdminHelp(Guid id)
+        {
+            await this.Service.ResolveAdminHelp(id);
+            return Ok(new { message = "Help request resolved." });
+        }
+
+        [HttpGet("adminHelp/tournament/{tournamentId}")]
+        public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
+        {
+            return await this.Service.GetAdminHelpRequests(tournamentId);
+        }
+
         [HttpGet("{id}/team/details")]
         public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
         {

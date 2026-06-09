@@ -18,5 +18,8 @@
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }
         public Guid? HubOwnerUserId { get; set; }
+
+        public bool AdminHelpRequested { get; set; }
+        public Guid? AdminHelpRequestedByUserId { get; set; }
     }
 }
