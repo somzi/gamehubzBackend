@@ -188,6 +188,7 @@ namespace GameHubz.Api.Controllers
             return Ok(team);
         }
 
+        [AllowAnonymous]
         [HttpGet("{id}/export/pdf")]
         public async Task<IActionResult> ExportBracketPdf(Guid id)
         {
