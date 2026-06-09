@@ -52,6 +52,7 @@ namespace GameHubz.Logic.Services
 
         // Group card palette — clean, white-card design inspired by the live group-stage UI.
         private const string CCardBg = "#FFFFFF";
+
         private const string CCardBrd = "#E5E7EB";
         private const string CGroupName = "#0F172A";
         private const string CTblHdr = "#94A3B8";
@@ -194,32 +195,35 @@ namespace GameHubz.Logic.Services
                 }
             sb.Append("</defs>");
 
-            // Header
-            sb.Append($"<rect width=\"{P(w)}\" height=\"{P(HeaderH)}\" fill=\"{CHeaderBg}\"/>");
-            sb.Append($"<line x1=\"0\" y1=\"{P(HeaderH)}\" x2=\"{P(w)}\" y2=\"{P(HeaderH)}\" stroke=\"{CAccent}\" stroke-width=\"3\"/>");
-            sb.Append($"<text x=\"{P(Pad)}\" y=\"38\" fill=\"{CWhite}\" font-size=\"26\" font-weight=\"bold\" font-family=\"{Font}\">{Esc(structure.Name)}</text>");
+            // ── Editorial header ───────────────────────────────────
+            // Same layout as the WB page so the two pages of a DE bracket read as one set.
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"20\" fill=\"{CGroupName}\" font-size=\"9\" font-weight=\"bold\" font-family=\"{Font}\" letter-spacing=\"0.6\">GAMEHUBZ</text>");
+            sb.Append($"<rect x=\"{P(Pad - 12)}\" y=\"13\" width=\"6\" height=\"6\" fill=\"{CAccent}\" transform=\"rotate(45 {P(Pad - 9)} 16)\"/>");
+            sb.Append($"<text x=\"{P(w / 2)}\" y=\"20\" fill=\"{CMuted}\" font-size=\"8\" font-family=\"{Font}\" text-anchor=\"middle\" letter-spacing=\"0.5\">{Esc(FormatTopMeta(structure))}</text>");
 
-            string sub = $"{structure.Format}  •  {(structure.IsTeamTournament ? "Teams" : "Solo")}  •  {stage.Name}";
-            sb.Append($"<text x=\"{P(Pad)}\" y=\"58\" fill=\"{CMuted}\" font-size=\"13\" font-family=\"{Font}\">{Esc(sub)}</text>");
+            var (statusTxt2, statusCol2) = FormatStatusBadge(structure.Status);
+            sb.Append($"<text x=\"{P(w - Pad)}\" y=\"20\" fill=\"{statusCol2}\" font-size=\"8\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"end\" letter-spacing=\"0.8\">{Esc(statusTxt2)}</text>");
 
-            string statusTxt = structure.Status.ToString().ToUpper();
-            string statusCol = structure.Status switch
-            {
-                TournamentStatus.InProgress => "#22C55E",
-                TournamentStatus.Completed => CAccent,
-                _ => CMuted,
-            };
-            float stW = statusTxt.Length * 6.5f + 16;
-            float stX = w - stW - 30;
-            sb.Append($"<rect x=\"{P(stX)}\" y=\"24\" width=\"{P(stW)}\" height=\"18\" rx=\"4\" fill=\"{statusCol}\" fill-opacity=\"0.12\"/>");
-            sb.Append($"<rect x=\"{P(stX)}\" y=\"24\" width=\"{P(stW)}\" height=\"18\" rx=\"4\" fill=\"none\" stroke=\"{statusCol}\"/>");
-            sb.Append($"<text x=\"{P(stX + 8)}\" y=\"37\" fill=\"{statusCol}\" font-size=\"11\" font-weight=\"bold\" font-family=\"{Font}\">{Esc(statusTxt)}</text>");
+            sb.Append($"<line x1=\"{P(Pad)}\" y1=\"32\" x2=\"{P(w - Pad)}\" y2=\"32\" stroke=\"{CCardBrd}\" stroke-width=\"0.5\"/>");
 
-            // Round labels — LB rounds get descriptive names ("LB Final", "LB Semifinal", …)
-            // so the reader can spot the terminal rounds without counting from the right.
-            // We anchor those names to the MAX persisted round number rather than rounds.Count
-            // so a DE bye cascade that collapses early LB rounds out of the structure doesn't
-            // shift every later round's label upward.
+            // Title block: "LOSERS BRACKET" caption distinguishes this page from the WB page;
+            // big title shows the stage name as the editor entered it.
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"58\" fill=\"{CMuted}\" font-size=\"8\" font-weight=\"bold\" font-family=\"{Font}\" letter-spacing=\"1.2\">LOSERS BRACKET</text>");
+            sb.Append($"<text x=\"{P(Pad)}\" y=\"90\" fill=\"{CGroupName}\" font-size=\"24\" font-weight=\"bold\" font-family=\"{Font}\">{Esc(stage.Name)}</text>");
+
+            // Right side: format + first-round entry count (a useful sanity check for LB size).
+            int firstRoundEntries = rounds[0].Matches.Count * 2;
+            string formatLine = $"{SplitPascal(structure.Format.ToString()).ToUpperInvariant()} · {firstRoundEntries}";
+            sb.Append($"<text x=\"{P(w - Pad)}\" y=\"58\" fill=\"{CMuted}\" font-size=\"8\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"end\" letter-spacing=\"1.2\">FORMAT</text>");
+            sb.Append($"<text x=\"{P(w - Pad)}\" y=\"86\" fill=\"{CGroupName}\" font-size=\"13\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"end\">{Esc(formatLine)}</text>");
+
+            sb.Append($"<line x1=\"{P(Pad)}\" y1=\"{P(HeaderH - 6)}\" x2=\"{P(w - Pad)}\" y2=\"{P(HeaderH - 6)}\" stroke=\"{CCardBrd}\" stroke-width=\"0.5\"/>");
+
+            // ── Round labels ───────────────────────────────────────
+            // LB rounds get descriptive names ("LB FINAL", "LB SEMIFINAL", …) anchored to the
+            // MAX persisted round number rather than rounds.Count so a DE bye cascade that
+            // collapses early LB rounds out of the structure doesn't shift every later round's
+            // label upward. Style matches the editorial WB labels (plain uppercase tracking).
             float rlY = HeaderH + 6;
             int maxRound = rounds.Max(r => r.RoundNumber);
             for (int i = 0; i < rounds.Count; i++)
@@ -227,13 +231,11 @@ namespace GameHubz.Logic.Services
                 float cx = Pad + i * ColW + MatchBoxW / 2;
                 int rn = rounds[i].RoundNumber;
                 string lbl = rn == maxRound
-                    ? "LB Final"
+                    ? "LB FINAL"
                     : rn == maxRound - 1
-                        ? "LB Semifinal"
-                        : $"LB Round {rn}";
-                float bw = lbl.Length * 6f + 22;
-                sb.Append($"<rect x=\"{P(cx - bw / 2)}\" y=\"{P(rlY)}\" width=\"{P(bw)}\" height=\"22\" rx=\"11\" fill=\"{CRndBg}\"/>");
-                sb.Append($"<text x=\"{P(cx)}\" y=\"{P(rlY + 15)}\" fill=\"{CWhite}\" font-size=\"11\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"middle\">{Esc(lbl)}</text>");
+                        ? "LB SEMIFINAL"
+                        : $"LB ROUND {rn}";
+                sb.Append($"<text x=\"{P(cx)}\" y=\"{P(rlY + 14)}\" fill=\"{CMuted}\" font-size=\"9\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"middle\" letter-spacing=\"1.2\">{Esc(lbl)}</text>");
             }
 
             // Positions: each column independently centers its matches in the column area.
@@ -412,14 +414,15 @@ namespace GameHubz.Logic.Services
             // Hairline divider under the title block, marking the start of bracket content
             sb.Append($"<line x1=\"{P(Pad)}\" y1=\"{P(HeaderH - 6)}\" x2=\"{P(w - Pad)}\" y2=\"{P(HeaderH - 6)}\" stroke=\"{CCardBrd}\" stroke-width=\"0.5\"/>");
 
-
             // ── Round labels ───────────────────────────────────────
             // Plain uppercase tracking instead of the old dark pill — matches the editorial header.
+            // Use ResolveRoundLabel so the terminal rounds (Final, Semifinal, Grand Final, …) read
+            // by name instead of as a generic "ROUND N" pulled from the DTO.
             float rlY = HeaderH + 6;
             for (int i = 0; i < rounds.Count; i++)
             {
                 float cx = Pad + i * ColW + MatchBoxW / 2;
-                string lbl = rounds[i].Name.ToUpperInvariant();
+                string lbl = ResolveRoundLabel(rounds[i]).ToUpperInvariant();
                 sb.Append($"<text x=\"{P(cx)}\" y=\"{P(rlY + 14)}\" fill=\"{CMuted}\" font-size=\"9\" font-weight=\"bold\" font-family=\"{Font}\" text-anchor=\"middle\" letter-spacing=\"1.2\">{Esc(lbl)}</text>");
             }
 
@@ -823,5 +826,71 @@ namespace GameHubz.Logic.Services
             => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
         private static string P(float v) => v.ToString("0.###", Inv);
+
+        // ── Editorial header helpers ───────────────────────────────────
+
+        // Top metadata line: tournament name · format · mode · timestamp, dot-separated
+        // with small caps so it reads as a single subtle ribbon.
+        private static string FormatTopMeta(TournamentStructureDto structure)
+        {
+            var bits = new[]
+            {
+                structure.Name.ToUpperInvariant(),
+                SplitPascal(structure.Format.ToString()).ToUpperInvariant(),
+                structure.IsTeamTournament ? "TEAMS" : "SOLO",
+                DateTime.UtcNow.ToString("yyyy.MM.dd · HH:mm 'UTC'", Inv),
+            };
+            return string.Join("   ·   ", bits);
+        }
+
+        // Inserts spaces before each capital letter inside a PascalCase enum name so
+        // "GroupStageWithKnockout" reads as "Group Stage With Knockout".
+        private static string SplitPascal(string s)
+            => System.Text.RegularExpressions.Regex.Replace(s, "(?<!^)([A-Z])", " $1");
+
+        // Status badge text + color. Matches the small uppercase status pill in the reference.
+        private static (string Text, string Color) FormatStatusBadge(TournamentStatus status) => status switch
+        {
+            TournamentStatus.InProgress => ("IN PROGRESS", CAccent),
+            TournamentStatus.Completed => ("COMPLETED", CGroupName),
+            _ => (status.ToString().ToUpperInvariant(), CMuted),
+        };
+
+        // Group range label — "A — P" given "Group A" … "Group P", or just the single
+        // group name if there's only one.
+        private static string FormatGroupRange(List<GroupDto> groups)
+        {
+            if (groups.Count == 0) return "";
+            string first = StripGroupPrefix(groups.First().Name);
+            string last = StripGroupPrefix(groups.Last().Name);
+            return first == last ? first : $"{first} — {last}";
+        }
+
+        private static string StripGroupPrefix(string name)
+            => name.StartsWith("Group ", StringComparison.OrdinalIgnoreCase)
+                ? name[6..].Trim()
+                : name;
+
+        // Prefers the most descriptive label available for a bracket round. The DTO's default
+        // name ("Round N") is fine for the early WB rounds but obscures the meaning of the
+        // late-stage rounds (Quarter / Semi / Final / Grand Final). When the round contains a
+        // match flagged with a recognised MatchStage, we surface that stage's name.
+        private static string ResolveRoundLabel(BracketRoundDto round)
+        {
+            if (round.Matches.Count == 0) return round.Name;
+
+            var firstStage = round.Matches[0].Stage;
+            return firstStage switch
+            {
+                MatchStage.GrandFinal => "Grand Final",
+                MatchStage.Final => "Final",
+                MatchStage.SemiFinal => "Semifinal",
+                MatchStage.QuarterFinal => "Quarterfinal",
+                MatchStage.RoundOf16 => "Round of 16",
+                MatchStage.RoundOf32 => "Round of 32",
+                MatchStage.RoundOf64 => "Round of 64",
+                _ => round.Name,
+            };
+        }
     }
 }
