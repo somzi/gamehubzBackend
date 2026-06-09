@@ -9,7 +9,8 @@ namespace GameHubz.DataMigrations
             // True flag + requester/timestamp marks an open request; resolving clears them.
             Alter.Table("Match").AddColumn("AdminHelpRequested").AsBoolean().NotNullable().WithDefaultValue(false);
             Alter.Table("Match").AddColumn("AdminHelpRequestedByUserId").AsGuid().Nullable();
-            Alter.Table("Match").AddColumn("AdminHelpRequestedOn").AsDateTime().Nullable();
+            // datetime2 matches RoundDeadline/RoundOpenAt on the same table (precision over compatibility).
+            Alter.Table("Match").AddColumn("AdminHelpRequestedOn").AsDateTime2().Nullable();
         }
     }
 }

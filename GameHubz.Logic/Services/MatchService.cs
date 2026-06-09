@@ -227,7 +227,23 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
-            NotifyAdminsHelpRequested(match, user);
+            // Gather all recipients + payload while the DbContext is still alive. The actual
+            // push call is fire-and-forget below so it must NOT touch this scope's DbContext.
+            var pushTokens = await CollectHubAdminPushTokensAsync(match.TournamentId, excludeUserId: user.UserId);
+            if (pushTokens.Count == 0) return;
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetById(match.TournamentId);
+
+            FireAndForgetPush(
+                pushTokens,
+                tournament?.Name ?? "Admin help needed",
+                $"{user.Username} requested admin help in their match.",
+                new
+                {
+                    matchId = match.Id!.Value.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    type = "adminHelp"
+                });
         }
 
         public async Task ResolveAdminHelp(Guid matchId)
@@ -250,7 +266,17 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
-            NotifyHelpResolved(matchId, requesterUserId);
+            if (requesterUserId == null) return;
+
+            // Resolve the requester's push token now, while the scope is alive.
+            var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);
+            if (string.IsNullOrEmpty(requester?.PushToken)) return;
+
+            FireAndForgetPush(
+                new List<string> { requester.PushToken! },
+                "Help request resolved",
+                "An admin reviewed your match and marked the issue as resolved.",
+                new { matchId = matchId.ToString(), type = "adminHelpResolved" });
         }
 
         public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
@@ -276,66 +302,44 @@ namespace GameHubz.Logic.Services
                          match.AwayParticipant.Team?.Members.Any(m => m.UserId == userId) == true));
         }
 
-        private void NotifyAdminsHelpRequested(MatchEntity match, TokenUserInfo requester)
+        // Resolves every push token entitled to "Admin help" notifications for a tournament:
+        // hub owner + hub admins, plus the hub owner row if they aren't in UserHub.
+        // Called while the request-scoped DbContext is alive — never from a Task.Run.
+        private async Task<List<string>> CollectHubAdminPushTokensAsync(Guid tournamentId, Guid excludeUserId)
         {
-            _ = Task.Run(async () =>
+            var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
+            if (ownership == null) return new List<string>();
+
+            var hubUsers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
+            var pushTokens = hubUsers
+                .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
+                            && m.UserId != excludeUserId
+                            && !string.IsNullOrEmpty(m.PushToken))
+                .Select(m => m.PushToken!)
+                .ToList();
+
+            // The hub owner may not have a UserHub membership row — include them explicitly.
+            if (ownership.OwnerUserId != excludeUserId &&
+                !hubUsers.Any(m => m.UserId == ownership.OwnerUserId))
             {
-                try
-                {
-                    var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(match.TournamentId);
-                    if (ownership == null) return;
+                var owner = await this.AppUnitOfWork.UserRepository.GetById(ownership.OwnerUserId);
+                if (!string.IsNullOrEmpty(owner?.PushToken)) pushTokens.Add(owner.PushToken!);
+            }
 
-                    var tournament = await this.AppUnitOfWork.TournamentRepository.GetById(match.TournamentId);
-
-                    var hubUsers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
-                    var pushTokens = hubUsers
-                        .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
-                                    && m.UserId != requester.UserId
-                                    && !string.IsNullOrEmpty(m.PushToken))
-                        .Select(m => m.PushToken!)
-                        .ToList();
-
-                    // The hub owner may not have a UserHub membership row — include them explicitly.
-                    if (ownership.OwnerUserId != requester.UserId &&
-                        !hubUsers.Any(m => m.UserId == ownership.OwnerUserId))
-                    {
-                        var owner = await this.AppUnitOfWork.UserRepository.GetById(ownership.OwnerUserId);
-                        if (!string.IsNullOrEmpty(owner?.PushToken)) pushTokens.Add(owner!.PushToken!);
-                    }
-
-                    if (pushTokens.Count == 0) return;
-
-                    await notificationService.SendToManyAsync(
-                        pushTokens.Distinct(),
-                        tournament?.Name ?? "Admin help needed",
-                        $"{requester.Username} requested admin help in their match.",
-                        new
-                        {
-                            matchId = match.Id!.Value.ToString(),
-                            tournamentId = match.TournamentId.ToString(),
-                            type = "adminHelp"
-                        });
-                }
-                catch { /* fire-and-forget */ }
-            });
+            return pushTokens.Distinct().ToList();
         }
 
-        private void NotifyHelpResolved(Guid matchId, Guid? requesterUserId)
+        // Hands off already-resolved tokens to the push pipeline. Safe inside Task.Run because
+        // NotificationService owns its own DbContext scope (see SendBatchAsync).
+        private void FireAndForgetPush(List<string> pushTokens, string title, string body, object data)
         {
-            if (requesterUserId == null) return;
+            if (pushTokens.Count == 0) return;
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);
-                    if (requester?.PushToken == null) return;
-
-                    await notificationService.SendToOneAsync(
-                        requester.PushToken,
-                        "Help request resolved",
-                        "An admin reviewed your match and marked the issue as resolved.",
-                        new { matchId = matchId.ToString(), type = "adminHelpResolved" });
+                    await notificationService.SendToManyAsync(pushTokens, title, body, data);
                 }
                 catch { /* fire-and-forget */ }
             });

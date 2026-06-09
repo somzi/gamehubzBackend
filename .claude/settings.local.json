@@ -31,7 +31,11 @@
       "Bash(cd /C:/projects/turnir/mobile/gamehubz-mobile && find . -type f -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.json\" | head -50)",
       "PowerShell(Get-ChildItem -Path \"C:\\\\projects\\\\turnir\\\\b\\\\gamehubzBackend\" -Recurse -Directory | Select-Object -First 30 | ForEach-Object { $_.FullName })",
       "Bash(ls -la \"C:\\\\projects\\\\turnir\\\\mobile\\\\\" 2>/dev/null || dir \"C:\\\\projects\\\\turnir\\\\mobile\\\\\" 2>/dev/null || ls -la \"C:\\\\projects\\\\turnir\\\\\" 2>/dev/null || dir \"C:\\\\projects\\\\turnir\\\\\")",
-      "PowerShell(Set-Location C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile; npx tsc --noEmit; Write-Host \"TSC exit code: $LASTEXITCODE\")"
+      "PowerShell(Set-Location C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile; npx tsc --noEmit; Write-Host \"TSC exit code: $LASTEXITCODE\")",
+      "Bash(git -C C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile log --oneline -10)",
+      "Bash(ls \"C:/projects/turnir/mobile/gamehubz-mobile/\" 2>&1 | head -20)",
+      "Bash(npx --no-install tsc --noEmit)",
+      "PowerShell(Push-Location 'C:\\\\projects\\\\turnir\\\\mobile\\\\gamehubz-mobile'; npx --no-install tsc --noEmit 2>&1 | Select-Object -Last 30; Write-Host \"Exit: $LASTEXITCODE\"; Pop-Location)"
     ]
   }
 }
