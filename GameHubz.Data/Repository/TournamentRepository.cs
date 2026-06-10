@@ -28,6 +28,67 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(x => x.Id == id);
         }
 
+        // Atomic CAS: exactly one request can move a tournament into InProgress and generate
+        // its bracket — a concurrent or repeated CreateBracket sees 0 rows updated and bails.
+        public async Task<bool> TryClaimBracketGeneration(Guid tournamentId)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId
+                    && t.Status != TournamentStatus.InProgress
+                    && t.Status != TournamentStatus.Completed)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, TournamentStatus.InProgress));
+
+            return affected > 0;
+        }
+
+        // Gives the claim back after a failed generation so the organizer can fix the config
+        // (e.g. invalid qualifier count) and retry, instead of the tournament wedging in
+        // InProgress with no bracket. Conditional on InProgress so a finished tournament is
+        // never downgraded.
+        public async Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus)
+        {
+            await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId && t.Status == TournamentStatus.InProgress)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, previousStatus));
+        }
+
+        /// <summary>
+        /// Serialises stage-advancement logic per tournament via a Postgres session advisory
+        /// lock. Round-completion checks and next-round / knockout generation are check-then-act
+        /// over multiple rows, so without this two concurrent "last results" of a round can both
+        /// generate the next round. The connection is pinned open so every SaveChanges between
+        /// acquire and release runs on the same session that owns the lock; Npgsql's pool reset
+        /// (DISCARD ALL) releases the lock even if the request dies before the explicit unlock.
+        /// </summary>
+        public async Task AcquireAdvancementLock(Guid tournamentId)
+        {
+            await this.ContextBase.Database.OpenConnectionAsync();
+            await this.ContextBase.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_lock({0})", ToAdvisoryKey(tournamentId));
+        }
+
+        public async Task ReleaseAdvancementLock(Guid tournamentId)
+        {
+            try
+            {
+                await this.ContextBase.Database.ExecuteSqlRawAsync(
+                    "SELECT pg_advisory_unlock({0})", ToAdvisoryKey(tournamentId));
+            }
+            finally
+            {
+                // Balances the OpenConnection in Acquire — EF reopens on demand afterwards.
+                await this.ContextBase.Database.CloseConnectionAsync();
+            }
+        }
+
+        // Folds the Guid into the bigint key space pg_advisory_lock expects. A collision between
+        // two tournaments only over-serialises them — never under-locks.
+        private static long ToAdvisoryKey(Guid id)
+        {
+            var bytes = id.ToByteArray();
+            return BitConverter.ToInt64(bytes, 0) ^ BitConverter.ToInt64(bytes, 8);
+        }
+
         public async Task<List<TournamentOverview>> GetByHubPaged(Guid hubId, TournamentStatus status, int page, int pageSize)
         {
             List<TournamentStatus> statuses = [];

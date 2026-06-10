@@ -31,5 +31,13 @@ namespace GameHubz.Logic.Interfaces
         Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId);
 
         Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId);
+
+        Task<bool> TryClaimBracketGeneration(Guid tournamentId);
+
+        Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus);
+
+        Task AcquireAdvancementLock(Guid tournamentId);
+
+        Task ReleaseAdvancementLock(Guid tournamentId);
     }
 }
