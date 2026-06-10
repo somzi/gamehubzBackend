@@ -5,7 +5,9 @@ namespace GameHubz.DataModels.Models
     public class GroupMatchStatsRow
     {
         public Guid HomeParticipantId { get; set; }
-        public Guid AwayParticipantId { get; set; }
+
+        // Null for Swiss bye matches — the home participant gets a free win.
+        public Guid? AwayParticipantId { get; set; }
         public int HomeScore { get; set; }
         public int AwayScore { get; set; }
         public Guid? WinnerParticipantId { get; set; }

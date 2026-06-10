@@ -63,13 +63,14 @@ namespace GameHubz.Data.Repository
                     m.TournamentGroupId == groupId &&
                     m.TeamMatchId == null &&
                     m.Status == MatchStatus.Completed &&
+                    // Away may be null only for Swiss byes (home gets the free win);
+                    // league/group matches always carry both participants.
                     m.HomeParticipantId.HasValue &&
-                    m.AwayParticipantId.HasValue &&
                     (excludeMatchId == null || m.Id != excludeMatchId))
                 .Select(m => new GroupMatchStatsRow
                 {
                     HomeParticipantId = m.HomeParticipantId!.Value,
-                    AwayParticipantId = m.AwayParticipantId!.Value,
+                    AwayParticipantId = m.AwayParticipantId,
                     HomeScore = m.HomeUserScore ?? 0,
                     AwayScore = m.AwayUserScore ?? 0,
                     WinnerParticipantId = m.WinnerParticipantId

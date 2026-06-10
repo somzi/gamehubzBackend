@@ -39,6 +39,19 @@ namespace GameHubz.DataModels.Domain
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }
 
+        // Swiss format: number of rounds chosen by the organizer. Null = auto
+        // (ceil(log2(participants)), the standard Swiss round count).
+        public int? SwissRoundsCount { get; set; }
+
+        // Swiss format: knockout bracket size after the Swiss rounds (power of 2).
+        // Null = pure Swiss — the standings leader wins the tournament outright.
+        public int? SwissKnockoutQualifiers { get; set; }
+
+        // Swiss format: how many of the knockout slots are direct berths from the standings.
+        // The remaining (N - D) slots are decided by a play-in round between standings
+        // D+1 .. D+2(N-D). Null or == SwissKnockoutQualifiers = no play-in.
+        public int? SwissDirectQualifiers { get; set; }
+
         // When true, single-elimination brackets also generate a play-off match
         // between the two semi-final losers. Default false for all existing tournaments.
         public bool HasThirdPlaceMatch { get; set; }

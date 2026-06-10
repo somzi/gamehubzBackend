@@ -42,6 +42,9 @@ namespace GameHubz.DataModels.Models
         public string? HubAvatarUrl { get; set; }
         public TournamentFormat? Format { get; set; }
         public int? RoundDurationMinutes { get; set; }
+        public int? SwissRoundsCount { get; set; }
+        public int? SwissKnockoutQualifiers { get; set; }
+        public int? SwissDirectQualifiers { get; set; }
         public bool? IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
         public TeamWinCondition? TeamWinCondition { get; set; }

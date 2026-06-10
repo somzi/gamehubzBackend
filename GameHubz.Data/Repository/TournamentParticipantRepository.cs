@@ -34,6 +34,13 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public async Task<List<TournamentParticipantEntity>> GetEntitiesByTournamentId(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(tp => tp.TournamentId == tournamentId)
+                .ToListAsync();
+        }
+
         public async Task<List<TournamentParticipantEntity>> GetByGroupIdWithNames(Guid? id)
         {
             return await this.BaseDbSet()

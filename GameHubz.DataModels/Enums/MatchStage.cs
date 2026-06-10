@@ -16,6 +16,7 @@
         RoundOf128 = 12,
         RoundOf256 = 13,
         RoundOf512 = 14,
-        RoundOf1024 = 15
+        RoundOf1024 = 15,
+        PlayIn = 16
     }
 }
