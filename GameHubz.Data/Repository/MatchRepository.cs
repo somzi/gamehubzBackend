@@ -256,7 +256,6 @@ namespace GameHubz.Data.Repository
                 })
                 .ToListAsync();
 
-            recent.Reverse();
             return recent;
         }
 
