@@ -1561,6 +1561,10 @@ namespace GameHubz.Logic.Services
             match.AwayUserScore = awayScore;
             match.Status = MatchStatus.Completed;
 
+            // Result entered straight through the bracket without ever scheduling — stamp the
+            // entry time so the match doesn't show without a date. A real scheduled time is kept.
+            match.ScheduledStartTime ??= DateTime.UtcNow;
+
             // Clear any proposal — the result is now official.
             match.ProposedHomeScore = null;
             match.ProposedAwayScore = null;
