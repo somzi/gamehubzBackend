@@ -199,25 +199,11 @@ namespace GameHubz.Api.Controllers
             int draws = total - wins - losses;
             int winRate = total > 0 ? (int)Math.Round(wins * 100.0 / total) : 0;
 
-            List<ShareStat>? stats = null;
-            string description = $"Player profile on {config.AppName} — tournaments, match history and stats.";
+            var scoreboard = new PlayerScoreboard(total, winRate, wins, draws, losses, trophies);
 
-            if (total > 0 || trophies > 0)
-            {
-                stats =
-                [
-                    // Row 1: highlight cards (totals, accuracy, achievements)
-                    new("Matches", total.ToString(), "matches"),
-                    new("Win rate", $"{winRate}%", "winrate", "#22d3ee"),
-                    new("Trophies", trophies.ToString(), "trophy", "#fbbf24"),
-                    // Row 2: result breakdown
-                    new("Wins", wins.ToString(), "wins", "#4ade80"),
-                    new("Draws", draws.ToString(), "draws", "#94a3b8"),
-                    new("Losses", losses.ToString(), "losses", "#f87171"),
-                ];
-
-                description = $"{total} matches · {wins}W {losses}L {draws}D · {winRate}% win rate · {trophies} {(trophies == 1 ? "trophy" : "trophies")} on {config.AppName}";
-            }
+            string description = total > 0
+                ? $"{total} matches · {wins}W {losses}L {draws}D · {winRate}% win rate · {trophies} {(trophies == 1 ? "trophy" : "trophies")} on {config.AppName}"
+                : $"Player profile on {config.AppName} — tournaments, match history and stats.";
 
             return await SharePage(
                 ShareEntityType.User,
@@ -229,8 +215,7 @@ namespace GameHubz.Api.Controllers
                 description: description,
                 imageUrl: data.AvatarUrl,
                 entityId: id,
-                stats: stats,
-                compactStats: true);
+                scoreboard: scoreboard);
         }
 
         [HttpGet("/.well-known/apple-app-site-association")]
@@ -297,7 +282,8 @@ namespace GameHubz.Api.Controllers
             IReadOnlyList<ShareStat>? stats = null,
             string? contextText = null,
             string? contextImageUrl = null,
-            bool compactStats = false)
+            bool compactStats = false,
+            PlayerScoreboard? scoreboard = null)
         {
             await LogShare(entityType, entityId);
 
@@ -316,6 +302,7 @@ namespace GameHubz.Api.Controllers
                 ContextText = contextText,
                 ContextImageUrl = contextImageUrl,
                 CompactStats = compactStats,
+                Scoreboard = scoreboard,
             };
 
             Response.Headers.CacheControl = "public, max-age=300";
