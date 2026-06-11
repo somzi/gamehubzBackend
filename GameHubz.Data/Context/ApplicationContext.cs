@@ -48,6 +48,16 @@ namespace GameHubz.Data.Context
 
             GeneratedEntityConfigurator(modelBuilder);
             SocialConfigurator(modelBuilder);
+            ShareConfigurator(modelBuilder);
+        }
+
+        private static void ShareConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<ShareLogEntity>().ToTable("ShareLog")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<ShareLogEntity>()
+                .HasIndex(x => new { x.EntityType, x.EntityId });
         }
 
         private static void SocialConfigurator(ModelBuilder modelBuilder)
