@@ -5,6 +5,7 @@ using GameHubz.Api.Startup;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.Data.UnitOfWork;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Config.RabbitMqConfig;
 using GameHubz.Localization;
 using GameHubz.Logic;
@@ -80,6 +81,9 @@ namespace GameHubz.Api
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);
+
+            IConfigurationSection shareLinksSettings = builder.Configuration.GetSection(nameof(ShareLinksConfig));
+            builder.Services.Configure<ShareLinksConfig>(shareLinksSettings);
             builder.Services.AddSignalR().AddJsonProtocol(opts =>
             {
                 // Same UTC marker treatment for messages pushed through SignalR hubs
