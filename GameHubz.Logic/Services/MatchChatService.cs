@@ -1,4 +1,5 @@
 ﻿using FluentValidation;
+using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
 
@@ -34,6 +35,13 @@ namespace GameHubz.Logic.Services
         public async Task<ChatMessageDto> SendMessage(Guid matchId, string content)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            // Completed matches keep their chat history visible but read-only.
+            if (match.Status == MatchStatus.Completed)
+                throw new Exception("Chat is closed for completed matches");
 
             var entity = new MatchChatEntity
             {
