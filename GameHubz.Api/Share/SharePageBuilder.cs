@@ -654,9 +654,23 @@ namespace GameHubz.Api.Share
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
             padding: 24px;
+            position: relative;
+            overflow-x: hidden;
         }
 
+        .aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .blob { position: absolute; border-radius: 50%; filter: blur(80px); opacity: .55; will-change: transform; }
+        .blob-1 { width: 520px; height: 520px; top: -180px; left: -120px; background: radial-gradient(circle, #22d3ee, transparent 65%); animation: drift1 18s ease-in-out infinite; }
+        .blob-2 { width: 620px; height: 620px; bottom: -220px; right: -160px; background: radial-gradient(circle, #3b82f6, transparent 65%); animation: drift2 22s ease-in-out infinite; }
+        .blob-3 { width: 380px; height: 380px; top: 40%; left: 50%; transform: translate(-50%, -50%); background: radial-gradient(circle, rgba(99, 102, 241, 0.35), transparent 70%); animation: drift3 26s ease-in-out infinite; }
+        @keyframes drift1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
+        @keyframes drift2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-30px, -40px) scale(1.12); } }
+        @keyframes drift3 { 0%,100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-45%, -55%) scale(1.15); } }
+        .grain { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: .04; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+
         .card {
+            position: relative;
+            z-index: 2;
             width: 100%;
             max-width: 400px;
             border-radius: 28px;
@@ -731,7 +745,7 @@ namespace GameHubz.Api.Share
         .stats-row {
             margin-top: 24px;
             display: grid;
-            grid-template-columns: 1fr auto 1fr;
+            grid-template-columns: 1fr 124px 1fr;
             align-items: center;
             gap: 8px;
         }
@@ -756,7 +770,7 @@ namespace GameHubz.Api.Share
             text-transform: uppercase;
         }
 
-        .donut { position: relative; width: 124px; height: 124px; }
+        .donut { position: relative; width: 124px; height: 124px; margin: 0 auto; }
         .donut svg { transform: rotate(-90deg); }
         .donut-center {
             position: absolute;
@@ -885,9 +899,19 @@ namespace GameHubz.Api.Share
             .content { padding: 0 22px 22px; }
             .name { font-size: 26px; }
         }
+        @media (prefers-reduced-motion: reduce) {
+            .blob { animation: none !important; }
+        }
     </style>
 </head>
 <body>
+    <div class="aurora" aria-hidden="true">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+    <div class="grain" aria-hidden="true"></div>
+
     <main class="card">
         <div class="banner"></div>
         <div class="content">
