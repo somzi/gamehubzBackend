@@ -51,6 +51,7 @@ namespace GameHubz.Api.Controllers
                     x.PrizeCurrency,
                     x.IsTeamTournament,
                     x.TeamSize,
+                    HubName = x.Hub != null ? x.Hub.Name : null,
                     HubAvatarUrl = x.Hub != null ? x.Hub.AvatarUrl : null,
                     ApprovedCount = x.TournamentRegistrations!
                         .Count(r => r.Status == TournamentRegistrationStatus.Approved),
@@ -62,27 +63,33 @@ namespace GameHubz.Api.Controllers
                 return await NotFoundPage(ShareEntityType.Tournament, "Tournament", $"tournament/{id}", id);
             }
 
-            var parts = new List<string> { Humanize(data.Format.ToString()) };
+            var stats = new List<ShareStat> { new("Format", Humanize(data.Format.ToString())) };
 
             if (data.IsTeamTournament)
             {
-                parts.Add(data.TeamSize > 0 ? $"{data.TeamSize}v{data.TeamSize} teams" : "Team tournament");
+                stats.Add(new("Teams", data.TeamSize > 0 ? $"{data.TeamSize}v{data.TeamSize}" : "Team tournament"));
             }
             else
             {
-                parts.Add(data.MaxPlayers > 0
-                    ? $"{data.ApprovedCount}/{data.MaxPlayers} players"
-                    : $"{data.ApprovedCount} players");
+                stats.Add(new("Players", data.MaxPlayers > 0
+                    ? $"{data.ApprovedCount}/{data.MaxPlayers}"
+                    : $"{data.ApprovedCount}"));
             }
 
             if (data.Prize > 0)
             {
-                parts.Add($"Prize {data.Prize} {CurrencyLabel(data.PrizeCurrency)}");
+                stats.Add(new("Prize", $"{data.Prize} {CurrencyLabel(data.PrizeCurrency)}"));
             }
 
             if (data.StartDate.HasValue)
             {
-                parts.Add($"Starts {data.StartDate.Value:MMM d, yyyy}");
+                stats.Add(new("Starts", $"{data.StartDate.Value:MMM d, yyyy}"));
+            }
+
+            var parts = stats.Select(s => $"{s.Label}: {s.Value}").ToList();
+            if (!string.IsNullOrWhiteSpace(data.HubName))
+            {
+                parts.Insert(0, $"by {data.HubName}");
             }
 
             return await SharePage(
@@ -93,7 +100,10 @@ namespace GameHubz.Api.Controllers
                 title: data.Name,
                 description: string.Join(" · ", parts),
                 imageUrl: data.HubAvatarUrl,
-                entityId: id);
+                entityId: id,
+                stats: stats,
+                contextText: data.HubName,
+                contextImageUrl: data.HubAvatarUrl);
         }
 
         [HttpGet("/hub/{id:guid}")]
@@ -154,6 +164,61 @@ namespace GameHubz.Api.Controllers
 
             string displayName = string.IsNullOrWhiteSpace(data.Nickname) ? data.Username : data.Nickname!;
 
+            // Same predicates as MatchRepository.GetStatsByUserId and
+            // TournamentRepository.GetNumberOfTournamentsWonByUserId, so the share
+            // card shows the exact numbers the in-app profile shows.
+            var matchStats = await context.Set<MatchEntity>()
+                .AsNoTracking()
+                .Where(m =>
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == id || m.AwayParticipant!.UserId == id))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == id || m.AwayUserId == id)))
+                    && m.Status == MatchStatus.Completed)
+                .GroupBy(_ => 1)
+                .Select(g => new
+                {
+                    Total = g.Count(),
+                    Wins = g.Count(m => m.WinnerParticipantId != null &&
+                        ((m.HomeUserId == id || (m.TeamMatchId == null && m.HomeParticipant!.UserId == id))
+                            ? m.WinnerParticipantId == m.HomeParticipantId
+                            : m.WinnerParticipantId == m.AwayParticipantId)),
+                    Losses = g.Count(m => m.WinnerParticipantId != null &&
+                        ((m.HomeUserId == id || (m.TeamMatchId == null && m.HomeParticipant!.UserId == id))
+                            ? m.WinnerParticipantId != m.HomeParticipantId
+                            : m.WinnerParticipantId != m.AwayParticipantId)),
+                })
+                .FirstOrDefaultAsync();
+
+            int trophies = await context.Set<TournamentEntity>()
+                .AsNoTracking()
+                .CountAsync(t => t.WinnerUserId == id
+                    || (t.WinnerTeamId != null && t.WinnerTeam!.Members.Any(m => m.UserId == id)));
+
+            int total = matchStats?.Total ?? 0;
+            int wins = matchStats?.Wins ?? 0;
+            int losses = matchStats?.Losses ?? 0;
+            int draws = total - wins - losses;
+            int winRate = total > 0 ? (int)Math.Round(wins * 100.0 / total) : 0;
+
+            List<ShareStat>? stats = null;
+            string description = $"Player profile on {config.AppName} — tournaments, match history and stats.";
+
+            if (total > 0 || trophies > 0)
+            {
+                stats =
+                [
+                    // Row 1: highlight cards (totals, accuracy, achievements)
+                    new("Matches", total.ToString(), "matches"),
+                    new("Win rate", $"{winRate}%", "winrate", "#22d3ee"),
+                    new("Trophies", trophies.ToString(), "trophy", "#fbbf24"),
+                    // Row 2: result breakdown
+                    new("Wins", wins.ToString(), "wins", "#4ade80"),
+                    new("Draws", draws.ToString(), "draws", "#94a3b8"),
+                    new("Losses", losses.ToString(), "losses", "#f87171"),
+                ];
+
+                description = $"{total} matches · {wins}W {losses}L {draws}D · {winRate}% win rate · {trophies} {(trophies == 1 ? "trophy" : "trophies")} on {config.AppName}";
+            }
+
             return await SharePage(
                 ShareEntityType.User,
                 "Player",
@@ -161,9 +226,11 @@ namespace GameHubz.Api.Controllers
                 // The in-app route for a user profile is player/:id, not user/:id.
                 deepPath: $"player/{id}",
                 title: displayName,
-                description: $"Player profile on {config.AppName} — tournaments, match history and stats.",
+                description: description,
                 imageUrl: data.AvatarUrl,
-                entityId: id);
+                entityId: id,
+                stats: stats,
+                compactStats: true);
         }
 
         [HttpGet("/.well-known/apple-app-site-association")]
@@ -226,7 +293,11 @@ namespace GameHubz.Api.Controllers
             string title,
             string description,
             string? imageUrl,
-            Guid entityId)
+            Guid entityId,
+            IReadOnlyList<ShareStat>? stats = null,
+            string? contextText = null,
+            string? contextImageUrl = null,
+            bool compactStats = false)
         {
             await LogShare(entityType, entityId);
 
@@ -241,6 +312,10 @@ namespace GameHubz.Api.Controllers
                 AppName = config.AppName,
                 AppStoreUrl = config.AppStoreUrl,
                 PlayStoreUrl = config.PlayStoreUrl,
+                Stats = stats,
+                ContextText = contextText,
+                ContextImageUrl = contextImageUrl,
+                CompactStats = compactStats,
             };
 
             Response.Headers.CacheControl = "public, max-age=300";
