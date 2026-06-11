@@ -235,12 +235,14 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId)
         {
-            return await this.BaseDbSet()
+            // Take the 10 most recent in SQL, then reverse in memory so the caller gets
+            // oldest → latest — the order the UI labels expect.
+            var recent = await this.BaseDbSet()
                 .Where(m =>
                     ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
                     || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                     && m.Status == MatchStatus.Completed)
-                .OrderByDescending(m => m.ModifiedOn)
+                .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
                 .Take(10)
                 .Select(m => new PerformanceV2Dto
                 {
@@ -253,6 +255,9 @@ namespace GameHubz.Data.Repository
                             : "L",
                 })
                 .ToListAsync();
+
+            recent.Reverse();
+            return recent;
         }
 
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
