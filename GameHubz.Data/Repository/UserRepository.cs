@@ -36,8 +36,10 @@ namespace GameHubz.Data.Repository
 
         public async Task<bool> AnyByEmail(string email)
         {
+            // Postgres = is case-sensitive; lower both sides so "User@x.com" and "user@x.com" collide.
+            var normalized = email.ToLower();
             return await this.BaseDbSet()
-                .Where(x => x.Email == email && x.IsActive)
+                .Where(x => x.Email.ToLower() == normalized && x.IsActive)
                 .AnyAsync();
         }
 

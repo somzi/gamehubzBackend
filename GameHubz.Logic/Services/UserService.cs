@@ -103,6 +103,9 @@ namespace GameHubz.Logic.Services
 
         public async Task RegisterUser(RegisterUserPostDto registerUserPostDto)
         {
+            // Canonicalize before the uniqueness check so all future lookups see the same value.
+            registerUserPostDto.Email = (registerUserPostDto.Email ?? string.Empty).Trim().ToLowerInvariant();
+
             if (await this.AppUnitOfWork.UserRepository.AnyByEmail(registerUserPostDto.Email))
             {
                 throw new UserAlreadyExistsException(this.LocalizationService);
