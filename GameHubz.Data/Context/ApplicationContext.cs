@@ -49,6 +49,28 @@ namespace GameHubz.Data.Context
             GeneratedEntityConfigurator(modelBuilder);
             SocialConfigurator(modelBuilder);
             ShareConfigurator(modelBuilder);
+            StreamConfigurator(modelBuilder);
+        }
+
+        private static void StreamConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<MatchStreamEntity>().ToTable("MatchStream")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasOne(x => x.Match)
+                .WithMany()
+                .HasForeignKey(x => x.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasOne(x => x.Streamer)
+                .WithMany()
+                .HasForeignKey(x => x.StreamerUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasIndex(x => x.MatchId);
         }
 
         private static void ShareConfigurator(ModelBuilder modelBuilder)

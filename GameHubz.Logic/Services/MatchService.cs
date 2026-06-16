@@ -9,6 +9,8 @@ namespace GameHubz.Logic.Services
         private readonly CloudinaryStorageService storageService;
         private readonly INotificationService notificationService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly StreamVodResolver streamVodResolver;
+        private readonly YouTubeStreamClient youTubeStreamClient;
 
         public MatchService(
             IUnitOfWorkFactory factory,
@@ -20,7 +22,9 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             CloudinaryStorageService storageService,
             INotificationService notificationService,
-            TournamentAuthorizationService tournamentAuth) : base(
+            TournamentAuthorizationService tournamentAuth,
+            StreamVodResolver streamVodResolver,
+            YouTubeStreamClient youTubeStreamClient) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -32,6 +36,8 @@ namespace GameHubz.Logic.Services
             this.storageService = storageService;
             this.notificationService = notificationService;
             this.tournamentAuth = tournamentAuth;
+            this.streamVodResolver = streamVodResolver;
+            this.youTubeStreamClient = youTubeStreamClient;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -349,6 +355,305 @@ namespace GameHubz.Logic.Services
             isHome
                 ? (match.HomeUserId ?? match.HomeParticipant?.UserId)
                 : (match.AwayUserId ?? match.AwayParticipant?.UserId);
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  Match streaming
+        // ─────────────────────────────────────────────────────────────────────
+
+        // One-tap "I'm streaming this match". Resolves the channel from the explicit handle or the
+        // user's saved socials, persists it back to socials for next time, and marks the stream Live.
+        public async Task<MatchStreamDto> StartStream(Guid matchId, StartMatchStreamRequest request)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (!IsStreamingPlatform(request.Platform))
+                throw new Exception("Unsupported streaming platform. Choose Twitch, YouTube or Kick.");
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (!IsMatchParticipant(match, user.UserId))
+                throw new Exception("Only match participants can stream this match.");
+
+            // Resolve the channel handle: explicit handle wins, otherwise fall back to a saved social.
+            var socials = await this.AppUnitOfWork.UserSocialRepository.GetByUserId(user.UserId);
+            var existingSocial = socials.FirstOrDefault(s => s.Type == request.Platform);
+
+            var handle = (request.Handle ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(handle))
+                handle = existingSocial?.Username?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(handle))
+                throw new Exception("No channel found. Add your channel handle to start streaming.");
+
+            // Persist the channel on the profile for next time (create or update).
+            if (existingSocial == null)
+            {
+                await this.AppUnitOfWork.UserSocialRepository.AddEntity(new UserSocialEntity
+                {
+                    Type = request.Platform,
+                    Username = handle,
+                    UserId = user.UserId
+                }, this.UserContextReader);
+            }
+            else if (!string.Equals(existingSocial.Username, handle, StringComparison.OrdinalIgnoreCase))
+            {
+                existingSocial.Username = handle;
+                await this.AppUnitOfWork.UserSocialRepository.UpdateEntity(existingSocial, this.UserContextReader);
+            }
+
+            // YouTube LIVE embeds (live_stream?channel=UC..) only work with a stable channel id, not
+            // @handles. Resolve once at start (time-boxed) so the embed Just Works in-app and the link
+            // survives any future @handle rename. The human-readable handle stays on the user's social.
+            var embedHandle = handle;
+            if (request.Platform == SocialType.YouTube)
+            {
+                using var ytCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var channelId = await this.youTubeStreamClient.TryResolveChannelIdAsync(handle, ytCts.Token);
+                if (!string.IsNullOrWhiteSpace(channelId)) embedHandle = channelId!;
+            }
+
+            // Reuse this streamer's own live row; otherwise create a new one.
+            // Both opponents can stream at once — each owns a separate MatchStream row.
+            var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, user.UserId);
+            if (stream != null && stream.Status == MatchStreamStatus.Live)
+            {
+                stream.Platform = request.Platform;
+                stream.ChannelHandle = embedHandle;
+                stream.StartedAt ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchStreamRepository.UpdateEntity(stream, this.UserContextReader);
+            }
+            else
+            {
+                stream = new MatchStreamEntity
+                {
+                    MatchId = matchId,
+                    StreamerUserId = user.UserId,
+                    Platform = request.Platform,
+                    ChannelHandle = embedHandle,
+                    Status = MatchStreamStatus.Live,
+                    StartedAt = DateTime.UtcNow,
+                };
+                await this.AppUnitOfWork.MatchStreamRepository.AddEntity(stream, this.UserContextReader);
+            }
+
+            await this.SaveAsync();
+
+            return await ToDtoAsync(stream);
+        }
+
+        // Explicitly triggered by the streamer when they stop. Marks Ended and resolves the VOD link
+        // ONCE from the platform API (time-boxed). A manual VodUrl in the request overrides resolution
+        // (also the Kick fallback path). No background jobs.
+        public async Task<MatchStreamDto> EndStream(Guid matchId, EndMatchStreamRequest? request)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // Target the caller's own stream by default; an admin may pass StreamerUserId to end another's.
+            var targetStreamerId = request?.StreamerUserId ?? user.UserId;
+            var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
+            if (stream == null) throw new Exception("No stream found for this match.");
+
+            await EnsureCanManageStream(stream, matchId, user);
+
+            stream.Status = MatchStreamStatus.Ended;
+            stream.EndedAt ??= DateTime.UtcNow;
+
+            // All three platforms (Twitch / YouTube / Kick) auto-resolve via their official APIs using
+            // the channel handle stored on this row. Frontend never prompts; an explicit request.VodUrl
+            // only acts as an admin override.
+            var vod = request?.VodUrl?.Trim();
+
+            if (string.IsNullOrWhiteSpace(vod) && IsStreamingPlatform(stream.Platform))
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var startedAt = stream.StartedAt ?? stream.CreatedOn ?? stream.EndedAt!.Value;
+                vod = await this.streamVodResolver.ResolveVodUrlAsync(
+                    stream.Platform, stream.ChannelHandle, startedAt, stream.EndedAt!.Value, cts.Token);
+            }
+
+            if (!string.IsNullOrWhiteSpace(vod))
+                stream.VodUrl = vod;
+
+            await this.AppUnitOfWork.MatchStreamRepository.UpdateEntity(stream, this.UserContextReader);
+            await this.SaveAsync();
+
+            return await ToDtoAsync(stream);
+        }
+
+        // Manual VOD link — the silent fallback when auto-resolution couldn't find one (mainly Kick),
+        // or an admin/streamer correction after the fact.
+        public async Task<MatchStreamDto> SetStreamVod(Guid matchId, SetMatchStreamVodRequest request)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (string.IsNullOrWhiteSpace(request.VodUrl))
+                throw new Exception("VOD URL is required.");
+
+            var targetStreamerId = request.StreamerUserId ?? user.UserId;
+            var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
+            if (stream == null) throw new Exception("No stream found for this match.");
+
+            await EnsureCanManageStream(stream, matchId, user);
+
+            stream.VodUrl = request.VodUrl.Trim();
+            if (stream.Status != MatchStreamStatus.Ended)
+            {
+                stream.Status = MatchStreamStatus.Ended;
+                stream.EndedAt ??= DateTime.UtcNow;
+            }
+
+            await this.AppUnitOfWork.MatchStreamRepository.UpdateEntity(stream, this.UserContextReader);
+            await this.SaveAsync();
+
+            return await ToDtoAsync(stream);
+        }
+
+        // Removes a stream entirely (soft-delete). Use when the streamer attached the wrong channel
+        // or ended by mistake and wants to start fresh. Idempotent: a missing row is a no-op.
+        public async Task DeleteStream(Guid matchId, Guid? streamerUserId = null)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var targetStreamerId = streamerUserId ?? user.UserId;
+
+            var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
+            if (stream == null) return;
+
+            await EnsureCanManageStream(stream, matchId, user);
+
+            await this.AppUnitOfWork.MatchStreamRepository.SoftDeleteEntity(stream, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
+        // Latest stream for a match, regardless of streamer (kept for back-compat / single-stream callers).
+        public async Task<MatchStreamDto?> GetStream(Guid matchId)
+        {
+            var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchId(matchId);
+            if (stream == null) return null;
+
+            await EnsurePlayableKickVodAsync(stream);
+            return await ToDtoAsync(stream);
+        }
+
+        // All current streams for a match — the latest row per streamer, so both opponents show up.
+        // Live streams sort first. Drives the dual-stream Stream tab in the app.
+        public async Task<List<MatchStreamDto>> GetStreams(Guid matchId)
+        {
+            var all = await this.AppUnitOfWork.MatchStreamRepository.GetByMatchId(matchId);
+
+            var latestPerStreamer = all
+                .GroupBy(s => s.StreamerUserId)
+                .Select(g => g.First()) // GetByMatchId is newest-first
+                .OrderByDescending(s => s.Status == MatchStreamStatus.Live)
+                .ThenByDescending(s => s.StartedAt)
+                .ToList();
+
+            var result = new List<MatchStreamDto>();
+            foreach (var s in latestPerStreamer)
+            {
+                await EnsurePlayableKickVodAsync(s);
+                result.Add(await ToDtoAsync(s));
+            }
+
+            return result;
+        }
+
+        // Kick VODs are only embeddable as a direct .m3u8. Rows created before that change (or ended
+        // before Kick finished processing the VOD) hold a non-playable link — the watch page or the
+        // old kick.com/video/{uuid}. When such a row is read back, try once more to resolve the real
+        // manifest and persist it, so the replay becomes playable in-app without any user action.
+        private async Task EnsurePlayableKickVodAsync(MatchStreamEntity stream)
+        {
+            if (stream.Platform != SocialType.Kick) return;
+            if (stream.Status != MatchStreamStatus.Ended) return;
+            if (!string.IsNullOrWhiteSpace(stream.VodUrl) &&
+                stream.VodUrl.Contains(".m3u8", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var startedAt = stream.StartedAt ?? stream.CreatedOn ?? stream.EndedAt ?? DateTime.UtcNow;
+                var endedAt = stream.EndedAt ?? DateTime.UtcNow;
+
+                var vod = await this.streamVodResolver.ResolveVodUrlAsync(
+                    stream.Platform, stream.ChannelHandle, startedAt, endedAt, cts.Token);
+
+                // Only persist a real manifest — never downgrade to the (non-playable) watch-page fallback.
+                if (!string.IsNullOrWhiteSpace(vod) &&
+                    vod.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) &&
+                    vod != stream.VodUrl)
+                {
+                    stream.VodUrl = vod;
+                    await this.AppUnitOfWork.MatchStreamRepository.UpdateEntity(stream, this.UserContextReader);
+                    await this.SaveAsync();
+                }
+            }
+            catch
+            {
+                // Best-effort; the panel still offers the manual paste / open-channel fallback.
+            }
+        }
+
+        // Only the streamer or a tournament admin may end/edit a stream.
+        private async Task EnsureCanManageStream(MatchStreamEntity stream, Guid matchId, TokenUserInfo user)
+        {
+            if (stream.StreamerUserId == user.UserId) return;
+
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null || !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+                throw new Exception("Only the streamer or a tournament admin can manage this stream.");
+        }
+
+        private static bool IsStreamingPlatform(SocialType platform) =>
+            platform == SocialType.Twitch || platform == SocialType.YouTube || platform == SocialType.Kick;
+
+        private async Task<MatchStreamDto> ToDtoAsync(MatchStreamEntity stream)
+        {
+            var streamer = await this.AppUnitOfWork.UserRepository.ShallowGetById(stream.StreamerUserId);
+            return MapStreamDto(stream, streamer);
+        }
+
+        private static MatchStreamDto MapStreamDto(MatchStreamEntity stream, UserEntity? streamer)
+        {
+            return new MatchStreamDto
+            {
+                Id = stream.Id ?? Guid.Empty,
+                MatchId = stream.MatchId,
+                StreamerUserId = stream.StreamerUserId,
+                StreamerUsername = streamer?.Username,
+                StreamerNickname = streamer?.Nickname,
+                StreamerAvatarUrl = streamer?.AvatarUrl,
+                Platform = stream.Platform,
+                ChannelHandle = stream.ChannelHandle,
+                ChannelUrl = BuildChannelUrl(stream.Platform, stream.ChannelHandle),
+                Status = stream.Status,
+                VodUrl = stream.VodUrl,
+                VodPending = stream.Status == MatchStreamStatus.Ended && string.IsNullOrWhiteSpace(stream.VodUrl),
+                StartedAt = stream.StartedAt,
+                EndedAt = stream.EndedAt,
+            };
+        }
+
+        private static string BuildChannelUrl(SocialType platform, string handle)
+        {
+            var h = (handle ?? string.Empty).Trim().TrimStart('@');
+
+            // If the user stored a full url, hand it back as-is.
+            if (h.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                h.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                return h;
+
+            return platform switch
+            {
+                SocialType.Twitch => $"https://www.twitch.tv/{h}",
+                SocialType.YouTube => h.StartsWith("UC", StringComparison.Ordinal)
+                    ? $"https://www.youtube.com/channel/{h}"
+                    : $"https://www.youtube.com/@{h}",
+                SocialType.Kick => $"https://kick.com/{h}",
+                _ => string.Empty,
+            };
+        }
 
         protected override IRepository<MatchEntity> GetRepository()
             => this.AppUnitOfWork.MatchRepository;

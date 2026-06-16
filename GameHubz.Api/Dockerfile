@@ -8,7 +8,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     fontconfig \
     fonts-liberation \
+    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# curl-impersonate: a curl build whose TLS (JA3) + HTTP/2 fingerprint matches a real Chrome.
+# Needed for Kick VOD resolution — kick.com's web API sits behind Cloudflare bot management that
+# 403s .NET HttpClient AND the stock Debian curl (7.88 / OpenSSL 3.0). The impersonate build
+# returns 200. KickStreamClient shells out to curl_chrome116 (see Streaming:Kick:CurlCommand).
+ARG CURL_IMPERSONATE_VERSION=0.6.1
+RUN curl -sL "https://github.com/lwthiker/curl-impersonate/releases/download/v${CURL_IMPERSONATE_VERSION}/curl-impersonate-v${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" -o /tmp/ci.tar.gz \
+    && mkdir -p /opt/curl-impersonate \
+    && tar -xzf /tmp/ci.tar.gz -C /opt/curl-impersonate \
+    && rm /tmp/ci.tar.gz \
+    && chmod -R 755 /opt/curl-impersonate
+ENV PATH="/opt/curl-impersonate:${PATH}"
+
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081

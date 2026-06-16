@@ -45,6 +45,8 @@ namespace GameHubz.Data.UnitOfWork
 
 public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatRepository>();
 
+        public IMatchStreamRepository MatchStreamRepository => this.GetRepository<MatchStreamRepository>();
+
         public ITournamentTeamRepository TournamentTeamRepository => this.GetRepository<TournamentTeamRepository>();
         public ITournamentTeamMemberRepository TournamentTeamMemberRepository => this.GetRepository<TournamentTeamMemberRepository>();
         public ITeamJoinRequestRepository TeamJoinRequestRepository => this.GetRepository<TeamJoinRequestRepository>();

@@ -8,6 +8,10 @@
         TikTok = 4,
         YouTube = 5,
         Discord = 6,
-        Telegram = 7
+        Telegram = 7,
+
+        // Streaming-capable platforms (used by the match streaming feature).
+        Twitch = 8,
+        Kick = 9
     }
 }

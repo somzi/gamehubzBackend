@@ -97,6 +97,18 @@ namespace GameHubz.Logic
 
             services.AddTransient<INotificationService, NotificationService>();
 
+            // ─── Match streaming: per-platform VOD resolvers (app-credential API, no per-user OAuth) ───
+            // Concrete registrations so they can be injected directly (e.g. YouTubeStreamClient for
+            // channel-id resolution at stream start); the IStreamPlatformClient enumeration drives the
+            // VOD resolver.
+            services.AddTransient<TwitchStreamClient>();
+            services.AddTransient<YouTubeStreamClient>();
+            services.AddTransient<KickStreamClient>();
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<TwitchStreamClient>());
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<YouTubeStreamClient>());
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<KickStreamClient>());
+            services.AddTransient<StreamVodResolver>();
+
             services.AddTransient<FriendService>();
             services.AddTransient<DirectChatService>();
 
