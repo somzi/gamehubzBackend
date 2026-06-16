@@ -182,8 +182,8 @@ namespace GameHubz.Data.Repository
         public async Task<UserEntity?> GetByOtpAndMail(ResetPasswordOtpRequestDto resetPasswordRequestDto)
         {
             return await this.BaseDbSet()
-                .Where(x => x.ForgotPasswordOtp == resetPasswordRequestDto.OtpCode && x.Email == resetPasswordRequestDto.Email)
-                .SingleAsync();
+                .Where(x => x.ForgotPasswordOtp == resetPasswordRequestDto.OtpCode && x.Email.ToLower() == resetPasswordRequestDto.Email.ToLower())
+                .SingleOrDefaultAsync();
         }
 
         public async Task ClearPushTokenAsync(string pushToken)
