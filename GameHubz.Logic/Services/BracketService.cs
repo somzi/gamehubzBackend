@@ -232,9 +232,9 @@ namespace GameHubz.Logic.Services
 
                 case TournamentFormat.League:
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamLeagueTournament(tournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
+                        await GenerateTeamLeagueTournament(tournamentId, doubleRoundRobin: tournament.DoubleRoundRobin, roundDuration: roundDuration);
                     else
-                        await GenerateLeagueTournament(tournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
+                        await GenerateLeagueTournament(tournamentId, doubleRoundRobin: tournament.DoubleRoundRobin, roundDuration: roundDuration);
                     break;
 
                 case TournamentFormat.DoubleElimination:
@@ -245,9 +245,9 @@ namespace GameHubz.Logic.Services
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new Exception("Group count and qualifiers count are required for this format.");
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
+                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
                     else
-                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
+                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
                     break;
 
                 case TournamentFormat.Swiss:
@@ -359,7 +359,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null)
+        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -431,7 +431,7 @@ namespace GameHubz.Logic.Services
                     tournamentId,
                     groupStage.Id.Value,
                     participantsInGroup,
-                    false
+                    doubleRoundRobin
                 );
 
                 foreach (var m in groupMatches)
@@ -527,7 +527,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null)
+        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
@@ -603,7 +603,7 @@ namespace GameHubz.Logic.Services
                 var ps = groupParticipants[g.Id!.Value];
                 if (ps.Count < 2) continue;
 
-                var tms = GenerateRoundRobinTeamMatches(tournamentId, groupStage.Id.Value, ps, false);
+                var tms = GenerateRoundRobinTeamMatches(tournamentId, groupStage.Id.Value, ps, doubleRoundRobin);
                 allTeamMatches.AddRange(tms);
 
                 foreach (var tm in tms)

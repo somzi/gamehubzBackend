@@ -27,6 +27,9 @@ namespace GameHubz.DataModels.Models
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }
 
+        // League / Group-Stage: every pair plays twice instead of once.
+        public bool DoubleRoundRobin { get; set; }
+
         // Swiss format: number of rounds. Null = auto (ceil(log2(participants))).
         public int? SwissRoundsCount { get; set; }
 

@@ -39,6 +39,10 @@ namespace GameHubz.DataModels.Domain
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }
 
+        // When true, League and GroupStageWithKnockout formats run a double round-robin:
+        // every pair plays twice (reverse fixtures generated in rounds N+1..2N).
+        public bool DoubleRoundRobin { get; set; }
+
         // Swiss format: number of rounds chosen by the organizer. Null = auto
         // (ceil(log2(participants)), the standard Swiss round count).
         public int? SwissRoundsCount { get; set; }
