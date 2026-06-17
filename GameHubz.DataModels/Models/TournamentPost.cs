@@ -44,6 +44,12 @@ namespace GameHubz.DataModels.Models
 
         public bool RequireResultApproval { get; set; }
 
+        /// <summary>
+        /// When true, the tournament is exclusive-only: visible/joinable only to hub members whose
+        /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
+        /// </summary>
+        public bool IsExclusive { get; set; }
+
         public bool IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
         public TeamWinCondition TeamWinCondition { get; set; }

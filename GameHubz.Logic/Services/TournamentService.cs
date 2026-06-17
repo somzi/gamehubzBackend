@@ -76,15 +76,18 @@ namespace GameHubz.Logic.Services
 
             List<Guid> hubIds = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
+            // Subset of hubIds where the user is Exclusive-or-higher — gates exclusive tournaments.
+            List<Guid> exclusiveHubIds = await this.AppUnitOfWork.UserHubRepository.GetHubIdsWithExclusiveAccess(userId);
+
             // Read region + country from the DB (not the token): selecting a country changes the
             // user's region, and the JWT's region claim can be stale until the next token refresh.
             var userEntity = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(userId);
             var userRegion = userEntity.Region;
             var userCountry = userEntity.Country;
 
-            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize);
+            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, exclusiveHubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize);
 
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, userCountry, request.Status);
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, exclusiveHubIds, userRegion, userCountry, request.Status);
 
             var response = new TournamentPagedResponse
             {
@@ -170,7 +173,24 @@ namespace GameHubz.Logic.Services
 
             data.CanManage = await this.tournamentAuth.CanManageTournamentAsync(id);
 
+            // Tell the client whether the caller passes the exclusivity gate so it can hide the
+            // Join button for plain members. Short-circuits: no query for non-exclusive tournaments
+            // or for managers (who always have access).
+            data.HasExclusiveAccess = !data.IsExclusive
+                || data.CanManage
+                || await CallerHasExclusiveRole(data.HubId);
+
             return data;
+        }
+
+        // Exclusive-or-higher role (Exclusive/Admin/Owner) in the given hub for the current caller.
+        private async Task<bool> CallerHasExclusiveRole(Guid hubId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (user == null) return false;
+
+            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(user.UserId, hubId);
+            return role == HubRole.HubOwner || role == HubRole.HubAdmin || role == HubRole.HubExclusive;
         }
 
         private async Task RejectPendings(TournamentEntity tournament)
@@ -356,6 +376,8 @@ namespace GameHubz.Logic.Services
 
                     var pushTokens = hubMembers
                         .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
+                        // Exclusive tournaments are invisible to plain members, so don't notify them.
+                        .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
                         .Select(m => m.PushToken)
                         .Distinct()
                         .ToList();

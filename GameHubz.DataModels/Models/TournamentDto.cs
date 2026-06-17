@@ -37,6 +37,9 @@ namespace GameHubz.DataModels.Models
 
         public bool RequireResultApproval { get; set; }
 
+        /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
+        public bool IsExclusive { get; set; }
+
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();

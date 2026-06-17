@@ -55,6 +55,20 @@ namespace GameHubz.Logic.Services
                 {
                     throw new Exception("You can't join this tournament — it's restricted to a different region or country.");
                 }
+
+                // Exclusive tournaments require an Exclusive-or-higher role in the owning hub.
+                if (tournament.IsExclusive && tournament.HubId.HasValue)
+                {
+                    var role = await this.AppUnitOfWork.UserHubRepository.GetRole(entity.UserId.Value, tournament.HubId.Value);
+                    bool hasExclusiveAccess = role == HubRole.HubOwner
+                        || role == HubRole.HubAdmin
+                        || role == HubRole.HubExclusive;
+
+                    if (!hasExclusiveAccess)
+                    {
+                        throw new Exception("You can't join this tournament — it's restricted to exclusive members of this hub.");
+                    }
+                }
             }
 
             await Task.CompletedTask;

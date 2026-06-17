@@ -75,8 +75,8 @@ namespace GameHubz.Logic.Services
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             await this.EnsureCallerCanManage(hubId, caller.UserId);
 
-            // Only the Owner can grant admin privileges.
-            if (role == HubRole.HubAdmin)
+            // Only the Owner can grant elevated roles (admin or exclusive).
+            if (role == HubRole.HubAdmin || role == HubRole.HubExclusive)
             {
                 await this.EnsureCallerIsOwner(hubId, caller.UserId);
             }

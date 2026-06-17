@@ -52,11 +52,27 @@ namespace GameHubz.DataModels.Models
         public bool RequireResultApproval { get; set; }
 
         /// <summary>
+        /// When true, the tournament is restricted to exclusive-or-higher hub members
+        /// (Exclusive/Admin/Owner). False = open to all members.
+        /// </summary>
+        public bool IsExclusive { get; set; }
+
+        /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or
         /// platform admin). Only populated by the v2 overview endpoint; omitted from the v1 payload
         /// so the legacy client keeps receiving an unchanged response.
         /// </summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool CanManage { get; set; }
+
+        /// <summary>
+        /// True when the requesting user passes this tournament's exclusivity gate — i.e. has an
+        /// Exclusive-or-higher role in the owning hub (or is a manager). Only populated by the v2
+        /// overview endpoint and only meaningful when <see cref="IsExclusive"/> is true; lets the
+        /// client hide the Join button for plain members instead of letting registration fail.
+        /// Omitted when false so the v1 payload (and non-exclusive feed items) stay unchanged.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool HasExclusiveAccess { get; set; }
     }
 }

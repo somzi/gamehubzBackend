@@ -47,7 +47,7 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Include(x => x.UserRole)
-                .Where(x => x.Email == email)
+                .Where(x => x.Email == email && x.IsDeleted == false && x.IsActive == true)
                 .SingleOrDefaultAsync();
         }
 

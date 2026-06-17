@@ -10,6 +10,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<HubRole?> GetRole(Guid userId, Guid hubId);
 
+        Task<List<Guid>> GetHubIdsWithExclusiveAccess(Guid userId);
+
         Task<List<UserHubOverview>> GetUsersByHub(Guid hubId);
 
         Task<List<UserHubOverview>> GetUsersByHubPaged(Guid hubId, int pageNumber, int pageSize, string? search);

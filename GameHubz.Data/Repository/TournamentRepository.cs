@@ -122,7 +122,8 @@ namespace GameHubz.Data.Repository
                      PrizeCurrency = x.PrizeCurrency,
                      Status = x.Status,
                      Id = x.Id!.Value!,
-                     IsTeamTournament = x.IsTeamTournament
+                     IsTeamTournament = x.IsTeamTournament,
+                     IsExclusive = x.IsExclusive
                  })
                 .ToListAsync();
 
@@ -132,13 +133,14 @@ namespace GameHubz.Data.Repository
         public async Task<List<TournamentOverview>> GetByHubsPaged(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             TournamentUserStatus filter,
             RegionType region,
             string? userCountry,
             int page,
             int pageSize)
         {
-            var query = ApplyFilters(userId, hubIds, region, userCountry, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
 
             return await query
                 .OrderByDescending(x => x.StartDate)
@@ -160,7 +162,8 @@ namespace GameHubz.Data.Repository
                     Format = x.Format,
                     RoundDurationMinutes = x.RoundDurationMinutes,
                     IsTeamTournament = x.IsTeamTournament,
-                    TeamWinCondition = x.TeamWinCondition
+                    TeamWinCondition = x.TeamWinCondition,
+                    IsExclusive = x.IsExclusive
                 })
                 .ToListAsync();
         }
@@ -168,11 +171,12 @@ namespace GameHubz.Data.Repository
         public async Task<int> GetCountByHubs(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             RegionType region,
             string? userCountry,
             TournamentUserStatus filter)
         {
-            var query = ApplyFilters(userId, hubIds, region, userCountry, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
             return await query.CountAsync();
         }
 
@@ -273,13 +277,15 @@ namespace GameHubz.Data.Repository
                       TeamSize = x.TeamSize,
                       TeamWinCondition = x.TeamWinCondition,
                       HasThirdPlaceMatch = x.HasThirdPlaceMatch,
-                      RequireResultApproval = x.RequireResultApproval
+                      RequireResultApproval = x.RequireResultApproval,
+                      IsExclusive = x.IsExclusive
                   }).FirstOrDefaultAsync();
         }
 
         private IQueryable<TournamentEntity> ApplyFilters(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             RegionType region,
             string? userCountry,
             TournamentUserStatus filter)
@@ -303,6 +309,10 @@ namespace GameHubz.Data.Repository
                     && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
                         || (x.Countries != null && x.Countries.Contains(userCountry))));
             }
+
+            // Exclusive tournaments are visible only in hubs where the user has exclusive-or-higher
+            // access. Non-exclusive tournaments stay visible to every member of the hub.
+            query = query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
 
             switch (filter)
             {

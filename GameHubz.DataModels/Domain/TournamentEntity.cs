@@ -64,6 +64,10 @@ namespace GameHubz.DataModels.Domain
         // (or an admin / hub owner) must approve before the bracket advances.
         public bool RequireResultApproval { get; set; }
 
+        // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
+        // can see this tournament in their feed and register. Default false = open to all members.
+        public bool IsExclusive { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

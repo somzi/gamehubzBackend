@@ -41,11 +41,30 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync();
         }
 
+        // Hubs where the user can access exclusive tournaments: Owner, Admin or Exclusive.
+        // Hub owners always have an Owner UserHub row (created on hub creation / backfilled by
+        // migration 39), so this covers owners too.
+        public async Task<List<Guid>> GetHubIdsWithExclusiveAccess(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(uh => uh.UserId == userId
+                    && uh.HubId != null
+                    && (uh.HubRole == HubRole.HubOwner
+                        || uh.HubRole == HubRole.HubAdmin
+                        || uh.HubRole == HubRole.HubExclusive))
+                .Select(uh => uh.HubId!.Value)
+                .ToListAsync();
+        }
+
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()
                 .Where(uh => uh.HubId == hubId && uh.HubId != null)
-                .OrderBy(uh => uh.HubRole)
+                // Rank by privilege (Owner > Admin > Exclusive > Member) rather than the raw enum
+                // value, since HubExclusive == 4 would otherwise sort after HubMember == 3.
+                .OrderBy(uh => uh.HubRole == HubRole.HubOwner ? 0
+                    : uh.HubRole == HubRole.HubAdmin ? 1
+                    : uh.HubRole == HubRole.HubExclusive ? 2 : 3)
                 .ThenBy(uh => uh.User!.Username)
                 .Select(x => new UserHubOverview
                 {
@@ -70,7 +89,9 @@ namespace GameHubz.Data.Repository
             }
 
             return await query
-                .OrderBy(uh => uh.HubRole)
+                .OrderBy(uh => uh.HubRole == HubRole.HubOwner ? 0
+                    : uh.HubRole == HubRole.HubAdmin ? 1
+                    : uh.HubRole == HubRole.HubExclusive ? 2 : 3)
                 .ThenBy(uh => uh.User!.Username)
                 .Skip(pageNumber * pageSize)
                 .Take(pageSize)
