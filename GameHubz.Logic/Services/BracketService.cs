@@ -2343,9 +2343,9 @@ namespace GameHubz.Logic.Services
             {
                 var (knockoutSize, directBerths) = GetSwissKnockoutConfig(tournament);
                 if (knockoutSize.HasValue)
-                    await AdvanceSwissToPostStage(tournament, participants, knockoutSize.Value, directBerths!.Value, opponentPointsSum);
+                    await AdvanceSwissToPostStage(tournament, participants, knockoutSize.Value, directBerths!.Value, opponentPointsSum, stageMatches);
                 else
-                    await CompleteSwissTournament(tournament, participants, opponentPointsSum);
+                    await CompleteSwissTournament(tournament, participants, opponentPointsSum, stageMatches);
                 return;
             }
 
@@ -2360,7 +2360,7 @@ namespace GameHubz.Logic.Services
                     byeCounts[m.HomeParticipantId.Value] = byeCounts.GetValueOrDefault(m.HomeParticipantId.Value) + 1;
             }
 
-            var ordered = OrderForSwissStandings(participants, opponentPointsSum);
+            var ordered = OrderForSwissStandings(participants, opponentPointsSum, stageMatches);
 
             var roundDuration = CalculateRoundDuration(tournament.RoundDurationMinutes);
             var (nextRoundMatches, byeParticipant) = BuildSwissRoundMatches(
@@ -2394,7 +2394,8 @@ namespace GameHubz.Logic.Services
             List<TournamentParticipantEntity> participants,
             int knockoutSize,
             int directBerths,
-            Dictionary<Guid, int> opponentPointsSum)
+            Dictionary<Guid, int> opponentPointsSum,
+            IEnumerable<MatchEntity> matches)
         {
             Guid tournamentId = tournament.Id!.Value;
             bool hasPlayIn = directBerths < knockoutSize;
@@ -2407,7 +2408,7 @@ namespace GameHubz.Logic.Services
 
             // Freeze the qualification rank into Seed — it drives the play-in pairs and the
             // bracket slots, and the UI shows it next to every player.
-            var ordered = OrderForSwissStandings(participants, opponentPointsSum);
+            var ordered = OrderForSwissStandings(participants, opponentPointsSum, matches);
             for (int i = 0; i < ordered.Count; i++)
             {
                 if (ordered[i].Seed != i + 1)
@@ -2538,9 +2539,10 @@ namespace GameHubz.Logic.Services
         private async Task CompleteSwissTournament(
             TournamentEntity tournament,
             List<TournamentParticipantEntity> participants,
-            Dictionary<Guid, int> opponentPointsSum)
+            Dictionary<Guid, int> opponentPointsSum,
+            IEnumerable<MatchEntity> matches)
         {
-            var winner = OrderForSwissStandings(participants, opponentPointsSum).FirstOrDefault();
+            var winner = OrderForSwissStandings(participants, opponentPointsSum, matches).FirstOrDefault();
             if (winner == null) return;
 
             // Re-edits of the final round refresh the winner but must not emit a second
@@ -2557,14 +2559,18 @@ namespace GameHubz.Logic.Services
         }
 
         // Standings order shared by Swiss pairing and winner selection. Tiebreaker chain:
-        //   points → Buchholz (sum of opponents' points) → goal difference → goals for → random seed.
+        //   points → Buchholz (sum of opponents' points) → goal difference → head-to-head → goals for → random seed.
         // Buchholz is the standard Swiss-tournament tiebreaker — rewards facing tougher schedules.
-        // Byes contribute 0 (no opponent). Caller may pass `opponentPointsSum = null` to fall back
-        // to the legacy chain (used by places that don't have the stage's matches at hand).
+        // Head-to-head (applied among rows tied on points+Buchholz+GD) is threaded in so the actual
+        // qualification/winner order matches the displayed standings table — see BuildGroupStandings.
+        // Byes contribute 0 (no opponent). `opponentPointsSum`/`matches` may be null for legacy callers
+        // that don't have the stage's data at hand (those fall back to the shorter chain).
         private static List<TournamentParticipantEntity> OrderForSwissStandings(
             List<TournamentParticipantEntity> participants,
-            Dictionary<Guid, int>? opponentPointsSum = null)
-            => participants
+            Dictionary<Guid, int>? opponentPointsSum = null,
+            IEnumerable<MatchEntity>? matches = null)
+        {
+            var ordered = participants
                 .OrderByDescending(p => p.Points)
                 .ThenByDescending(p => opponentPointsSum != null && p.Id.HasValue
                     ? opponentPointsSum.GetValueOrDefault(p.Id.Value)
@@ -2573,6 +2579,23 @@ namespace GameHubz.Logic.Services
                 .ThenByDescending(p => p.GoalsFor)
                 .ThenBy(p => p.Seed ?? 999)
                 .ToList();
+
+            // Head-to-head among players tied on points+Buchholz+GD — mirrors the displayed table.
+            // Rows still tied after H2H keep their inbound order, so goals-for → seed remain the
+            // final word (matching BuildGroupStandings, which falls back to goals-for → name).
+            if (matches != null)
+            {
+                ResolveHeadToHeadInTiedChunks(
+                    ordered,
+                    p => p.Id!.Value,
+                    p => (p.Points,
+                          opponentPointsSum != null && p.Id.HasValue ? opponentPointsSum.GetValueOrDefault(p.Id.Value) : 0,
+                          p.GoalsFor - p.GoalsAgainst),
+                    matches);
+            }
+
+            return ordered;
+        }
 
         // Buchholz score for every participant: sum of Points of every opponent actually played
         // (one contribution per completed match, so a forced rematch counts twice — standard
