@@ -373,7 +373,7 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .AnyAsync(t => t.Id == id &&
                    (t.TournamentParticipants!.Any(tp => tp.UserId == userId) ||
-                    t.TournamentRegistrations!.Any(tr => tr.UserId == userId)));
+                    t.TournamentRegistrations!.Any(tr => tr.UserId == userId && tr.Status == TournamentRegistrationStatus.Pending)));
         }
 
         public async Task<TournamentEntity> GetWithHubById(Guid id)
