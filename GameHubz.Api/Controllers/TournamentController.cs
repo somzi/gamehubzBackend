@@ -77,6 +77,14 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("matchResult/revert")]
+        public async Task<IActionResult> RevertMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.RevertMatchResult(request.MatchId);
+
+            return Ok();
+        }
+
         [HttpGet("{id}/details")]
         public async Task<IActionResult> GetDetails(Guid id)
         {

@@ -9,9 +9,13 @@ using Microsoft.Extensions.Logging;
 namespace GameHubz.Logic.Services
 {
     // Twitch Helix with an app access token (client_credentials) — no per-user OAuth.
-    // Live status + VOD archive are public. App token is cached in Redis.
-    // NOTE: Twitch auto-deletes VODs after 14 days (60 for affiliates/partners) and only if the
-    // streamer has VOD storage enabled — so the resolved link can stop working over time.
+    // Live status + VOD archive are public. App token is cached in Redis (5-min cache window).
+    //
+    // RESOLUTION PRIORITY (chosen because Twitch auto-deletes "archive" VODs after 14/60 days,
+    // but "highlight" videos created by the streamer never expire):
+    //   1) HIGHLIGHT inside the stream window  → permanent, prefer always.
+    //   2) ARCHIVE inside the stream window    → 14-day fallback, fine until a highlight is cut.
+    //   3) Newest video of any type            → last-resort lifeline.
     public class TwitchStreamClient : IStreamPlatformClient
     {
         public SocialType Platform => SocialType.Twitch;
@@ -61,10 +65,11 @@ namespace GameHubz.Logic.Services
             var userId = await GetUserIdAsync(client, clientId, token, login, cancellationToken);
             if (string.IsNullOrWhiteSpace(userId)) return null;
 
-            // 2) the latest archive (= past broadcast / VOD) is the one we just finished
+            // 2) Pull recent videos of ALL types so we can apply the highlight-first priority.
+            //    `type=all` returns archive + highlight + upload; we filter by type ourselves.
             using var req = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"https://api.twitch.tv/helix/videos?user_id={Uri.EscapeDataString(userId)}&type=archive&first=5&sort=time");
+                $"https://api.twitch.tv/helix/videos?user_id={Uri.EscapeDataString(userId)}&type=all&first=20&sort=time");
             req.Headers.Add("Client-Id", clientId);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -75,15 +80,39 @@ namespace GameHubz.Logic.Services
             var videos = data?.Data;
             if (videos == null || videos.Count == 0) return null;
 
-            // Prefer an archive created around the stream window; otherwise take the newest.
+            // Time window: accept anything created from 2h before the stream started onwards.
+            // Highlights are usually cut AFTER the stream ends, so we don't bound the upper end.
             var windowStart = startedAtUtc.AddHours(-2);
-            var best = videos
-                .Where(v => v.CreatedAt >= windowStart)
-                .OrderByDescending(v => v.CreatedAt)
-                .FirstOrDefault()
-                ?? videos.OrderByDescending(v => v.CreatedAt).FirstOrDefault();
+            var inWindow = videos.Where(v => v.CreatedAt >= windowStart).ToList();
 
-            return string.IsNullOrWhiteSpace(best?.Url) ? null : best!.Url;
+            // Priority 1 — HIGHLIGHT (permanent). If the streamer already cut a highlight for
+            // this match before pressing End, this is the one we want — it never expires.
+            var highlight = inWindow
+                .Where(v => string.Equals(v.Type, "highlight", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(v => v.CreatedAt)
+                .FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(highlight?.Url))
+            {
+                this.logger.LogInformation("Twitch: picked HIGHLIGHT VOD for login '{Login}'.", login);
+                return highlight!.Url;
+            }
+
+            // Priority 2 — ARCHIVE (14/60 day VOD). The auto-recorded broadcast we just finished.
+            // Good enough as a silent fallback until the streamer cuts a highlight.
+            var archive = inWindow
+                .Where(v => string.Equals(v.Type, "archive", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(v => v.CreatedAt)
+                .FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(archive?.Url))
+            {
+                this.logger.LogInformation("Twitch: picked ARCHIVE VOD for login '{Login}' (14/60-day expiry).", login);
+                return archive!.Url;
+            }
+
+            // Last-resort lifeline: newest in-window video of any type, otherwise newest at all.
+            var any = inWindow.OrderByDescending(v => v.CreatedAt).FirstOrDefault()
+                ?? videos.OrderByDescending(v => v.CreatedAt).FirstOrDefault();
+            return string.IsNullOrWhiteSpace(any?.Url) ? null : any!.Url;
         }
 
         private async Task<string?> GetUserIdAsync(
@@ -177,6 +206,8 @@ namespace GameHubz.Logic.Services
         {
             [JsonPropertyName("id")] public string? Id { get; set; }
             [JsonPropertyName("url")] public string? Url { get; set; }
+            // "archive" | "highlight" | "upload" — drives the priority logic above.
+            [JsonPropertyName("type")] public string? Type { get; set; }
             [JsonPropertyName("created_at")] public DateTime CreatedAt { get; set; }
         }
     }

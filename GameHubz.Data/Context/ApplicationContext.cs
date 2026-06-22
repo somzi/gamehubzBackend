@@ -41,6 +41,7 @@ namespace GameHubz.Data.Context
             UserRoleConfigurator(modelBuilder);
             AssetsConfigurator(modelBuilder);
             EmailQueueConfigurator(modelBuilder);
+            ErrorLogConfigurator(modelBuilder);
             HubConfigurator(modelBuilder);
 
             modelBuilder.Entity<RefreshTokenEntity>().ToTable("RefreshToken")
@@ -606,6 +607,18 @@ namespace GameHubz.Data.Context
         {
             modelBuilder.Entity<EmailQueueEntity>().ToTable("EmailQueue")
                 .HasQueryFilter(x => x.IsDeleted == false);
+        }
+
+        private static void ErrorLogConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<ErrorLogEntity>().ToTable("ErrorLog")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<ErrorLogEntity>()
+                .HasIndex(x => new { x.IsResolved, x.CreatedOn });
+
+            modelBuilder.Entity<ErrorLogEntity>()
+                .HasIndex(x => x.UserId);
         }
 
         private static void TeamTournamentConfigurator(ModelBuilder modelBuilder)

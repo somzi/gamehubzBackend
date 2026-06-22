@@ -376,3 +376,4 @@ appsettings.*.json
 !appsettings.example.json
 /GameHubz.DataMigrations.Api/appsettings.json
 /GameHubz.DataMigrations.Api/appsettings.Development.json
+/nul

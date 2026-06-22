@@ -1468,6 +1468,187 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Deletes a completed match's result and reopens the match (status back to Scheduled,
+        /// scores and winner cleared). Used when a result was entered by mistake / on the wrong
+        /// match. Reuses the same downstream-lock guards and revert primitives as the edit path
+        /// in <see cref="UpdateMatchResult"/>, so the bracket / standings stay consistent.
+        /// Caller must be a match participant or a tournament manager (platform admin / hub owner /
+        /// hub admin).
+        /// </summary>
+        public async Task RevertMatchResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) throw new Exception("Match not found");
+
+            if (match.Status != MatchStatus.Completed)
+                throw new Exception("This match has no result to delete.");
+
+            // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
+            // real reported result — nothing to delete.
+            if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
+                throw new Exception("This match has no result to delete.");
+
+            MatchEntity? nextMatch = null;
+            if (match.NextMatchId.HasValue)
+            {
+                nextMatch = match.NextMatch
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+            }
+
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+            {
+                loserBracketMatch = match.NextMatchLoserBracket
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+            }
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new Exception("Tournament not found");
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
+
+            // Trust boundary matches UpdateMatchResult: the controller [Authorize] plus the
+            // mobile client (which only surfaces delete via the CanRevert flag — i.e. to match
+            // participants and tournament managers) gate who can act, so the non-approval path
+            // intentionally does not re-check match participation here. In approval mode a
+            // confirmed result is locked to managers, mirroring how UpdateMatchResult refuses a
+            // participant edit of a confirmed result.
+            if (!isPrivileged && approvalCtx.RequireResultApproval)
+                throw new Exception("This result is final. Ask the hub owner or an admin to delete it.");
+
+            // Downstream lock — identical to the revert guard in UpdateMatchResult: a result can't
+            // be deleted once the next round / third-place / loser-bracket match has progressed.
+            // The downstream match must be reverted first.
+            if (match.TeamMatchId.HasValue)
+            {
+                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                if (parentTeamMatch.NextTeamMatchId.HasValue)
+                {
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                        throw new Exception("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                }
+
+                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                {
+                    var thirdPlaceTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                    if (thirdPlaceTeamMatch.Status != TeamMatchStatus.Pending)
+                        throw new Exception("This match is locked because the third-place match has already progressed. You must revert the third-place match first.");
+                }
+            }
+            else
+            {
+                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                {
+                    throw new Exception("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                }
+
+                if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+                {
+                    bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
+                    var label = isThirdPlace ? "third-place match" : "loser bracket match";
+                    throw new Exception($"This match is locked because the {label} has already progressed. You must revert the downstream {label} first.");
+                }
+            }
+
+            // 1. Revert downstream advancement / stats, reusing the same primitives as the edit
+            //    path. Solo league/group/Swiss stats are derived from the Match table, so they are
+            //    re-synced below once this match drops out of "Completed" (mirrors how
+            //    FinalizeMatchResult re-derives them).
+            bool reSyncSoloStats = false;
+            if (match.TournamentStage?.Type == StageType.League
+                || match.TournamentStage?.Type == StageType.GroupStage
+                || match.TournamentStage?.Type == StageType.Swiss)
+            {
+                if (match.TeamMatchId.HasValue)
+                    await RevertTeamLeagueMatchStats(match);
+                else
+                    reSyncSoloStats = true;
+            }
+            else if (IsElimination(match.TournamentStage?.Type))
+            {
+                if (match.TeamMatchId.HasValue)
+                    await RevertTeamMatchResult(match);
+                else
+                    await RevertEliminationResult(match, nextMatch, loserBracketMatch);
+            }
+
+            // 2. Clear the result and reopen the match. Solo matches return to Scheduled — they
+            //    keep their opponents and scheduled time and can be re-reported. Team sub-matches
+            //    return to Pending instead, the only non-completed state the team flow uses, so the
+            //    team-match detail screen shows them as "awaiting result" again (and re-aggregates
+            //    the parent team match on the next report).
+            match.Status = match.TeamMatchId.HasValue ? MatchStatus.Pending : MatchStatus.Scheduled;
+            match.HomeUserScore = null;
+            match.AwayUserScore = null;
+            match.WinnerParticipantId = null;
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+
+            if (reSyncSoloStats)
+            {
+                // Serialised per tournament, same as the apply path — the resync reads every other
+                // completed match in scope, so it must not race a concurrent finalise.
+                await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+                try
+                {
+                    await ResyncSoloLeagueStatistics(match);
+
+                    // League and Swiss publish a tournament winner once every match is played;
+                    // deleting a result means the competition is no longer fully played, so roll
+                    // the published winner / Completed status back. (A group stage only seeds the
+                    // knockout — it never completes the tournament — so there is nothing to undo.)
+                    if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.Swiss)
+                    {
+                        var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                        if (tournament.Status == TournamentStatus.Completed)
+                        {
+                            tournament.Status = TournamentStatus.InProgress;
+                            tournament.WinnerUserId = null;
+                            tournament.WinnerTeamId = null;
+                            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        }
+                    }
+
+                    await this.SaveAsync();
+                }
+                finally
+                {
+                    await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+                }
+            }
+            else
+            {
+                await this.SaveAsync();
+            }
+
+            // 3. Invalidate caches (mirrors FinalizeMatchResult).
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+            if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+            if (match.HomeUserId.HasValue) affectedUserIds.Add(match.HomeUserId.Value);
+            if (match.AwayUserId.HasValue) affectedUserIds.Add(match.AwayUserId.Value);
+
+            if (match.HomeParticipant?.Team?.Members != null)
+                foreach (var m in match.HomeParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            if (match.AwayParticipant?.Team?.Members != null)
+                foreach (var m in match.AwayParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            foreach (var userId in affectedUserIds)
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+        }
+
+        /// <summary>
         /// Approves the pending proposal stored on the match: commits the proposed scores,
         /// clears proposal fields, advances the bracket. Caller must be the opposing participant
         /// or an admin / hub owner.
