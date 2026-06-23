@@ -1,6 +1,7 @@
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Utility;
@@ -42,7 +43,9 @@ namespace GameHubz.Data.Repository
                     Description = x.Description,
                     UserId = x.UserId,
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
+                    NumberOfTournaments = x.Tournaments != null
+                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
+                        : 0,
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
                     IsPublic = x.IsPublic,
                     IsVerified = x.IsVerified
@@ -60,7 +63,9 @@ namespace GameHubz.Data.Repository
                     Name = x.Name,
                     Description = x.Description,
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count : 0,
-                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count : 0,
+                    NumberOfTournaments = x.Tournaments != null
+                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
+                        : 0,
                     UserId = x.UserId,
                     AvatarUrl = x.AvatarUrl,
                     OwnerName = x.User.Username,
@@ -102,7 +107,9 @@ namespace GameHubz.Data.Repository
                     Description = x.Description,
                     UserId = x.UserId,
                     NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments != null ? x.Tournaments.Count() : 0,
+                    NumberOfTournaments = x.Tournaments != null
+                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
+                        : 0,
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
                     AvatarUrl = x.AvatarUrl,
                     IsPublic = x.IsPublic,

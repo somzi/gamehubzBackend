@@ -118,7 +118,7 @@ namespace GameHubz.Api.Controllers
                     x.Description,
                     x.AvatarUrl,
                     MemberCount = x.UserHubs!.Count(),
-                    TournamentCount = x.Tournaments!.Count(),
+                    TournamentCount = x.Tournaments!.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted),
                 })
                 .FirstOrDefaultAsync();
 
