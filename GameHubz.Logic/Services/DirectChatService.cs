@@ -9,6 +9,7 @@ namespace GameHubz.Logic.Services
         private readonly INotificationService notificationService;
         private readonly FriendService friendService;
         private readonly ICacheService cacheService;
+        private readonly BadgeService badgeService;
 
         public DirectChatService(
             IUnitOfWorkFactory factory,
@@ -17,13 +18,15 @@ namespace GameHubz.Logic.Services
             IHubContext<DirectChatHub> hubContext,
             INotificationService notificationService,
             FriendService friendService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            BadgeService badgeService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
             this.notificationService = notificationService;
             this.friendService = friendService;
             this.cacheService = cacheService;
+            this.badgeService = badgeService;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -164,6 +167,9 @@ namespace GameHubz.Logic.Services
             await this.cacheService.RemoveAsync($"direct_chats:{user.UserId}");
             await this.cacheService.RemoveAsync($"direct_chats:{otherUserId}");
 
+            // Live badge bump for the recipient (unread DM count).
+            await this.badgeService.PushAsync(otherUserId);
+
             // Push notification to the OTHER user
             SendPushNotification(otherUserId, user.Username, content, chatId);
 
@@ -189,6 +195,9 @@ namespace GameHubz.Logic.Services
             Guid otherUserId = chat.UserAId == user.UserId ? chat.UserBId : chat.UserAId;
             await this.cacheService.RemoveAsync($"direct_chats:{user.UserId}");
             await this.cacheService.RemoveAsync($"direct_chats:{otherUserId}");
+
+            // The reader's unread DM badge just dropped — refresh it across their devices.
+            await this.badgeService.PushAsync(user.UserId);
         }
 
         // ─────────────────────────────────────────────────────────────────

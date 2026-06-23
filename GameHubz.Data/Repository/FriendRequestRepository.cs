@@ -62,6 +62,12 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public Task<int> GetIncomingPendingCount(Guid userId)
+        {
+            return this.BaseDbSet()
+                .CountAsync(x => x.ToUserId == userId && x.Status == FriendRequestStatus.Pending);
+        }
+
         public async Task<List<FriendRequestDto>> GetOutgoingPending(Guid userId, string? search)
         {
             var query = this.BaseDbSet()

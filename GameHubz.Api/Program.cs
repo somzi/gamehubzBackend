@@ -111,6 +111,7 @@ namespace GameHubz.Api
 
             app.MapHub<MatchChatHub>("/hubs/chat");
             app.MapHub<DirectChatHub>("/hubs/dm");
+            app.MapHub<UserHub>("/hubs/user");
 
             app.Run();
         }

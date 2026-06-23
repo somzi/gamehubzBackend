@@ -9,6 +9,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly IHubContext<MatchChatHub> hubContext;
         private readonly INotificationService notificationService;
+        private readonly BadgeService badgeService;
 
         public MatchChatService(
             IUnitOfWorkFactory factory,
@@ -19,7 +20,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             IHubContext<MatchChatHub> hubContext,
-            INotificationService notificationService) : base(
+            INotificationService notificationService,
+            BadgeService badgeService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -30,6 +32,7 @@ namespace GameHubz.Logic.Services
         {
             this.hubContext = hubContext;
             this.notificationService = notificationService;
+            this.badgeService = badgeService;
         }
 
         public async Task<ChatMessageDto> SendMessage(Guid matchId, string content)
@@ -93,6 +96,10 @@ namespace GameHubz.Logic.Services
 
                     if (opponentUserId == null) return;
 
+                    // Live badge bump for the opponent (unread match chat) — before the
+                    // push-token early-out so it fires even when push isn't configured.
+                    await this.badgeService.PushAsync(opponentUserId.Value);
+
                     var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
                     if (opponent?.PushToken == null) return;
 
@@ -109,6 +116,19 @@ namespace GameHubz.Logic.Services
         public async Task<List<ChatMessageDto>> GetHistory(Guid matchId)
         {
             return await this.AppUnitOfWork.MatchChatRepository.GetByMatchId(matchId);
+        }
+
+        /// <summary>
+        /// Marks the match chat as read up to now for the caller and refreshes their badges.
+        /// </summary>
+        public async Task MarkRead(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            await this.AppUnitOfWork.MatchChatReadRepository.MarkRead(matchId, user.UserId, this.UserContextReader);
+            await this.SaveAsync();
+
+            await this.badgeService.PushAsync(user.UserId);
         }
 
         protected override IRepository<MatchChatEntity> GetRepository()

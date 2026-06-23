@@ -9,5 +9,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<FriendRequestDto>> GetIncomingPending(Guid userId, string? search);
 
         Task<List<FriendRequestDto>> GetOutgoingPending(Guid userId, string? search);
+
+        Task<int> GetIncomingPendingCount(Guid userId);
     }
 }

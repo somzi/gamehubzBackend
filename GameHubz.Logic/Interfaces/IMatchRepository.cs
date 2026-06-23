@@ -16,6 +16,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchOverviewDto>> GetByUser(Guid userId);
 
+        Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId);
+
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
         Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId);

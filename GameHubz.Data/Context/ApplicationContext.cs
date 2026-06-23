@@ -51,6 +51,29 @@ namespace GameHubz.Data.Context
             SocialConfigurator(modelBuilder);
             ShareConfigurator(modelBuilder);
             StreamConfigurator(modelBuilder);
+            MatchChatReadConfigurator(modelBuilder);
+        }
+
+        private static void MatchChatReadConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<MatchChatReadEntity>().ToTable("MatchChatRead")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasOne(x => x.Match)
+                .WithMany()
+                .HasForeignKey(x => x.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasIndex(x => new { x.MatchId, x.UserId })
+                .IsUnique();
         }
 
         private static void StreamConfigurator(ModelBuilder modelBuilder)

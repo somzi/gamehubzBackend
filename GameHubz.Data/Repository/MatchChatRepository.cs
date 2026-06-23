@@ -35,5 +35,36 @@ namespace GameHubz.Data.Repository
                 .OrderBy(x => x.SentAt)
                 .ToListAsync();
         }
+
+        public async Task<Dictionary<Guid, int>> GetUnreadCountsByMatch(List<Guid> matchIds, Guid userId)
+        {
+            if (matchIds == null || matchIds.Count == 0)
+            {
+                return new Dictionary<Guid, int>();
+            }
+
+            // Correlated subquery resolves each user's per-match read cursor; a message
+            // counts as unread when there is no cursor or it was sent after the cursor.
+            var rows = await this.ContextBase.Set<MatchChatEntity>()
+                .AsNoTracking()
+                .Where(mc => mc.MatchId != null
+                    && matchIds.Contains(mc.MatchId.Value)
+                    && mc.UserId != userId)
+                .Select(mc => new
+                {
+                    MatchId = mc.MatchId!.Value,
+                    mc.CreatedOn,
+                    LastRead = this.ContextBase.Set<MatchChatReadEntity>()
+                        .Where(r => r.MatchId == mc.MatchId!.Value && r.UserId == userId)
+                        .Select(r => (DateTime?)r.LastReadAt)
+                        .FirstOrDefault()
+                })
+                .Where(x => x.LastRead == null || x.CreatedOn > x.LastRead)
+                .GroupBy(x => x.MatchId)
+                .Select(g => new { MatchId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            return rows.ToDictionary(x => x.MatchId, x => x.Count);
+        }
     }
 }

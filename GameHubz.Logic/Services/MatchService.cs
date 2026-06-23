@@ -47,7 +47,29 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
-            return await this.AppUnitOfWork.MatchRepository.GetByUser(userId);
+            var matches = await this.AppUnitOfWork.MatchRepository.GetByUser(userId);
+
+            // Annotate each match with the user's unread chat count for the per-match badge.
+            // Best-effort: never let the badge enrichment break the core match list.
+            try
+            {
+                var matchIds = matches.Select(m => m.Id).ToList();
+                var unreadByMatch = await this.AppUnitOfWork.MatchChatRepository.GetUnreadCountsByMatch(matchIds, userId);
+
+                foreach (var match in matches)
+                {
+                    if (unreadByMatch.TryGetValue(match.Id, out var unread))
+                    {
+                        match.UnreadMessages = unread;
+                    }
+                }
+            }
+            catch
+            {
+                // unread counts are non-critical — return matches without them on failure
+            }
+
+            return matches;
         }
 
         public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)

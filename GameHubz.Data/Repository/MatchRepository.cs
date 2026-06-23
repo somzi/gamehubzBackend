@@ -85,26 +85,46 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // The set of "active" matches for a user — in-progress tournament, not yet finished,
+        // round open, and the user is one of the two sides (solo participant or team sub-match
+        // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
+        private static System.Linq.Expressions.Expression<Func<MatchEntity, bool>> ActiveForUserPredicate(Guid userId, DateTime now)
+            => x =>
+                x.Tournament!.Status == TournamentStatus.InProgress &&
+                (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
+                // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
+                (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
+                (
+                    // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
+                    (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
+                        (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
+                    ||
+                    // TEAM sub-matches: use the explicit user columns
+                    (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
+                );
+
+        public async Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId)
+        {
+            var now = DateTime.UtcNow;
+
+            return await this.BaseDbSet()
+                .AsNoTracking()
+                .Where(ActiveForUserPredicate(userId, now))
+                .Select(x => new MatchBadgeRow
+                {
+                    Id = x.Id!.Value,
+                    Status = x.Status,
+                })
+                .ToListAsync();
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             var now = DateTime.UtcNow;
 
             var matches = await this.BaseDbSet()
                 .AsNoTracking()
-                .Where(x =>
-                    x.Tournament!.Status == TournamentStatus.InProgress &&
-                    (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
-                    // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
-                    (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
-                    (
-                        // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
-                        (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
-                            (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
-                        ||
-                        // TEAM sub-matches: use the explicit user columns
-                        (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
-                    )
-                )
+                .Where(ActiveForUserPredicate(userId, now))
                 .Include(x => x.Tournament).ThenInclude(t => t!.Hub)
                 .Include(x => x.HomeParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.AwayParticipant).ThenInclude(p => p!.User)

@@ -68,6 +68,22 @@ namespace GameHubz.Api.Startup
 
                         return Task.CompletedTask;
                     },
+
+                    // WebSocket clients (SignalR hubs under /hubs) can't set an Authorization
+                    // header, so they pass the JWT as the "access_token" query parameter.
+                    // Only applied to hub paths; regular API requests keep using the header.
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+
+                        if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+
+                        return Task.CompletedTask;
+                    },
                 };
             });
 

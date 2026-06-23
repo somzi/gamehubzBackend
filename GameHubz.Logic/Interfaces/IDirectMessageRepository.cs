@@ -5,5 +5,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<DirectMessageDto>> GetByChatId(Guid chatId, int take = 100, DateTime? before = null);
 
         Task MarkRead(Guid chatId, Guid readerUserId);
+
+        Task<int> GetUnreadCountForUser(Guid userId);
     }
 }

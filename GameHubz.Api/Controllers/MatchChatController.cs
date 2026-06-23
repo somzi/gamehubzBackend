@@ -35,5 +35,12 @@ namespace GameHubz.Api.Controllers
             var result = await chatService.SendMessage(matchId, body.Content);
             return Ok(result);
         }
+
+        [HttpPost("{matchId}/read")]
+        public async Task<IActionResult> MarkRead(Guid matchId)
+        {
+            await chatService.MarkRead(matchId);
+            return NoContent();
+        }
     }
 }

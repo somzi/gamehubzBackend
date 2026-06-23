@@ -47,6 +47,15 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public Task<int> GetUnreadCountForUser(Guid userId)
+        {
+            // Unread = messages the user didn't send, still flagged unread, in a chat they belong to.
+            return this.BaseDbSet()
+                .CountAsync(m => !m.IsRead
+                    && m.SenderId != userId
+                    && (m.Chat!.UserAId == userId || m.Chat!.UserBId == userId));
+        }
+
         public async Task MarkRead(Guid chatId, Guid readerUserId)
         {
             var now = DateTime.UtcNow;

@@ -111,6 +111,7 @@ namespace GameHubz.Logic
 
             services.AddTransient<FriendService>();
             services.AddTransient<DirectChatService>();
+            services.AddTransient<BadgeService>();
 
             services.AddSingleton<TranslationService>();
 

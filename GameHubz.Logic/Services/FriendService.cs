@@ -6,6 +6,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly INotificationService notificationService;
         private readonly ICacheService cacheService;
+        private readonly BadgeService badgeService;
 
         // Friends_set / blocks_in / blocks_out TTL — long enough to coast through the
         // common burst of relation checks during a chat session, short enough that any
@@ -17,11 +18,13 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             IUserContextReader userContextReader,
             INotificationService notificationService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            BadgeService badgeService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.notificationService = notificationService;
             this.cacheService = cacheService;
+            this.badgeService = badgeService;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -270,6 +273,9 @@ namespace GameHubz.Logic.Services
             // New pending request → both users' incoming/outgoing lists are stale.
             await InvalidateFriendListsBoth(user.UserId, toUserId);
 
+            // Recipient's incoming friend-request badge just went up.
+            await this.badgeService.PushAsync(toUserId);
+
             // Fire-and-forget push notification
             SendNotification(target, user.Username, "New friend request",
                 $"{user.Username} sent you a friend request.",
@@ -330,6 +336,9 @@ namespace GameHubz.Logic.Services
             // The request moved out of pending into accepted, and a new friend was added.
             await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
 
+            // The recipient's incoming friend-request badge just dropped.
+            await this.badgeService.PushAsync(user.UserId);
+
             // Notify the original sender
             var sender = await this.AppUnitOfWork.UserRepository.GetById(request.FromUserId);
             SendNotification(sender, user.Username, "Friend request accepted",
@@ -357,6 +366,9 @@ namespace GameHubz.Logic.Services
 
             // Rejected request leaves pending lists on both sides.
             await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
+
+            // The recipient's incoming friend-request badge just dropped.
+            await this.badgeService.PushAsync(user.UserId);
         }
 
         public async Task CancelRequest(Guid requestId)
@@ -379,6 +391,9 @@ namespace GameHubz.Logic.Services
 
             // Cancelled request leaves pending lists on both sides.
             await InvalidateFriendListsBoth(request.FromUserId, request.ToUserId);
+
+            // The recipient's incoming friend-request badge just dropped.
+            await this.badgeService.PushAsync(request.ToUserId);
         }
 
         public async Task Unfriend(Guid otherUserId)
