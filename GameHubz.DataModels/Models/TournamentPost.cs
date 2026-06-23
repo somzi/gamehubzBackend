@@ -65,5 +65,14 @@ namespace GameHubz.DataModels.Models
         /// Null/empty = region-scoped.
         /// </summary>
         public List<string>? Countries { get; set; }
+
+        /// <summary>
+        /// Opt-in marker for the new edit modal: when true and the tournament has not started, the
+        /// server applies TeamSize / TeamWinCondition / IsExclusive / Countries / DoubleRoundRobin
+        /// from the payload instead of preserving them. Old clients (that don't include these fields
+        /// in the edit body) leave it false, so their saves keep preserving the persisted values.
+        /// Ignored on create. <see cref="IsTeamTournament"/> stays locked either way.
+        /// </summary>
+        public bool AllowStructuralEdits { get; set; }
     }
 }

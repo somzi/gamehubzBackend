@@ -50,6 +50,9 @@ namespace GameHubz.DataModels.Models
         public TeamWinCondition? TeamWinCondition { get; set; }
         public bool HasThirdPlaceMatch { get; set; }
         public bool RequireResultApproval { get; set; }
+        public bool DoubleRoundRobin { get; set; }
+        public int? GroupsCount { get; set; }
+        public int? QualifiersPerGroup { get; set; }
 
         /// <summary>
         /// When true, the tournament is restricted to exclusive-or-higher hub members

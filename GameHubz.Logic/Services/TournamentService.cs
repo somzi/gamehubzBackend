@@ -332,6 +332,34 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Solo-vs-team is locked at creation (flipping it would orphan team rosters or solo
+        /// participants). Team size, win condition, exclusivity, country scope and double round-robin
+        /// can still be edited, but only before the tournament starts and only by clients that opt in
+        /// via <see cref="TournamentPost.AllowStructuralEdits"/>. Older clients leave the flag off and
+        /// don't send these fields — without preservation, default bool/null on the DTO would silently
+        /// flip a team tournament to solo (and unscope countries / clear exclusivity) on every edit.
+        /// </summary>
+        protected override async Task BeforeDtoMapToEntity(TournamentPost inputDto, bool isNew)
+        {
+            if (isNew || !inputDto.Id.HasValue) return;
+
+            var existing = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(inputDto.Id.Value);
+            if (existing == null) return;
+
+            inputDto.IsTeamTournament = existing.IsTeamTournament;
+
+            bool canEditStructural = inputDto.AllowStructuralEdits
+                && existing.Status < TournamentStatus.InProgress;
+            if (canEditStructural) return;
+
+            inputDto.TeamSize = existing.TeamSize;
+            inputDto.TeamWinCondition = existing.TeamWinCondition;
+            inputDto.IsExclusive = existing.IsExclusive;
+            inputDto.Countries = existing.Countries == null ? null : new List<string>(existing.Countries);
+            inputDto.DoubleRoundRobin = existing.DoubleRoundRobin;
+        }
+
+        /// <summary>
         /// When a tournament is created/edited with one or more countries, it becomes country-scoped
         /// and its Region is derived from the first country (country dictates region). An empty/null
         /// list leaves the tournament region-scoped using the explicitly chosen Region. Stored as

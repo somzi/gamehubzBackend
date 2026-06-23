@@ -278,7 +278,10 @@ namespace GameHubz.Data.Repository
                       TeamWinCondition = x.TeamWinCondition,
                       HasThirdPlaceMatch = x.HasThirdPlaceMatch,
                       RequireResultApproval = x.RequireResultApproval,
-                      IsExclusive = x.IsExclusive
+                      IsExclusive = x.IsExclusive,
+                      DoubleRoundRobin = x.DoubleRoundRobin,
+                      GroupsCount = x.GroupsCount,
+                      QualifiersPerGroup = x.QualifiersPerGroup
                   }).FirstOrDefaultAsync();
         }
 
