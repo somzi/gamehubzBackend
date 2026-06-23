@@ -97,6 +97,8 @@ namespace GameHubz.Logic.Services
                 throw new EmptyEmailException(this.LocalizationService);
             }
 
+            forgotPasswordRequest.Email = forgotPasswordRequest.Email.Trim().ToLowerInvariant();
+
             UserEntity? user = await this.AppUnitOfWork.UserRepository.ShallowGetByEmail(forgotPasswordRequest.Email);
 
             if (user == null)
@@ -130,6 +132,7 @@ namespace GameHubz.Logic.Services
 
         public async Task<string> SendEmailWithForgotPasswordToken(string email)
         {
+            email = (email ?? string.Empty).Trim().ToLowerInvariant();
             var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new Exception("This email does not exists.");
 
             int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);

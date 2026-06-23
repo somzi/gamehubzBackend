@@ -28,9 +28,10 @@ namespace GameHubz.Data.Repository
 
         public async Task<UserEmailAndId?> GetIdByEmail(string email)
         {
+            var normalized = email.ToLower();
             return await this.BaseDbSet()
                 .Select(x => new UserEmailAndId(x.Id, x.Email))
-                .Where(x => x.Email == email)
+                .Where(x => x.Email.ToLower() == normalized)
                 .FirstOrDefaultAsync();
         }
 
@@ -45,16 +46,18 @@ namespace GameHubz.Data.Repository
 
         public async Task<UserEntity?> GetByEmail(string email)
         {
+            var normalized = email.ToLower();
             return await this.BaseDbSet()
                 .Include(x => x.UserRole)
-                .Where(x => x.Email == email && x.IsDeleted == false && x.IsActive == true)
+                .Where(x => x.Email.ToLower() == normalized && x.IsDeleted == false && x.IsActive == true)
                 .SingleOrDefaultAsync();
         }
 
         public async Task<UserEntity?> ShallowGetByEmail(string email)
         {
+            var normalized = email.ToLower();
             return await this.BaseDbSet()
-                .Where(x => x.Email == email)
+                .Where(x => x.Email.ToLower() == normalized)
                 .SingleOrDefaultAsync();
         }
 
@@ -140,9 +143,10 @@ namespace GameHubz.Data.Repository
                 return true;
             }
 
+            var normalized = email.ToLower();
             return entity.IsNew
-                ? !this.BaseDbSet().Any(x => x.Email == email && x.IsActive)
-                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.Email == email && x.IsActive);
+                ? !this.BaseDbSet().Any(x => x.Email.ToLower() == normalized && x.IsActive)
+                : !this.BaseDbSet().Any(x => x.Id != entity.Id && x.Email.ToLower() == normalized && x.IsActive);
         }
 
         public bool IsObjectIdUnique(UserEntity entity, string? objectId)

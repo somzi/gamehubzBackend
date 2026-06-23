@@ -137,6 +137,8 @@ namespace GameHubz.Logic.Services
 
         public async Task ResendVerificationEmail(ResendVerificationRequestDto resendVerificationRequestDto)
         {
+            resendVerificationRequestDto.Email = (resendVerificationRequestDto.Email ?? string.Empty).Trim().ToLowerInvariant();
+
             UserEntity? user = await this.AppUnitOfWork.UserRepository.ShallowGetByEmail(resendVerificationRequestDto.Email);
 
             if (user == null)

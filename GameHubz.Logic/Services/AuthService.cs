@@ -121,7 +121,10 @@ namespace GameHubz.Logic.Services
         {
             this.validator.ValidateAndThrow(loginRequest);
 
-            UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail($"{loginRequest.Email}");
+            // Email is treated as case-insensitive: canonicalize here so "User@x.com" and "user@x.com" both resolve.
+            loginRequest.Email = (loginRequest.Email ?? string.Empty).Trim().ToLowerInvariant();
+
+            UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail(loginRequest.Email);
 
             if (user != null && !user.IsActive)
             {
