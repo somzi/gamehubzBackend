@@ -61,8 +61,13 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<TournamentParticipantOverview>?> GetByTournamentId(Guid tournamentId)
         {
+            // Skip rows without a User: team participants (UserId == null) and any stale
+            // rows where the user was hard-deleted leave User null, and projecting
+            // x.User!.Id!.Value on those threw "Nullable object must have a value".
             return await this.BaseDbSet()
-                .Where(tp => tp.TournamentId == tournamentId)
+                .Where(tp => tp.TournamentId == tournamentId
+                    && tp.User != null
+                    && tp.User.Id != null)
                 .Select(x => new TournamentParticipantOverview
                 {
                     Username = x.User!.Username,

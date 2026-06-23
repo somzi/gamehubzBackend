@@ -167,8 +167,12 @@ namespace GameHubz.Api.Middleware
                     RequestBody = string.IsNullOrEmpty(requestBody) ? null : requestBody,
                     UserAgent = Truncate(request.Headers.UserAgent.ToString(), 1024),
                     AppVersion = Truncate(GetHeader(request, "X-App-Version"), 64),
-                    Platform = Truncate(GetHeader(request, "X-Platform"), 64),
-                    IpAddress = Truncate(context.Connection.RemoteIpAddress?.ToString(), 64),
+                    // Prefer the explicit X-Platform header; fall back to sniffing the
+                    // User-Agent so old app builds still record ios/android instead of null.
+                    Platform = Truncate(
+                        GetHeader(request, "X-Platform") ?? InferPlatformFromUserAgent(request.Headers.UserAgent.ToString()),
+                        64),
+                    IpAddress = Truncate(ResolveClientIp(context), 64),
                     IsResolved = false,
                 };
 
@@ -232,6 +236,51 @@ namespace GameHubz.Api.Middleware
             => request.Headers.TryGetValue(name, out var value) && value.Count > 0
                 ? value.ToString()
                 : null;
+
+        /// <summary>
+        /// Returns the original client IP. The API runs behind a reverse proxy in Docker,
+        /// so <c>Connection.RemoteIpAddress</c> is always the proxy container IP — the real
+        /// client address lives in the leftmost entry of <c>X-Forwarded-For</c>.
+        /// </summary>
+        private static string? ResolveClientIp(HttpContext context)
+        {
+            string forwarded = context.Request.Headers["X-Forwarded-For"].ToString();
+
+            if (!string.IsNullOrWhiteSpace(forwarded))
+            {
+                return forwarded.Split(',')[0].Trim();
+            }
+
+            return context.Connection.RemoteIpAddress?.ToString();
+        }
+
+        /// <summary>
+        /// Best-effort platform sniff for old app builds that don't yet send X-Platform.
+        /// React Native on Android goes through OkHttp; iOS uses Apple's CFNetwork/Darwin.
+        /// </summary>
+        private static string? InferPlatformFromUserAgent(string userAgent)
+        {
+            if (string.IsNullOrEmpty(userAgent))
+            {
+                return null;
+            }
+
+            if (userAgent.Contains("okhttp", StringComparison.OrdinalIgnoreCase)
+                || userAgent.Contains("Android", StringComparison.OrdinalIgnoreCase))
+            {
+                return "android";
+            }
+
+            if (userAgent.Contains("CFNetwork", StringComparison.OrdinalIgnoreCase)
+                || userAgent.Contains("Darwin", StringComparison.OrdinalIgnoreCase)
+                || userAgent.Contains("iOS", StringComparison.OrdinalIgnoreCase)
+                || userAgent.Contains("iPhone", StringComparison.OrdinalIgnoreCase))
+            {
+                return "ios";
+            }
+
+            return null;
+        }
 
         private static string? Truncate(string? value, int maxLength)
         {
