@@ -1656,13 +1656,13 @@ namespace GameHubz.Logic.Services
         public async Task ApproveProposedResult(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (match.ProposedByUserId == null || match.ProposedHomeScore == null || match.ProposedAwayScore == null)
-                throw new Exception("No pending result to approve for this match.");
+                throw new BusinessRuleException("No pending result to approve for this match.");
 
             if (match.Status == MatchStatus.Completed)
-                throw new Exception("This match is already completed.");
+                throw new BusinessRuleException("This match is already completed.");
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
@@ -1670,11 +1670,11 @@ namespace GameHubz.Logic.Services
             if (!isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
-                    throw new Exception("You are not a participant of this match.");
+                    throw new BusinessRuleException("You are not a participant of this match.");
 
                 // The proposer cannot also be the approver — the opponent (or a tournament manager) confirms.
                 if (match.ProposedByUserId == currentUser.UserId)
-                    throw new Exception("Your opponent must approve the result you reported.");
+                    throw new BusinessRuleException("Your opponent must approve the result you reported.");
             }
 
             MatchEntity? nextMatch = null;
@@ -1699,13 +1699,13 @@ namespace GameHubz.Logic.Services
         public async Task RejectProposedResult(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (match.ProposedByUserId == null)
-                throw new Exception("No pending result to reject for this match.");
+                throw new BusinessRuleException("No pending result to reject for this match.");
 
             if (match.Status == MatchStatus.Completed)
-                throw new Exception("This match is already completed.");
+                throw new BusinessRuleException("This match is already completed.");
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
@@ -1714,10 +1714,10 @@ namespace GameHubz.Logic.Services
             {
                 var fullMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
                 if (fullMatch == null || !IsMatchParticipant(fullMatch, currentUser.UserId))
-                    throw new Exception("You are not a participant of this match.");
+                    throw new BusinessRuleException("You are not a participant of this match.");
 
                 if (match.ProposedByUserId == currentUser.UserId)
-                    throw new Exception("You can't reject your own proposal — submit a corrected result instead.");
+                    throw new BusinessRuleException("You can't reject your own proposal — submit a corrected result instead.");
             }
 
             match.ProposedHomeScore = null;

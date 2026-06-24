@@ -120,14 +120,73 @@ namespace GameHubz.Logic.Services
         {
             List<TournamentRegistrationEntity> tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetByIds(registrationId);
 
-            if (tournamentRegistration.Count > 0 && IsAlreadyFullTournament(tournamentRegistration.First(), tournamentRegistration.Count))
+            if (tournamentRegistration.Count == 0)
             {
-                throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
+                return;
+            }
+
+            var tournament = tournamentRegistration.First().Tournament;
+
+            // Teams / solo users that are already participants of this tournament. Re-approving a
+            // stale pending row for one of them must neither create a second participant nor count
+            // against the capacity check below.
+            var existingTeamIds = new HashSet<Guid>();
+            var existingUserIds = new HashSet<Guid>();
+            if (tournament?.TournamentParticipants != null)
+            {
+                foreach (var participant in tournament.TournamentParticipants)
+                {
+                    if (participant.TeamId.HasValue) existingTeamIds.Add(participant.TeamId.Value);
+                    else if (participant.UserId.HasValue) existingUserIds.Add(participant.UserId.Value);
+                }
+            }
+
+            // A team can have more than one pending registration row, and a row can belong to a
+            // team/user that is already in. We mark every selected row as approved, but materialize
+            // exactly one participant per genuinely-new team or solo user. This both avoids attaching
+            // the same TournamentTeamEntity twice to the shared DbContext (EF tracking conflict) and
+            // gives an accurate incoming-participant count for the capacity check, instead of the raw
+            // batch size which over-counts duplicate-team rows.
+            var newTeamIds = new HashSet<Guid>();
+            var newUserIds = new HashSet<Guid>();
+            var registrationsToMaterialize = new List<TournamentRegistrationEntity>();
+
+            foreach (var registration in tournamentRegistration)
+            {
+                if (registration.TeamId.HasValue)
+                {
+                    if (!existingTeamIds.Contains(registration.TeamId.Value) && newTeamIds.Add(registration.TeamId.Value))
+                    {
+                        registrationsToMaterialize.Add(registration);
+                    }
+                }
+                else if (registration.UserId.HasValue)
+                {
+                    if (!existingUserIds.Contains(registration.UserId.Value) && newUserIds.Add(registration.UserId.Value))
+                    {
+                        registrationsToMaterialize.Add(registration);
+                    }
+                }
+                else
+                {
+                    // A registration is normally either team- or user-bound; if somehow neither,
+                    // fall back to the original behavior and still create a participant for it.
+                    registrationsToMaterialize.Add(registration);
+                }
+            }
+
+            if (IsAlreadyFullTournament(tournamentRegistration.First(), registrationsToMaterialize.Count))
+            {
+                throw new BusinessRuleException("Cannot approve registration. Tournament has reached maximum number of players.");
             }
 
             foreach (var registration in tournamentRegistration)
             {
                 await SetRegistrationStatus(registration, TournamentRegistrationStatus.Approved);
+            }
+
+            foreach (var registration in registrationsToMaterialize)
+            {
                 await CreateTournamentParticipant(registration);
             }
 

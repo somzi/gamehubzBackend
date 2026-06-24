@@ -40,11 +40,11 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             // Completed matches keep their chat history visible but read-only.
             if (match.Status == MatchStatus.Completed)
-                throw new Exception("Chat is closed for completed matches");
+                throw new BusinessRuleException("Chat is closed for completed matches");
 
             var entity = new MatchChatEntity
             {
