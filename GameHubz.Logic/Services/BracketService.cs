@@ -449,16 +449,11 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
-            var knockoutStage = new TournamentStageEntity
-            {
-                Id = Guid.NewGuid(),
-                TournamentId = tournamentId,
-                Type = StageType.SingleEliminationBracket,
-                Order = 2,
-                Name = "Knockout Stage",
-                QualifiedPlayersCount = totalQualifiers
-            };
-            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(knockoutStage, this.UserContextReader);
+            // Knockout phase: single-elim by default, or Winners+Losers bracket stages when the
+            // organizer chose double-elimination (solo only, and only when there are enough
+            // qualifiers for a real losers bracket). Matches are filled in when the groups finish.
+            bool useDoubleKnockout = UseDoubleEliminationKnockout(tournament) && totalQualifiers >= 4;
+            await AddKnockoutStages(tournamentId, useDoubleKnockout, firstOrder: 2, qualifiedPlayersCount: totalQualifiers);
 
             await this.SaveAsync();
         }
@@ -999,15 +994,10 @@ namespace GameHubz.Logic.Services
                     }, this.UserContextReader);
                 }
 
-                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
-                {
-                    Id = Guid.NewGuid(),
-                    TournamentId = tournamentId,
-                    Type = StageType.SingleEliminationBracket,
-                    Order = nextOrder,
-                    Name = "Knockout Stage",
-                    QualifiedPlayersCount = knockoutSize.Value
-                }, this.UserContextReader);
+                // Single-elim by default, or Winners+Losers bracket stages for double-elimination
+                // (solo only — Swiss is always solo — and only with >= 4 qualifiers).
+                bool useDoubleKnockout = UseDoubleEliminationKnockout(tournament) && knockoutSize.Value >= 4;
+                await AddKnockoutStages(tournamentId, useDoubleKnockout, firstOrder: nextOrder, qualifiedPlayersCount: knockoutSize.Value);
             }
 
             // Single group so the league-style standings/resync machinery applies as-is.
@@ -1179,6 +1169,54 @@ namespace GameHubz.Logic.Services
             int size = tournament.SwissKnockoutQualifiers.Value;
             int direct = tournament.SwissDirectQualifiers ?? size;
             return (size, Math.Min(direct, size));
+        }
+
+        // The post-group / post-swiss knockout phase runs as double-elimination only when the
+        // organizer opted in AND the tournament is solo (the engine has no team double-elim).
+        // Callers additionally require a bracket of >= 4 so a real losers bracket exists.
+        private static bool UseDoubleEliminationKnockout(TournamentEntity tournament)
+            => tournament.KnockoutEliminationType == KnockoutEliminationType.Double
+               && !tournament.IsTeamTournament;
+
+        // Creates the knockout-phase stage(s) up-front (matches are filled in once the feeding
+        // stage finishes). Double-elimination needs two stages — Winners + Losers brackets — laid
+        // out at consecutive orders; single-elimination is one stage. The created stage type is
+        // the single source of truth the population code later reads to pick the bracket shape.
+        private async Task AddKnockoutStages(Guid tournamentId, bool useDouble, int firstOrder, int qualifiedPlayersCount)
+        {
+            if (useDouble)
+            {
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.DoubleEliminationWinnersBracket,
+                    Order = firstOrder,
+                    Name = "Winners Bracket",
+                    QualifiedPlayersCount = qualifiedPlayersCount
+                }, this.UserContextReader);
+
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.DoubleEliminationLosersBracket,
+                    Order = firstOrder + 1,
+                    Name = "Losers Bracket"
+                }, this.UserContextReader);
+            }
+            else
+            {
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.SingleEliminationBracket,
+                    Order = firstOrder,
+                    Name = "Knockout Stage",
+                    QualifiedPlayersCount = qualifiedPlayersCount
+                }, this.UserContextReader);
+            }
         }
 
         // Effective Swiss round count: organizer override (clamped) or ceil(log2(n)) — the
@@ -2582,8 +2620,17 @@ namespace GameHubz.Logic.Services
             bool hasPlayIn = directBerths < knockoutSize;
 
             var postStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
-            var expectedType = hasPlayIn ? StageType.PlayIn : StageType.SingleEliminationBracket;
-            if (postStage == null || postStage.Type != expectedType) return;
+            if (postStage == null) return;
+            if (hasPlayIn)
+            {
+                if (postStage.Type != StageType.PlayIn) return;
+            }
+            else if (postStage.Type != StageType.SingleEliminationBracket
+                     && postStage.Type != StageType.DoubleEliminationWinnersBracket)
+            {
+                // Direct-to-knockout: single-elim or the Winners-Bracket stage of a double-elim knockout.
+                return;
+            }
 
             if (await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(postStage.Id!.Value)) return;
 
@@ -2644,7 +2691,9 @@ namespace GameHubz.Logic.Services
             if (playInMatches.Count == 0 || playInMatches.Any(m => m.Status != MatchStatus.Completed)) return;
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
-            if (knockoutStage == null || knockoutStage.Type != StageType.SingleEliminationBracket) return;
+            if (knockoutStage == null) return;
+            if (knockoutStage.Type != StageType.SingleEliminationBracket
+                && knockoutStage.Type != StageType.DoubleEliminationWinnersBracket) return;
             if (await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value)) return;
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
@@ -2686,16 +2735,35 @@ namespace GameHubz.Logic.Services
                 .Select(s => (TournamentParticipantEntity?)qualifiersInSeedOrder[s - 1])
                 .ToList();
 
-            var matches = GenerateEliminationMatches(
-                tournament.Id!.Value, knockoutStage.Id!.Value, slots, tournament.HasThirdPlaceMatch);
+            // The knockout style is encoded in the stage created up-front: a Winners-Bracket stage
+            // means the organizer chose double-elimination, with a Losers-Bracket stage right after it.
+            bool useDouble = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
+
+            List<MatchEntity> matches;
+            if (useDouble)
+            {
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository
+                    .GetByOrder(tournament.Id!.Value, knockoutStage.Order + 1);
+                if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
+
+                matches = GenerateDoubleEliminationMatches(
+                    tournament.Id!.Value, knockoutStage.Id!.Value, lbStage.Id!.Value, slots);
+            }
+            else
+            {
+                matches = GenerateEliminationMatches(
+                    tournament.Id!.Value, knockoutStage.Id!.Value, slots, tournament.HasThirdPlaceMatch);
+            }
 
             foreach (var m in matches)
                 await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
 
             if (playInMatches == null) return;
 
+            // Play-in winners feed round 1 of the (winners) bracket. Restrict to the knockout stage
+            // so LB round-1 matches (also RoundNumber 1, different stage) are never picked up.
             var firstRound = matches
-                .Where(m => m.RoundNumber == 1)
+                .Where(m => m.RoundNumber == 1 && m.TournamentStageId == knockoutStage.Id!.Value)
                 .OrderBy(m => m.MatchOrder)
                 .ToList();
 
@@ -3097,8 +3165,12 @@ namespace GameHubz.Logic.Services
             if (!allGroupMatches.All(m => m.Status == MatchStatus.Completed)) return;
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
+            if (knockoutStage == null) return;
 
-            if (knockoutStage == null || knockoutStage.Type != StageType.SingleEliminationBracket) return;
+            // A Winners-Bracket stage at the knockout slot means the organizer chose double-elim
+            // (solo only — the team path always creates a single-elim knockout stage).
+            bool useDoubleKnockout = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
+            if (!useDoubleKnockout && knockoutStage.Type != StageType.SingleEliminationBracket) return;
 
             bool hasMatches = await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value);
             if (hasMatches) return;
@@ -3338,6 +3410,21 @@ namespace GameHubz.Logic.Services
                     foreach (var sm in subs)
                         await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
                 }
+            }
+            else if (useDoubleKnockout)
+            {
+                // Solo double-elimination knockout: fill the Winners + Losers bracket stages that
+                // were created up-front (LB sits at the order right after the WB). The qualifier
+                // count is a validated power of two, so there are no byes to collapse here.
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+                if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
+
+                var bracketSlots = bracketSeeded.Cast<TournamentParticipantEntity?>().ToList();
+                var matches = GenerateDoubleEliminationMatches(
+                    tournamentId, knockoutStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+
+                foreach (var m in matches)
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
             }
             else
             {

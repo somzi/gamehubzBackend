@@ -357,6 +357,9 @@ namespace GameHubz.Logic.Services
             inputDto.IsExclusive = existing.IsExclusive;
             inputDto.Countries = existing.Countries == null ? null : new List<string>(existing.Countries);
             inputDto.DoubleRoundRobin = existing.DoubleRoundRobin;
+            // Newer field that old clients don't send — without this, their edits would null it out
+            // and silently downgrade a double-elimination knockout back to single.
+            inputDto.KnockoutEliminationType = existing.KnockoutEliminationType;
         }
 
         /// <summary>

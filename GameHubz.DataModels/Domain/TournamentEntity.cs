@@ -56,6 +56,11 @@ namespace GameHubz.DataModels.Domain
         // D+1 .. D+2(N-D). Null or == SwissKnockoutQualifiers = no play-in.
         public int? SwissDirectQualifiers { get; set; }
 
+        // GroupStageWithKnockout / Swiss: whether the knockout phase is single- or double-elimination.
+        // Null = Single (back-compat for every existing tournament). Double is solo-only — the engine
+        // has no team double-elimination, so this is ignored for team tournaments.
+        public KnockoutEliminationType? KnockoutEliminationType { get; set; }
+
         // When true, single-elimination brackets also generate a play-off match
         // between the two semi-final losers. Default false for all existing tournaments.
         public bool HasThirdPlaceMatch { get; set; }

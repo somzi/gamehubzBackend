@@ -272,6 +272,7 @@ namespace GameHubz.Data.Repository
                       SwissRoundsCount = x.SwissRoundsCount,
                       SwissKnockoutQualifiers = x.SwissKnockoutQualifiers,
                       SwissDirectQualifiers = x.SwissDirectQualifiers,
+                      KnockoutEliminationType = x.KnockoutEliminationType,
                       HubName = x.Hub!.Name,
                       IsTeamTournament = x.IsTeamTournament,
                       TeamSize = x.TeamSize,

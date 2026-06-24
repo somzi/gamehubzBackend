@@ -40,6 +40,10 @@ namespace GameHubz.DataModels.Models
         // play-in round between standings D+1 .. D+2(N-D). Null/== N = no play-in.
         public int? SwissDirectQualifiers { get; set; }
 
+        // GroupStageWithKnockout / Swiss: single- vs double-elimination knockout phase.
+        // Null = Single (back-compat — old clients omit it). Solo-only; ignored for team tournaments.
+        public KnockoutEliminationType? KnockoutEliminationType { get; set; }
+
         public bool HasThirdPlaceMatch { get; set; }
 
         public bool RequireResultApproval { get; set; }
