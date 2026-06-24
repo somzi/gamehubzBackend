@@ -883,6 +883,7 @@ namespace GameHubz.Logic.Services
             return firstStage switch
             {
                 MatchStage.GrandFinal => "Grand Final",
+                MatchStage.GrandFinalReset => "Grand Final (Reset)",
                 MatchStage.Final => "Final",
                 MatchStage.SemiFinal => "Semifinal",
                 MatchStage.QuarterFinal => "Quarterfinal",
