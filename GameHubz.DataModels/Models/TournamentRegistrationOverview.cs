@@ -11,5 +11,7 @@
         public string? TeamName { get; set; }
         public Guid? CaptainUserId { get; set; }
         public int? MemberCount { get; set; }
+        public int? TeamSize { get; set; }
+        public List<TeamMemberDto> Members { get; set; } = new();
     }
 }
