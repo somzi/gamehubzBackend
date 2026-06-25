@@ -46,6 +46,25 @@ namespace GameHubz.Logic.Services
         /// </summary>
         protected override async Task BeforeSave(TournamentRegistrationEntity entity, TournamentRegistrationPost inputDto, bool isNew)
         {
+            if (isNew && entity.TournamentId.HasValue && (entity.UserId.HasValue || entity.TeamId.HasValue))
+            {
+                // Block duplicate sign-ups. An entrant that already has a non-rejected registration,
+                // or is already a confirmed participant, must not be able to create a second row.
+                // Repeated rows were the root cause of duplicate participants that later broke the
+                // players list and couldn't be cleanly removed.
+                bool alreadyRegistered = await this.AppUnitOfWork.TournamentRegistrationRepository
+                    .ExistsNonRejected(entity.TournamentId.Value, entity.UserId, entity.TeamId);
+
+                bool alreadyParticipant = entity.TeamId.HasValue
+                    ? await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForTeam(entity.TournamentId.Value, entity.TeamId.Value)
+                    : await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForUser(entity.TournamentId.Value, entity.UserId!.Value);
+
+                if (alreadyRegistered || alreadyParticipant)
+                {
+                    throw new Exception("You're already registered for this tournament.");
+                }
+            }
+
             if (isNew && entity.UserId.HasValue && entity.TournamentId.HasValue)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
@@ -92,13 +111,26 @@ namespace GameHubz.Logic.Services
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
 
-            if (IsAlreadyFullTournament(tournamentRegistration, 1))
+            // If this entrant is already a participant (e.g. a stale/duplicate registration row, or
+            // this row was approved before), only flip the status — creating a second participant is
+            // exactly the bug that produced duplicate players, and it shouldn't count against capacity.
+            bool isTeamRegistration = tournamentRegistration.TeamId.HasValue;
+            bool alreadyParticipant = tournamentRegistration.Tournament?.TournamentParticipants?.Any(p =>
+                isTeamRegistration
+                    ? p.TeamId == tournamentRegistration.TeamId
+                    : p.UserId == tournamentRegistration.UserId) ?? false;
+
+            if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
             {
                 throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
             }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
-            await CreateTournamentParticipant(tournamentRegistration);
+
+            if (!alreadyParticipant)
+            {
+                await CreateTournamentParticipant(tournamentRegistration);
+            }
 
             await this.SaveAsync();
 
@@ -242,34 +274,62 @@ namespace GameHubz.Logic.Services
 
         private async Task CreateTournamentParticipant(TournamentRegistrationEntity tournamentRegistration)
         {
-            if (tournamentRegistration.TeamId.HasValue)
+            try
             {
-                // Team tournament: create participant linked to team
-                var tournamentParticipants = new TournamentParticipantPost
+                if (tournamentRegistration.TeamId.HasValue)
                 {
-                    TournamentId = tournamentRegistration.TournamentId,
-                    UserId = tournamentRegistration.UserId,
-                    TeamId = tournamentRegistration.TeamId
-                };
+                    // Team tournament: create participant linked to team
+                    var tournamentParticipants = new TournamentParticipantPost
+                    {
+                        TournamentId = tournamentRegistration.TournamentId,
+                        UserId = tournamentRegistration.UserId,
+                        TeamId = tournamentRegistration.TeamId
+                    };
 
-                var dto = await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                    var dto = await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
 
-                // Link the team to the participant
-                var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(tournamentRegistration.TeamId.Value);
-                team.TournamentParticipantId = dto.Id;
-                await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+                    // Link the team to the participant
+                    var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(tournamentRegistration.TeamId.Value);
+                    team.TournamentParticipantId = dto.Id;
+                    await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+                }
+                else
+                {
+                    // Solo tournament: existing behavior
+                    var tournamentParticipants = new TournamentParticipantPost
+                    {
+                        TournamentId = tournamentRegistration.TournamentId,
+                        UserId = tournamentRegistration.UserId
+                    };
+
+                    await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                }
             }
-            else
+            catch (Exception ex) when (IsDuplicateParticipantViolation(ex))
             {
-                // Solo tournament: existing behavior
-                var tournamentParticipants = new TournamentParticipantPost
-                {
-                    TournamentId = tournamentRegistration.TournamentId,
-                    UserId = tournamentRegistration.UserId
-                };
-
-                await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                // The unique index on TournamentParticipant rejected this insert because a
+                // concurrent approval (e.g. two admins approving at the same moment) already
+                // created the participant. The entrant is in — the desired end state — so surface
+                // a clear message instead of a raw DB error. The in-memory "already a participant"
+                // guard can't catch this; only the DB sees the other transaction's pending row.
+                throw new BusinessRuleException("This registration has already been approved.");
             }
+        }
+
+        // Detects a Postgres unique-violation (SqlState 23505) anywhere in the exception chain
+        // without taking a compile-time dependency on Npgsql in this layer.
+        private static bool IsDuplicateParticipantViolation(Exception ex)
+        {
+            for (Exception? e = ex; e != null; e = e.InnerException)
+            {
+                if (e.GetType().Name == "PostgresException"
+                    && e.GetType().GetProperty("SqlState")?.GetValue(e) as string == "23505")
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private async Task SetRegistrationStatus(TournamentRegistrationEntity tournamentRegistration, TournamentRegistrationStatus status)

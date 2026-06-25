@@ -20,6 +20,12 @@ namespace GameHubz.Logic.Interfaces
 
         Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId);
 
+        Task<List<TournamentParticipantEntity>> GetAllByTournamentAndUser(Guid tournamentId, Guid userId);
+
+        Task<bool> ExistsForUser(Guid tournamentId, Guid userId);
+
+        Task<bool> ExistsForTeam(Guid tournamentId, Guid teamId);
+
         Task<TournamentParticipantEntity?> GetByTeamId(Guid teamId);
 
         Task<List<Guid>> GetAllUserIdsByTournamentId(Guid tournamentId);
