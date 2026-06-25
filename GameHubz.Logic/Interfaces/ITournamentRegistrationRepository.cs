@@ -8,6 +8,10 @@ namespace GameHubz.Logic.Interfaces
 
         Task<TournamentRegistrationEntity> GetUserByTournamentId(Guid tournamentId, Guid userId);
 
+        Task<List<TournamentRegistrationEntity>> GetAllByTournamentAndUser(Guid tournamentId, Guid userId);
+
+        Task<bool> ExistsNonRejected(Guid tournamentId, Guid? userId, Guid? teamId);
+
         Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId);
 
         Task<TournamentRegistrationEntity?> GetByTeamId(Guid teamId);

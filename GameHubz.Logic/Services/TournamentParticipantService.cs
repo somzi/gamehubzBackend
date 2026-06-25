@@ -74,12 +74,23 @@ namespace GameHubz.Logic.Services
 
         public async Task RemoveUser(Guid tournamentId, Guid userId)
         {
-            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetUserByTournamentId(tournamentId, userId);
+            // Remove every participant and registration row for this user, not just the first.
+            // Duplicate rows used to exist (a registration approved more than once), and the old
+            // single-row FirstAsync lookups threw "Sequence contains no elements" as soon as one
+            // side was already gone — which made the leftover duplicates impossible to remove from
+            // the UI. Deleting the full set is also how those legacy duplicates get cleaned up.
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllByTournamentAndUser(tournamentId, userId);
+            var registrations = await this.AppUnitOfWork.TournamentRegistrationRepository.GetAllByTournamentAndUser(tournamentId, userId);
 
-            var registration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetUserByTournamentId(tournamentId, userId);
+            foreach (var participant in participants)
+            {
+                await this.AppUnitOfWork.TournamentParticipantRepository.HardDeleteEntity(participant);
+            }
 
-            await this.AppUnitOfWork.TournamentParticipantRepository.HardDeleteEntity(participant);
-            await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
+            foreach (var registration in registrations)
+            {
+                await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(registration);
+            }
 
             await this.SaveAsync();
 

@@ -68,6 +68,26 @@ namespace GameHubz.Data.Repository
                 .FirstAsync(tp => tp.TournamentId == tournamentId && tp.UserId == userId);
         }
 
+        // Returns every registration row for the user — used by removal so duplicate rows are
+        // all cleaned up in one go and an empty result simply removes nothing (no throw).
+        public async Task<List<TournamentRegistrationEntity>> GetAllByTournamentAndUser(Guid tournamentId, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(r => r.TournamentId == tournamentId && r.UserId == userId)
+                .ToListAsync();
+        }
+
+        // True if the user or team already has a registration that isn't rejected — used to
+        // block duplicate sign-ups at registration time. A rejected row doesn't count, so a
+        // rejected entrant can register again.
+        public Task<bool> ExistsNonRejected(Guid tournamentId, Guid? userId, Guid? teamId)
+        {
+            return this.BaseDbSet().AnyAsync(r =>
+                r.TournamentId == tournamentId
+                && r.Status != TournamentRegistrationStatus.Rejected
+                && ((userId != null && r.UserId == userId) || (teamId != null && r.TeamId == teamId)));
+        }
+
         public Task<TournamentRegistrationEntity> GetWithTournament(Guid registrationId)
         {
             return this.BaseDbSet()
