@@ -9,5 +9,7 @@ namespace GameHubz.Logic.Interfaces
         Task<UserHubRequestEntity?> GetByIdWithHub(Guid requestId);
         Task<bool> HasPendingRequest(Guid hubId, Guid userId);
         Task<int> CountPendingByHubId(Guid hubId);
+        Task<int> CountPendingByHubIds(List<Guid> hubIds);
+        Task<List<HubCountRow>> GetPendingCountsByHub(List<Guid> hubIds);
     }
 }

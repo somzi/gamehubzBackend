@@ -11,6 +11,7 @@ namespace GameHubz.Logic.Services
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly StreamVodResolver streamVodResolver;
         private readonly YouTubeStreamClient youTubeStreamClient;
+        private readonly BadgeService badgeService;
 
         public MatchService(
             IUnitOfWorkFactory factory,
@@ -24,7 +25,8 @@ namespace GameHubz.Logic.Services
             INotificationService notificationService,
             TournamentAuthorizationService tournamentAuth,
             StreamVodResolver streamVodResolver,
-            YouTubeStreamClient youTubeStreamClient) : base(
+            YouTubeStreamClient youTubeStreamClient,
+            BadgeService badgeService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -38,6 +40,7 @@ namespace GameHubz.Logic.Services
             this.tournamentAuth = tournamentAuth;
             this.streamVodResolver = streamVodResolver;
             this.youTubeStreamClient = youTubeStreamClient;
+            this.badgeService = badgeService;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -255,6 +258,10 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
+            // Managers' "admin help" badge just went up — refresh it live (before the push
+            // early-out so it fires even when no manager has a push token configured).
+            await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
+
             // Gather all recipients + payload while the DbContext is still alive. The actual
             // push call is fire-and-forget below so it must NOT touch this scope's DbContext.
             var pushTokens = await CollectHubAdminPushTokensAsync(match.TournamentId, excludeUserId: user.UserId);
@@ -293,6 +300,9 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
+
+            // Managers' "admin help" badge just dropped — refresh it live.
+            await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
 
             if (requesterUserId == null) return;
 

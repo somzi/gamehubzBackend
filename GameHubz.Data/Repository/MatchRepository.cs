@@ -125,6 +125,41 @@ namespace GameHubz.Data.Repository
                 {
                     Id = x.Id!.Value,
                     Status = x.Status,
+                    ProposedByUserId = x.ProposedByUserId,
+                })
+                .ToListAsync();
+        }
+
+        // Open "admin help" requests across every tournament owned by the given hubs.
+        // Drives the organizer AdminHelpRequests badge. Indexed on AdminHelpRequested.
+        public async Task<int> CountAdminHelpForHubs(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress);
+        }
+
+        // Per-tournament open admin-help counts across the given hubs — feeds the cascade badge.
+        public async Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<TournamentCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress)
+                .GroupBy(m => new { m.TournamentId, HubId = m.Tournament!.HubId!.Value, Status = (int)m.Tournament!.Status })
+                .Select(g => new TournamentCountRow
+                {
+                    TournamentId = g.Key.TournamentId,
+                    HubId = g.Key.HubId,
+                    Status = g.Key.Status,
+                    Count = g.Count()
                 })
                 .ToListAsync();
         }

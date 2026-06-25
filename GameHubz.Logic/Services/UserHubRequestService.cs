@@ -7,6 +7,8 @@ namespace GameHubz.Logic.Services
     {
         private readonly ICacheService cacheService;
         private readonly UserHubService userHubService;
+        private readonly INotificationService notificationService;
+        private readonly BadgeService badgeService;
 
         public UserHubRequestService(
             IUnitOfWorkFactory factory,
@@ -17,7 +19,9 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             ICacheService cacheService,
-            UserHubService userHubService) : base(
+            UserHubService userHubService,
+            INotificationService notificationService,
+            BadgeService badgeService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -28,6 +32,8 @@ namespace GameHubz.Logic.Services
         {
             this.cacheService = cacheService;
             this.userHubService = userHubService;
+            this.notificationService = notificationService;
+            this.badgeService = badgeService;
         }
 
         public async Task RequestJoin(Guid hubId)
@@ -77,6 +83,71 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.UserHubRequestRepository.AddEntity(request, this.UserContextReader);
             await this.SaveAsync();
+
+            // Hub managers (owner + admins) have a new join request waiting.
+            await NotifyHubManagersAsync(
+                hubId,
+                hub.UserId,
+                excludeUserId: user.UserId,
+                hub.Name,
+                $"{user.Username} wants to join your hub.",
+                new { hubId = hubId.ToString(), type = "hubJoinRequest" });
+        }
+
+        // Pushes + badge-bumps every hub manager (owner + admins) about a new pending join request.
+        private async Task NotifyHubManagersAsync(Guid hubId, Guid ownerUserId, Guid excludeUserId, string title, string body, object data)
+        {
+            var members = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
+            var managers = members
+                .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin) && m.UserId != excludeUserId)
+                .ToList();
+
+            var managerIds = managers.Select(m => m.UserId).ToHashSet();
+            if (ownerUserId != excludeUserId) managerIds.Add(ownerUserId); // owner may lack a UserHub row
+
+            foreach (var id in managerIds)
+                await this.badgeService.PushAsync(id);
+
+            var tokens = managers
+                .Where(m => !string.IsNullOrEmpty(m.PushToken))
+                .Select(m => m.PushToken!)
+                .Distinct()
+                .ToList();
+
+            if (tokens.Count == 0) return;
+            _ = Task.Run(async () =>
+            {
+                try { await notificationService.SendToManyAsync(tokens, title, body, data); }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        // Refreshes hub managers' "pending join requests" badge after one is approved/rejected.
+        private async Task BumpHubManagerBadgesAsync(Guid hubId, Guid ownerUserId)
+        {
+            var members = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
+            var managerIds = members
+                .Where(m => m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
+                .Select(m => m.UserId)
+                .ToHashSet();
+            managerIds.Add(ownerUserId);
+
+            foreach (var id in managerIds)
+                await this.badgeService.PushAsync(id);
+        }
+
+        // Fire-and-forget push to a single user by id.
+        private async Task NotifyUserAsync(Guid userId, string title, string body, object data)
+        {
+            var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
+            if (string.IsNullOrEmpty(target?.PushToken)) return;
+
+            var token = target.PushToken!;
+            _ = Task.Run(async () =>
+            {
+                try { await notificationService.SendToOneAsync(token, title, body, data); }
+                catch { /* fire-and-forget */ }
+            });
         }
 
         public async Task<List<UserHubRequestDto>> GetPendingRequests(Guid hubId)
@@ -120,6 +191,14 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await InvalidateHubCache(request.HubId!.Value, request.UserId!.Value);
+
+            // Managers' pending-requests badge drops; tell the user they're in.
+            await BumpHubManagerBadgesAsync(request.HubId!.Value, request.Hub!.UserId);
+            await NotifyUserAsync(
+                request.UserId!.Value,
+                request.Hub!.Name,
+                "Your request to join the hub was approved.",
+                new { hubId = request.HubId!.Value.ToString(), type = "hubJoinApproved" });
         }
 
         public async Task RejectRequest(Guid requestId)
@@ -139,6 +218,14 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.UserHubRequestRepository.UpdateEntity(request, this.UserContextReader);
 
             await this.SaveAsync();
+
+            // Managers' pending-requests badge drops; tell the user their request was declined.
+            await BumpHubManagerBadgesAsync(request.HubId!.Value, request.Hub!.UserId);
+            await NotifyUserAsync(
+                request.UserId!.Value,
+                request.Hub!.Name,
+                "Your request to join the hub was declined.",
+                new { hubId = request.HubId!.Value.ToString(), type = "hubJoinRejected" });
         }
 
         public async Task CancelMyRequest(Guid hubId)

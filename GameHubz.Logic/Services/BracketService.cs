@@ -9,6 +9,7 @@ namespace GameHubz.Logic.Services
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly BadgeService badgeService;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -17,13 +18,15 @@ namespace GameHubz.Logic.Services
             HubActivityService hubActivityService,
             ICacheService cacheService,
             INotificationService notificationService,
-            TournamentAuthorizationService tournamentAuth)
+            TournamentAuthorizationService tournamentAuth,
+            BadgeService badgeService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
             this.notificationService = notificationService;
             this.tournamentAuth = tournamentAuth;
+            this.badgeService = badgeService;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -2041,6 +2044,11 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+
+            // Proposal cleared → the opponent's "result to confirm" badge drops. Refresh both
+            // sides (participants weren't loaded above, so fetch them just for the badge bump).
+            var participantsMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (participantsMatch != null) await BumpMatchBadgesAsync(participantsMatch);
         }
 
         private async Task FinalizeMatchResult(
@@ -2186,6 +2194,11 @@ namespace GameHubz.Logic.Services
             foreach (var userId in affectedUserIds)
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
+            // Result is now official → any "result to confirm" badge on these participants
+            // clears, and the schedule badge may change. Refresh both sides live.
+            foreach (var userId in affectedUserIds)
+                await this.badgeService.PushAsync(userId);
+
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
@@ -2201,6 +2214,103 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+
+            // The opponent now has a result waiting for them — bump their badge and push.
+            await NotifyResultProposedAsync(match, currentUser);
+        }
+
+        // Notifies the participant who did NOT propose the result that one is awaiting their
+        // confirmation. Badge bump first (works even without a push token), then a fire-and-forget
+        // push with already-resolved data so the background send never touches this DbContext.
+        private async Task NotifyResultProposedAsync(MatchEntity match, TokenUserInfo proposer)
+        {
+            var homeUserId = match.HomeUserId ?? match.HomeParticipant?.UserId;
+            var awayUserId = match.AwayUserId ?? match.AwayParticipant?.UserId;
+
+            Guid? opponentUserId =
+                homeUserId == proposer.UserId ? awayUserId :
+                awayUserId == proposer.UserId ? homeUserId : null;
+
+            if (opponentUserId == null) return;
+
+            await this.badgeService.PushAsync(opponentUserId.Value);
+
+            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
+
+            var token = opponent.PushToken!;
+            var matchId = match.Id!.Value;
+            var proposerName = proposer.Username;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await notificationService.SendToOneAsync(
+                        token,
+                        "Result to confirm",
+                        $"{proposerName} reported a result. Tap to confirm or dispute.",
+                        new { matchId = matchId.ToString(), type = "resultProposed" });
+                }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        // Refreshes both sides' badges after a proposal is confirmed or rejected (the opponent's
+        // "results to confirm" count drops). Team sub-matches carry the player ids on the columns.
+        private async Task BumpMatchBadgesAsync(MatchEntity match)
+        {
+            var homeUserId = match.HomeUserId ?? match.HomeParticipant?.UserId;
+            var awayUserId = match.AwayUserId ?? match.AwayParticipant?.UserId;
+            if (homeUserId.HasValue) await this.badgeService.PushAsync(homeUserId.Value);
+            if (awayUserId.HasValue) await this.badgeService.PushAsync(awayUserId.Value);
+        }
+
+        // Fire-and-forget "you won" push to the champion (solo) or every member of the winning
+        // team. Tokens are resolved here in the request scope and handed to the background send.
+        private async Task NotifyTournamentWinnerAsync(TournamentEntity tournament)
+        {
+            try
+            {
+                List<Guid> winnerUserIds;
+
+                if (tournament.WinnerUserId.HasValue && tournament.WinnerUserId.Value != Guid.Empty)
+                {
+                    winnerUserIds = new List<Guid> { tournament.WinnerUserId.Value };
+                }
+                else if (tournament.WinnerTeamId.HasValue)
+                {
+                    var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(tournament.WinnerTeamId.Value);
+                    winnerUserIds = team?.Members
+                        .Where(m => m.UserId.HasValue)
+                        .Select(m => m.UserId!.Value)
+                        .ToList() ?? new List<Guid>();
+                }
+                else
+                {
+                    return;
+                }
+
+                if (winnerUserIds.Count == 0) return;
+
+                var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(winnerUserIds);
+                if (pushTokens.Count == 0) return;
+
+                var tournamentId = tournament.Id!.Value;
+                var title = tournament.Name;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await notificationService.SendToManyAsync(
+                            pushTokens,
+                            title,
+                            "Congratulations — you won the tournament! 🏆",
+                            new { tournamentId, type = "tournamentWon" });
+                    }
+                    catch { /* fire-and-forget */ }
+                });
+            }
+            catch { /* never let a win-notification failure break tournament completion */ }
         }
 
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)
@@ -2774,7 +2884,10 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
 
                     if (!wasCompleted)
+                    {
                         await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                        await NotifyTournamentWinnerAsync(tournament);
+                    }
                 }
             }
         }
@@ -2787,7 +2900,10 @@ namespace GameHubz.Logic.Services
             tournament.Status = TournamentStatus.Completed;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
+            {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
         }
 
         // Lazily creates the reset Grand Final when the Losers Bracket champion wins the first one.
@@ -2884,7 +3000,10 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
+            {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
         }
 
         /// <summary>
@@ -3169,7 +3288,10 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             if (!wasCompleted)
+            {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
         }
 
         // Standings order shared by Swiss pairing and winner selection. Tiebreaker chain:
@@ -3488,7 +3610,10 @@ namespace GameHubz.Logic.Services
                     tournament.Status = TournamentStatus.Completed;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
                     if (!wasCompleted)
+                    {
                         await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                        await NotifyTournamentWinnerAsync(tournament);
+                    }
                 }
             }
 
@@ -3513,7 +3638,10 @@ namespace GameHubz.Logic.Services
             tournament.Status = TournamentStatus.Completed;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
+            {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
         }
 
         // Team mirror of CreateGrandFinalReset: lazily creates the reset Grand Final when the LB

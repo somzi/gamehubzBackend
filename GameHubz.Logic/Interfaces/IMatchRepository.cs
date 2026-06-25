@@ -18,6 +18,10 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId);
 
+        Task<int> CountAdminHelpForHubs(List<Guid> hubIds);
+
+        Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds);
+
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
         Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId);
