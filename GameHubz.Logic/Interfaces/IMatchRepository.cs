@@ -24,6 +24,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId);
 
+        Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId);
+
         Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId);
 
         Task<List<MatchEntity>> GetByStageId(Guid groupStageId);

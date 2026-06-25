@@ -317,6 +317,16 @@ namespace GameHubz.Logic.Services
             return await this.AppUnitOfWork.MatchRepository.GetAdminHelpRequests(tournamentId);
         }
 
+        public async Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
+                throw new Exception("Only tournament admins can view pending approvals");
+
+            return await this.AppUnitOfWork.MatchRepository.GetPendingApprovalMatches(tournamentId);
+        }
+
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)
         {
             // Team sub-matches carry the player ids on the match itself; solo matches use the participants.
