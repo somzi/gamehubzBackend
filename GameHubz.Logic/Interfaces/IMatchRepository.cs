@@ -18,11 +18,17 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId);
 
+        Task<int> CountAdminHelpForHubs(List<Guid> hubIds);
+
+        Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds);
+
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
         Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId);
 
         Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId);
+
+        Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId);
 
         Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId);
 
@@ -31,6 +37,8 @@ namespace GameHubz.Logic.Interfaces
         Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId);
 
         Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber);
+
+        Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber);
 
         Task<MatchResultDetailDto> GetWithEvidence(Guid id);
 

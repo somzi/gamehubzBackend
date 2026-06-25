@@ -25,5 +25,15 @@ namespace GameHubz.Api.Controllers
         {
             return Ok(await this.badgeService.GetMyBadgesAsync());
         }
+
+        /// <summary>
+        /// Per-hub / per-tournament breakdown that lets the client cascade the aggregate organizer
+        /// badge down to the specific hub card, tournament, and Requests/Registrations tab.
+        /// </summary>
+        [HttpGet("approvals")]
+        public async Task<IActionResult> GetApprovals()
+        {
+            return Ok(await this.badgeService.GetMyApprovalsBreakdownAsync());
+        }
     }
 }

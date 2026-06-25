@@ -64,5 +64,30 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .CountAsync(r => r.HubId == hubId && r.Status == JoinRequestStatus.Pending);
         }
+
+        // Pending join requests across every hub the user manages — organizer badge.
+        public async Task<int> CountPendingByHubIds(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(r => r.HubId != null
+                    && hubIds.Contains(r.HubId.Value)
+                    && r.Status == JoinRequestStatus.Pending);
+        }
+
+        // Per-hub pending join-request counts — feeds the cascade badge on each hub card.
+        public async Task<List<HubCountRow>> GetPendingCountsByHub(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<HubCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(r => r.Status == JoinRequestStatus.Pending
+                    && r.HubId != null
+                    && hubIds.Contains(r.HubId.Value))
+                .GroupBy(r => r.HubId!.Value)
+                .Select(g => new HubCountRow { HubId = g.Key, Count = g.Count() })
+                .ToListAsync();
+        }
     }
 }

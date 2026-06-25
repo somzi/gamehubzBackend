@@ -85,6 +85,17 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Round scoped to a single stage. Used by the round-schedule editor so a deadline set on,
+        // say, Losers-Bracket round 2 doesn't also hit Winners-Bracket round 2 (separate stages,
+        // shared RoundNumber). Team sub-matches inherit their parent's TournamentStageId, so this
+        // works for team tournaments too where IsUpperBracket/Stage on the sub-match aren't set.
+        public Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentStageId == stageId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
         // The set of "active" matches for a user — in-progress tournament, not yet finished,
         // round open, and the user is one of the two sides (solo participant or team sub-match
         // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
@@ -114,6 +125,41 @@ namespace GameHubz.Data.Repository
                 {
                     Id = x.Id!.Value,
                     Status = x.Status,
+                    ProposedByUserId = x.ProposedByUserId,
+                })
+                .ToListAsync();
+        }
+
+        // Open "admin help" requests across every tournament owned by the given hubs.
+        // Drives the organizer AdminHelpRequests badge. Indexed on AdminHelpRequested.
+        public async Task<int> CountAdminHelpForHubs(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress);
+        }
+
+        // Per-tournament open admin-help counts across the given hubs — feeds the cascade badge.
+        public async Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<TournamentCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress)
+                .GroupBy(m => new { m.TournamentId, HubId = m.Tournament!.HubId!.Value, Status = (int)m.Tournament!.Status })
+                .Select(g => new TournamentCountRow
+                {
+                    TournamentId = g.Key.TournamentId,
+                    HubId = g.Key.HubId,
+                    Status = g.Key.Status,
+                    Count = g.Count()
                 })
                 .ToListAsync();
         }
@@ -351,6 +397,44 @@ namespace GameHubz.Data.Repository
                         : x.AwayUser != null && x.AwayUserId == x.AdminHelpRequestedByUserId ? x.AwayUser.Username
                         : x.HomeParticipant != null && x.HomeParticipant.UserId == x.AdminHelpRequestedByUserId ? x.HomeParticipant.User!.Username
                         : x.AwayParticipant != null && x.AwayParticipant.UserId == x.AdminHelpRequestedByUserId ? x.AwayParticipant.User!.Username
+                        : null,
+                    HomeUserId = x.HomeUserId ?? (x.HomeParticipant != null ? x.HomeParticipant.UserId : null),
+                    HomeUsername = x.HomeUser != null ? x.HomeUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.Username : null,
+                    HomeAvatarUrl = x.HomeUser != null ? x.HomeUser.AvatarUrl
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.AvatarUrl : null,
+                    AwayUserId = x.AwayUserId ?? (x.AwayParticipant != null ? x.AwayParticipant.UserId : null),
+                    AwayUsername = x.AwayUser != null ? x.AwayUser.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.Username : null,
+                    AwayAvatarUrl = x.AwayUser != null ? x.AwayUser.AvatarUrl
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.AvatarUrl : null,
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId)
+        {
+            // A match awaits approval when a result has been proposed but not yet applied
+            // (ProposedByUserId is cleared on approve/reject). Direct HomeUserId/AwayUserId
+            // cover team sub-matches; solo matches resolve through participants.
+            return await this.BaseDbSet()
+                .Where(x => x.TournamentId == tournamentId && x.ProposedByUserId != null)
+                .OrderBy(x => x.RoundNumber)
+                .Select(x => new MatchPendingApprovalItemDto
+                {
+                    MatchId = x.Id!.Value,
+                    RoundNumber = x.RoundNumber,
+                    Status = x.Status,
+                    ScheduledStartTime = x.ScheduledStartTime,
+                    ProposedHomeScore = x.ProposedHomeScore,
+                    ProposedAwayScore = x.ProposedAwayScore,
+                    ProposedByUserId = x.ProposedByUserId,
+                    ProposedByUsername =
+                        x.ProposedByUserId == null ? null
+                        : x.HomeUser != null && x.HomeUserId == x.ProposedByUserId ? x.HomeUser.Username
+                        : x.AwayUser != null && x.AwayUserId == x.ProposedByUserId ? x.AwayUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.UserId == x.ProposedByUserId ? x.HomeParticipant.User!.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.UserId == x.ProposedByUserId ? x.AwayParticipant.User!.Username
                         : null,
                     HomeUserId = x.HomeUserId ?? (x.HomeParticipant != null ? x.HomeParticipant.UserId : null),
                     HomeUsername = x.HomeUser != null ? x.HomeUser.Username

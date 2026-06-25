@@ -9,5 +9,6 @@ namespace GameHubz.Logic.Interfaces
         Task<TeamJoinRequestEntity?> GetApprovedByTeamAndUser(Guid teamId, Guid userId);
         Task<TeamJoinRequestEntity?> GetByIdWithTeam(Guid requestId);
         Task<bool> HasPendingRequest(Guid teamId, Guid userId);
+        Task<int> CountPendingForCaptain(Guid captainUserId);
     }
 }

@@ -99,6 +99,12 @@ namespace GameHubz.Api.Controllers
             return await this.Service.GetAdminHelpRequests(tournamentId);
         }
 
+        [HttpGet("pendingApproval/tournament/{tournamentId}")]
+        public async Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId)
+        {
+            return await this.Service.GetPendingApprovalMatches(tournamentId);
+        }
+
         [HttpGet("{id}/team/details")]
         public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
         {

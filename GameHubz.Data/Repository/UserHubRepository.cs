@@ -56,6 +56,19 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Hubs the user manages (Owner or Admin) — i.e. can approve join requests /
+        // registrations and act on admin-help. Drives the organizer badges. Owners always
+        // have an Owner UserHub row (see GetHubIdsWithExclusiveAccess note), so this covers them.
+        public async Task<List<Guid>> GetManagedHubIds(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(uh => uh.UserId == userId
+                    && uh.HubId != null
+                    && (uh.HubRole == HubRole.HubOwner || uh.HubRole == HubRole.HubAdmin))
+                .Select(uh => uh.HubId!.Value)
+                .ToListAsync();
+        }
+
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()

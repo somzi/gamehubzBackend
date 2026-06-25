@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly TournamentParticipantService tournamentParticipantService;
         private readonly ICacheService cacheService;
+        private readonly BadgeService badgeService;
 
         public TournamentRegistrationService(
             IUnitOfWorkFactory factory,
@@ -18,7 +19,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             TournamentParticipantService tournamentParticipantService,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            BadgeService badgeService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -29,6 +31,24 @@ namespace GameHubz.Logic.Services
         {
             this.tournamentParticipantService = tournamentParticipantService;
             this.cacheService = cacheService;
+            this.badgeService = badgeService;
+        }
+
+        /// <summary>
+        /// Creates the registration through the generic pipeline, then bumps the hub managers'
+        /// "pending registrations" badge. Badge-only by design — no push. Both solo registration
+        /// (generic POST) and <see cref="RegisterTeam"/> funnel through here.
+        /// </summary>
+        public override async Task<TournamentRegistrationDto> SaveEntity(TournamentRegistrationPost inputDto, bool doSave = true)
+        {
+            var dto = await base.SaveEntity(inputDto, doSave);
+
+            // New rows are always Pending (set in BeforeDtoMapToEntity). Edits keep their status;
+            // bumping on a Pending row is the only case the managers' queue cares about.
+            if (doSave && inputDto.TournamentId.HasValue && inputDto.Status == TournamentRegistrationStatus.Pending)
+                await this.badgeService.PushToTournamentManagersAsync(inputDto.TournamentId.Value);
+
+            return dto;
         }
 
         protected override async Task BeforeDtoMapToEntity(TournamentRegistrationPost inputDto, bool isNew)
@@ -146,6 +166,9 @@ namespace GameHubz.Logic.Services
             // service runs before the DB commit, so this catches the rare race where a concurrent
             // read between BeforeSave and SaveAsync could re-cache the stale list.
             await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.TournamentId!.Value);
         }
 
         public async Task ApproveRegistrations(List<Guid> registrationId)
@@ -239,6 +262,9 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
             // Post-commit safety net — see ApproveRegistration above.
             await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.First().TournamentId!.Value);
         }
 
         public async Task RejectRegistration(Guid registrationId)
@@ -250,6 +276,9 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.TournamentId!.Value);
         }
 
         public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId(Guid tournamentId)

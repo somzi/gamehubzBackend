@@ -135,7 +135,7 @@ namespace GameHubz.Logic.Services
         public async Task RemoveMember(Guid hubId, Guid userId)
         {
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            await this.EnsureCallerCanManage(hubId, caller.UserId);
+            var callerRole = await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
                 ?? throw new Exception("Membership not found.");
@@ -143,6 +143,13 @@ namespace GameHubz.Logic.Services
             if (member.HubRole == HubRole.HubOwner)
             {
                 throw new Exception("The hub owner cannot be removed.");
+            }
+
+            // Admins may only act on regular and exclusive members. Removing another
+            // admin is reserved for the owner.
+            if (callerRole != HubRole.HubOwner && member.HubRole == HubRole.HubAdmin)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }
 
             await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(member, this.UserContextReader);
@@ -176,12 +183,19 @@ namespace GameHubz.Logic.Services
         public async Task BanMember(Guid hubId, Guid userId)
         {
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            await this.EnsureCallerCanManage(hubId, caller.UserId);
+            var callerRole = await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (member != null && member.HubRole == HubRole.HubOwner)
             {
                 throw new Exception("The hub owner cannot be banned.");
+            }
+
+            // Admins may only act on regular and exclusive members. Banning another
+            // admin is reserved for the owner.
+            if (callerRole != HubRole.HubOwner && member?.HubRole == HubRole.HubAdmin)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }
 
             if (member != null)
@@ -234,7 +248,7 @@ namespace GameHubz.Logic.Services
         protected override IRepository<UserHubEntity> GetRepository()
             => this.AppUnitOfWork.UserHubRepository;
 
-        public async Task EnsureCallerCanManage(Guid hubId, Guid callerUserId)
+        public async Task<HubRole> EnsureCallerCanManage(Guid hubId, Guid callerUserId)
         {
             var role = await this.GetUserHubRoleCachedAsync(callerUserId, hubId);
 
@@ -242,6 +256,8 @@ namespace GameHubz.Logic.Services
             {
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }
+
+            return role.Value;
         }
 
         public async Task EnsureCallerIsOwner(Guid hubId, Guid callerUserId)

@@ -30,6 +30,49 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Pending registrations awaiting approval across every tournament owned by the
+        // given hubs — organizer badge. Indexed on TournamentRegistration.Status.
+        // Only tournaments still accepting registrations (Draft / RegistrationOpen /
+        // RegistrationClosed) count — a stale pending row on a live/finished/cancelled tournament
+        // isn't actionable and would otherwise inflate the badge above what any list can show.
+        public async Task<int> CountPendingForHubs(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(r => r.Status == TournamentRegistrationStatus.Pending
+                    && r.Tournament!.HubId != null
+                    && hubIds.Contains(r.Tournament.HubId.Value)
+                    && (r.Tournament.Status == TournamentStatus.Draft
+                        || r.Tournament.Status == TournamentStatus.RegistrationOpen
+                        || r.Tournament.Status == TournamentStatus.RegistrationClosed));
+        }
+
+        // Per-tournament pending registration counts across the given hubs — drives the
+        // cascade badge on each tournament's Requests/Registrations tab.
+        public async Task<List<TournamentCountRow>> GetPendingCountsByTournament(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<TournamentCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(r => r.Status == TournamentRegistrationStatus.Pending
+                    && r.TournamentId != null
+                    && r.Tournament!.HubId != null
+                    && hubIds.Contains(r.Tournament.HubId.Value)
+                    && (r.Tournament.Status == TournamentStatus.Draft
+                        || r.Tournament.Status == TournamentStatus.RegistrationOpen
+                        || r.Tournament.Status == TournamentStatus.RegistrationClosed))
+                .GroupBy(r => new { TournamentId = r.TournamentId!.Value, HubId = r.Tournament!.HubId!.Value, Status = (int)r.Tournament!.Status })
+                .Select(g => new TournamentCountRow
+                {
+                    TournamentId = g.Key.TournamentId,
+                    HubId = g.Key.HubId,
+                    Status = g.Key.Status,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+        }
+
         public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamenId(Guid tournamentId)
         {
             return await this.BaseDbSet()

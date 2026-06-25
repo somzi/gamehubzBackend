@@ -29,6 +29,76 @@ namespace GameHubz.Logic.Services
             return await ComputeAsync(user.UserId);
         }
 
+        public async Task<ApprovalsBreakdownDto> GetMyApprovalsBreakdownAsync()
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            return await GetApprovalsBreakdownAsync(user.UserId);
+        }
+
+        /// <summary>
+        /// Per-hub and per-tournament breakdown of what the user has to approve, so the client can
+        /// cascade the aggregate Hubs-tab dot down to the specific hub card / tournament / Requests
+        /// tab. Hub totals = hub join requests + every owned tournament's (registrations + admin-help),
+        /// which by construction sums to <see cref="BadgeCountsDto.HubManageTotal"/>.
+        /// </summary>
+        public async Task<ApprovalsBreakdownDto> GetApprovalsBreakdownAsync(Guid userId)
+        {
+            var managedHubIds = await this.AppUnitOfWork.UserHubRepository.GetManagedHubIds(userId);
+            if (managedHubIds.Count == 0) return new ApprovalsBreakdownDto();
+
+            var regRows = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingCountsByTournament(managedHubIds);
+            var helpRows = await this.AppUnitOfWork.MatchRepository.GetAdminHelpCountsByTournament(managedHubIds);
+            var hubJoinRows = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingCountsByHub(managedHubIds);
+
+            // Merge the two tournament-scoped sources into one row per tournament.
+            var byTournament = new Dictionary<Guid, TournamentApprovalCount>();
+            foreach (var r in regRows)
+            {
+                var row = GetOrAddTournament(byTournament, r.TournamentId, r.HubId, r.Status);
+                row.Registrations = r.Count;
+            }
+            foreach (var h in helpRows)
+            {
+                var row = GetOrAddTournament(byTournament, h.TournamentId, h.HubId, h.Status);
+                row.AdminHelp = h.Count;
+            }
+
+            // Hub-level join requests (the portion that lives on the Members tab, not in any tournament).
+            var hubJoinCounts = managedHubIds.ToDictionary(h => h, _ => 0);
+            foreach (var j in hubJoinRows)
+                if (hubJoinCounts.ContainsKey(j.HubId)) hubJoinCounts[j.HubId] = j.Count;
+
+            // Hub total = its join requests + the sum of its tournaments' approvals.
+            var hubCounts = managedHubIds.ToDictionary(h => h, h => hubJoinCounts[h]);
+            foreach (var t in byTournament.Values)
+                if (hubCounts.ContainsKey(t.HubId)) hubCounts[t.HubId] += t.Total;
+
+            return new ApprovalsBreakdownDto
+            {
+                Tournaments = byTournament.Values.Where(t => t.Total > 0).ToList(),
+                Hubs = hubCounts
+                    .Where(kv => kv.Value > 0)
+                    .Select(kv => new HubApprovalCount
+                    {
+                        HubId = kv.Key,
+                        Count = kv.Value,
+                        JoinRequests = hubJoinCounts[kv.Key],
+                    })
+                    .ToList(),
+            };
+        }
+
+        private static TournamentApprovalCount GetOrAddTournament(
+            Dictionary<Guid, TournamentApprovalCount> map, Guid tournamentId, Guid hubId, int status)
+        {
+            if (!map.TryGetValue(tournamentId, out var row))
+            {
+                row = new TournamentApprovalCount { TournamentId = tournamentId, HubId = hubId, Status = status };
+                map[tournamentId] = row;
+            }
+            return row;
+        }
+
         public async Task<BadgeCountsDto> ComputeAsync(Guid userId)
         {
             var friendRequests = await this.AppUnitOfWork.FriendRequestRepository.GetIncomingPendingCount(userId);
@@ -38,6 +108,26 @@ namespace GameHubz.Logic.Services
             var matchIds = activeMatches.Select(m => m.Id).ToList();
             var unreadByMatch = await this.AppUnitOfWork.MatchChatRepository.GetUnreadCountsByMatch(matchIds, userId);
 
+            // Results an opponent proposed that this user still has to confirm/dispute.
+            // Folded into the already-loaded active matches — no extra DB query. A proposal
+            // only exists in approval mode, so its mere presence means it's actionable.
+            var resultsToConfirm = activeMatches.Count(m =>
+                m.ProposedByUserId.HasValue && m.ProposedByUserId.Value != userId);
+
+            // Captain badge: pending join requests on teams this user captains.
+            var teamJoinRequests = await this.AppUnitOfWork.TeamJoinRequestRepository.CountPendingForCaptain(userId);
+
+            // Organizer badges: only meaningful for users who manage at least one hub.
+            // Resolve the managed-hub set once, then run the three cheap COUNT queries.
+            var managedHubIds = await this.AppUnitOfWork.UserHubRepository.GetManagedHubIds(userId);
+            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0;
+            if (managedHubIds.Count > 0)
+            {
+                hubJoinRequests = await this.AppUnitOfWork.UserHubRequestRepository.CountPendingByHubIds(managedHubIds);
+                adminHelpRequests = await this.AppUnitOfWork.MatchRepository.CountAdminHelpForHubs(managedHubIds);
+                pendingRegistrations = await this.AppUnitOfWork.TournamentRegistrationRepository.CountPendingForHubs(managedHubIds);
+            }
+
             return new BadgeCountsDto
             {
                 FriendRequests = friendRequests,
@@ -45,6 +135,11 @@ namespace GameHubz.Logic.Services
                 UnreadMatchMessages = unreadByMatch.Values.Sum(),
                 MatchesWithUnreadChat = unreadByMatch.Count,
                 MatchesToSchedule = activeMatches.Count(m => m.Status == MatchStatus.Pending),
+                ResultsToConfirm = resultsToConfirm,
+                TeamJoinRequests = teamJoinRequests,
+                HubJoinRequests = hubJoinRequests,
+                AdminHelpRequests = adminHelpRequests,
+                PendingRegistrations = pendingRegistrations,
             };
         }
 
@@ -64,6 +159,34 @@ namespace GameHubz.Logic.Services
             catch
             {
                 // best-effort — never let a badge push break the underlying mutation
+            }
+        }
+
+        /// <summary>
+        /// Refreshes the organizer badges (pending registrations / admin-help) for everyone who
+        /// manages the tournament's hub — the owner plus any hub admins. Best-effort; used when a
+        /// registration or admin-help state changes so the managers' counters update live.
+        /// </summary>
+        public async Task PushToTournamentManagersAsync(Guid tournamentId)
+        {
+            try
+            {
+                var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
+                if (ownership == null) return;
+
+                var members = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
+                var managerIds = members
+                    .Where(m => m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
+                    .Select(m => m.UserId)
+                    .ToHashSet();
+                managerIds.Add(ownership.OwnerUserId); // owner may lack a UserHub row
+
+                foreach (var id in managerIds)
+                    await PushAsync(id);
+            }
+            catch
+            {
+                // best-effort
             }
         }
     }
