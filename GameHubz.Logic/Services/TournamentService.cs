@@ -212,7 +212,7 @@ namespace GameHubz.Logic.Services
             return isUserAlreadyRegistred;
         }
 
-        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart)
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null)
         {
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
@@ -220,7 +220,12 @@ namespace GameHubz.Logic.Services
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
                 throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
 
-            var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
+            // When a stage is given, scope the update to that bracket only — the Winners and Losers
+            // brackets are separate stages that share RoundNumber, so a tournament-wide update would
+            // leak the deadline across both. Null keeps the legacy tournament-wide behavior.
+            var roundMatches = stageId.HasValue
+                ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
+                : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
                 throw new Exception("Round not found.");
 

@@ -85,6 +85,17 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Round scoped to a single stage. Used by the round-schedule editor so a deadline set on,
+        // say, Losers-Bracket round 2 doesn't also hit Winners-Bracket round 2 (separate stages,
+        // shared RoundNumber). Team sub-matches inherit their parent's TournamentStageId, so this
+        // works for team tournaments too where IsUpperBracket/Stage on the sub-match aren't set.
+        public Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentStageId == stageId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
         // The set of "active" matches for a user — in-progress tournament, not yet finished,
         // round open, and the user is one of the two sides (solo participant or team sub-match
         // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
