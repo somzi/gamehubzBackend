@@ -218,6 +218,65 @@ namespace GameHubz.Api.Controllers
                 scoreboard: scoreboard);
         }
 
+        [HttpGet("/team/{id:guid}")]
+        public async Task<ContentResult> Team(Guid id)
+        {
+            var data = await context.Set<TournamentTeamEntity>()
+                .AsNoTracking()
+                .Where(x => x.Id == id)
+                .Select(x => new
+                {
+                    x.TeamName,
+                    x.RequiresApproval,
+                    MemberCount = x.Members.Count,
+                    TournamentId = x.TournamentId,
+                    TournamentName = x.Tournament != null ? x.Tournament.Name : null,
+                    TeamSize = x.Tournament != null ? x.Tournament.TeamSize : 0,
+                    HubName = x.Tournament != null && x.Tournament.Hub != null ? x.Tournament.Hub.Name : null,
+                    HubAvatarUrl = x.Tournament != null && x.Tournament.Hub != null ? x.Tournament.Hub.AvatarUrl : null,
+                })
+                .FirstOrDefaultAsync();
+
+            if (data == null)
+            {
+                return await NotFoundPage(ShareEntityType.Team, "Team", $"team/{id}", id);
+            }
+
+            var stats = new List<ShareStat>
+            {
+                new("Members", data.TeamSize > 0
+                    ? $"{data.MemberCount}/{data.TeamSize}"
+                    : $"{data.MemberCount}"),
+                new("Joining", data.RequiresApproval ? "Approval required" : "Open"),
+            };
+
+            if (!string.IsNullOrWhiteSpace(data.TournamentName))
+            {
+                stats.Add(new("Tournament", data.TournamentName!));
+            }
+
+            string description = data.TournamentName != null
+                ? $"Team in {data.TournamentName} · {data.MemberCount}"
+                  + (data.TeamSize > 0 ? $"/{data.TeamSize}" : "")
+                  + $" members · {(data.RequiresApproval ? "Approval required" : "Open to join")}"
+                : $"{data.MemberCount}"
+                  + (data.TeamSize > 0 ? $"/{data.TeamSize}" : "")
+                  + $" members · {(data.RequiresApproval ? "Approval required" : "Open to join")} on {config.AppName}";
+
+            return await SharePage(
+                ShareEntityType.Team,
+                "Team",
+                webPath: $"team/{id}",
+                deepPath: $"team/{id}",
+                title: data.TeamName,
+                description: description,
+                imageUrl: data.HubAvatarUrl,
+                entityId: id,
+                stats: stats,
+                contextText: data.HubName,
+                contextImageUrl: data.HubAvatarUrl);
+        }
+
         [HttpGet("/.well-known/apple-app-site-association")]
         public IActionResult AppleAppSiteAssociation()
         {
@@ -236,7 +295,7 @@ namespace GameHubz.Api.Controllers
                         new
                         {
                             appIDs = new[] { $"{config.AppleTeamId}.{config.IosBundleId}" },
-                            paths = new[] { "/tournament/*", "/hub/*", "/user/*" },
+                            paths = new[] { "/tournament/*", "/hub/*", "/user/*", "/team/*" },
                         },
                     },
                 },

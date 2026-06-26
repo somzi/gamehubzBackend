@@ -245,6 +245,25 @@ namespace GameHubz.Logic.Services
             });
         }
 
+        // Resolves a shared /team/{id} link: returns the team's tournament + a bit of
+        // context so the recipient's app can land on the right tournament and offer a
+        // join / request. No auth on the data beyond the controller's [Authorize].
+        public async Task<TeamShareSummaryDto> GetTeamShareSummary(Guid teamId)
+        {
+            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
+            if (team == null) throw new Exception("Team not found.");
+
+            return new TeamShareSummaryDto
+            {
+                TeamId = team.Id!.Value,
+                TournamentId = team.TournamentId!.Value,
+                TeamName = team.TeamName,
+                RequiresApproval = team.RequiresApproval,
+                MemberCount = team.Members.Count,
+                TeamSize = team.Tournament?.TeamSize,
+            };
+        }
+
         public async Task<List<TeamDto>> GetTeamsByTournament(Guid tournamentId)
         {
             return await this.AppUnitOfWork.TournamentTeamRepository.GetTeamsDtoByTournamentId(tournamentId);

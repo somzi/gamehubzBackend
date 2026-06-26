@@ -4,6 +4,7 @@ namespace GameHubz.DataModels.Enums
     {
         Tournament = 1,
         Hub = 2,
-        User = 3
+        User = 3,
+        Team = 4
     }
 }
