@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 
 using AutoMapper;
 using FluentValidation;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -17,6 +18,7 @@ using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
+using GameHubz.Logic.SignalR;
 using GameHubz.Logic.Test.Factories;
 
 namespace GameHubz.Logic.Test.Bracket
@@ -125,9 +127,15 @@ namespace GameHubz.Logic.Test.Bracket
             var tournamentAuth = new TournamentAuthorizationService(
                 factory, userContext, localization, Cache, userHubService: null!);
 
+            // PushAsync is best-effort (try/catch), so a bare mocked SignalR hub context is enough —
+            // the badge send no-ops while the badge computation still exercises the real repositories.
+            var badgeService = new BadgeService(
+                factory, userContext, localization,
+                new Mock<IHubContext<UserHub>>().Object);
+
             return new BracketService(
                 factory, userContext, localization,
-                hubActivityService, Cache, Notifications, tournamentAuth);
+                hubActivityService, Cache, Notifications, tournamentAuth, badgeService);
         }
 
         private static IUserContextReader BuildReader(Guid userId, string role)

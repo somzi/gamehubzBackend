@@ -2051,6 +2051,165 @@ namespace GameHubz.Logic.Services
             if (participantsMatch != null) await BumpMatchBadgesAsync(participantsMatch);
         }
 
+        /// <summary>
+        /// Admin/owner action for an elimination match that was never played because BOTH sides
+        /// failed to show: the match is closed with no winner (both eliminated) and the opponent
+        /// coming from the sibling matchup advances unopposed — a walkover into the next round.
+        /// Works whether or not the sibling has been decided yet: if it has, the present opponent is
+        /// advanced now; if not, the walkover is applied automatically once that sibling completes
+        /// (the settle hook on the advance path fires then). Caller must be able to manage the
+        /// tournament. Solo elimination only — team matches are rejected.
+        /// </summary>
+        public async Task ApplyDoubleWalkover(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId)
+                ?? throw new BusinessRuleException("Match not found");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can apply a double walkover.");
+
+            if (match.TeamMatchId.HasValue)
+                throw new BusinessRuleException("Double walkover isn't available for team matches.");
+
+            if (!IsElimination(match.TournamentStage?.Type))
+                throw new BusinessRuleException("Double walkover is only available in elimination brackets.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException("This match is already completed.");
+
+            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
+                throw new BusinessRuleException("Both players must be set before a double walkover.");
+
+            // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
+            if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
+                throw new BusinessRuleException("This match has no next round, so a walkover can't advance anyone.");
+
+            // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
+            // check-then-act over many rows and must not race a concurrent result report.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                // Close the match with no winner. A Completed elimination match with no
+                // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
+                // SourceProducesWinner) — both players are out, nothing advances from here.
+                match.Status = MatchStatus.Completed;
+                match.WinnerParticipantId = null;
+                match.HomeUserScore = null;
+                match.AwayUserScore = null;
+                match.ProposedHomeScore = null;
+                match.ProposedAwayScore = null;
+                match.ProposedByUserId = null;
+                match.ScheduledStartTime ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                // Now that the void is committed, advance the surviving opponent(s) through every
+                // match the void forces (winner and loser edges, cascading across rounds / stages).
+                await SettleForcedWalkovers(match.TournamentId);
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
+
+            // Cache / badge invalidation — mirrors FinalizeMatchResult.
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+            if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+
+            foreach (var userId in affectedUserIds)
+            {
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+                await this.badgeService.PushAsync(userId);
+            }
+
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+        }
+
+        /// <summary>
+        /// Settles every elimination match whose outcome is now forced by a "dead feeder" — a
+        /// Completed-with-no-winner match (a double walkover, or a void left by an upstream one).
+        /// A match is forced when its empty slot(s) have no live feeder left to fill them:
+        /// <list type="bullet">
+        /// <item>one participant present, no live feeder for the other slot → that participant wins by
+        /// walkover and is advanced (via the shared terminal / Grand-Final logic);</item>
+        /// <item>no participant, no live feeder → the match is itself void.</item>
+        /// </list>
+        /// Runs as a fixpoint over freshly-committed state: each settle is saved before the next scan,
+        /// so the cascade (winner edges, loser-bracket drops, voids — across rounds and stages) reads a
+        /// consistent bracket and never relies on the repository's no-tracking snapshots being in sync.
+        /// Idempotent: a tournament with no dead feeders settles nothing. Caller holds the advancement lock.
+        /// </summary>
+        private async Task SettleForcedWalkovers(Guid tournamentId)
+        {
+            // Bounded by the match count; each productive pass marks one more match Completed. Each
+            // pass reloads committed state, so the change tracker is cleared first (and after every
+            // save) to drop the caller's / the previous pass's instances and avoid identity collisions.
+            for (int guard = 0; guard < 1000; guard++)
+            {
+                this.AppUnitOfWork.MatchRepository.DetachAll();
+                var all = await this.AppUnitOfWork.MatchRepository.GetAllByTournamentId(tournamentId);
+                if (!await SettleOneForcedWalkover(all)) break;
+            }
+        }
+
+        // Finds and settles a single forced match, saving the change. Returns false when none remain.
+        private async Task<bool> SettleOneForcedWalkover(List<MatchEntity> all)
+        {
+            foreach (var n in all)
+            {
+                // Team sub-matches advance through the TeamMatch flow, not these Next* links.
+                if (n.Status == MatchStatus.Completed || n.TeamMatchId.HasValue) continue;
+
+                int filled = (n.HomeParticipantId.HasValue ? 1 : 0) + (n.AwayParticipantId.HasValue ? 1 : 0);
+                if (filled == 2) continue;                  // a real match still to be played
+                if (LiveFeederCount(n, all) > 0) continue;  // an opponent can still arrive — wait
+
+                if (filled == 0)
+                {
+                    // No one is coming from either side → the match is void; mark it and let the next
+                    // pass propagate the emptiness onward.
+                    n.Status = MatchStatus.Completed;
+                    n.WinnerParticipantId = null;
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(n, this.UserContextReader);
+                    await this.SaveAsync();
+                    return true;
+                }
+
+                // Exactly one participant and no opponent will ever arrive → walkover.
+                Guid winnerId = n.HomeParticipantId ?? n.AwayParticipantId!.Value;
+                Guid? winnerUserId = await ResolveParticipantUserId(winnerId);
+
+                n.WinnerParticipantId = winnerId;
+                n.Status = MatchStatus.Completed;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(n, this.UserContextReader);
+
+                // Advance through the shared path (next-slot placement, Grand Final, tournament
+                // completion). A walkover has no loser, so nothing drops to the loser bracket; the next
+                // pass picks up any match that this one's missing loser now leaves forced.
+                MatchEntity? nNext = n.NextMatchId.HasValue
+                    ? all.FirstOrDefault(m => m.Id == n.NextMatchId.Value)
+                    : null;
+                await AdvanceWinnerToNextMatch(n, winnerId, winnerUserId, nNext);
+                await this.SaveAsync();
+                return true;
+            }
+
+            return false;
+        }
+
+        // Count of feeders that will still deliver a participant into <paramref name="n"/>: any
+        // not-yet-Completed match pointing here on its winner edge (NextMatchId) or loser edge
+        // (NextMatchLoserBracketId). Completed feeders have already deposited (or are dead ends and
+        // never will), so they don't count.
+        private static int LiveFeederCount(MatchEntity n, List<MatchEntity> all)
+            => all.Count(f => f.Id != n.Id
+                && f.Status != MatchStatus.Completed
+                && (f.NextMatchId == n.Id || f.NextMatchLoserBracketId == n.Id));
+
         private async Task FinalizeMatchResult(
             MatchEntity match,
             MatchEntity? nextMatch,
@@ -2170,6 +2329,11 @@ namespace GameHubz.Logic.Services
                         // from the direct berths + play-in winners.
                         if (match.TournamentStage?.Type == StageType.PlayIn)
                             await CheckAndAdvancePlayInStage(match);
+
+                        // If this result placed a participant opposite a slot whose feeder was earlier
+                        // double-walkover'd, that participant now advances by walkover. No-op unless a
+                        // dead feeder exists. Runs last, on committed state (it clears the change tracker).
+                        await SettleForcedWalkovers(match.TournamentId);
                     }
                 }
             }

@@ -54,6 +54,17 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // All matches in a tournament (BaseDbSet is no-tracking). The settle pass reloads this between
+        // saves to read committed state; it crosses stages (DE WB ↔ LB feeders).
+        public Task<List<MatchEntity>> GetAllByTournamentId(Guid tournamentId)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentId == tournamentId)
+                .ToListAsync();
+        }
+
+        public void DetachAll() => this.ContextBase.ChangeTracker.Clear();
+
         public Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId)
         {
             return this.BaseDbSet()

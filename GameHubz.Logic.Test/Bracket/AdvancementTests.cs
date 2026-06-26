@@ -167,7 +167,12 @@ namespace GameHubz.Logic.Test.Bracket
             var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
             await harness.NewService().GenerateLeagueTournament(tournamentId);
 
-            var match = harness.Matches(tournamentId).First(m => m.Stage == MatchStage.GroupStage);
+            // Pick a match whose round is actually open: later league rounds are locked (RoundOpenAt
+            // in the future) and Matches() has no ordering, so an unfiltered First() is nondeterministic
+            // and can land on a locked round → "round is not open yet".
+            var match = harness.Matches(tournamentId)
+                .First(m => m.Stage == MatchStage.GroupStage
+                    && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
             var homeId = match.HomeParticipantId!.Value;
             var awayId = match.AwayParticipantId!.Value;
 
