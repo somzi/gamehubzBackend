@@ -107,7 +107,12 @@ namespace GameHubz.Logic.Services
                         opponent.PushToken,
                         user.Username,
                         content,
-                        new { matchId = matchId.ToString() });
+                        new
+                        {
+                            type = "matchMessage",
+                            matchId = matchId.ToString(),
+                            tournamentId = match.TournamentId.ToString(),
+                        });
                 }
                 catch { /* fire-and-forget – swallow errors */ }
             });
