@@ -58,6 +58,11 @@ namespace GameHubz.Api
 
             builder.Services.AddHostedService<SendEmailTask>();
 
+            // Approaching-deadline push reminders (registration closing / round deadline). The
+            // hosted task runs the sweep on a fresh scope each tick; the runner does the work.
+            builder.Services.AddScoped<DeadlineNotificationRunner>();
+            builder.Services.AddHostedService<DeadlineNotificationTask>();
+
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");

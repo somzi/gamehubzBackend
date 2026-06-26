@@ -1671,16 +1671,16 @@ namespace GameHubz.Logic.Services
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId);
 
-            if (match == null) throw new Exception("Match not found");
-            if (match.TournamentId != request.TournamentId) throw new Exception("Match wrong tournament");
+            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match.TournamentId != request.TournamentId) throw new BusinessRuleException("Match wrong tournament");
             if (match.RoundOpenAt.HasValue && match.RoundOpenAt.Value > DateTime.UtcNow)
-                throw new Exception("This round is not open yet.");
+                throw new BusinessRuleException("This round is not open yet.");
 
             // A solo match without both sides can't take a result — covers Swiss byes
             // (pre-completed free wins) and TBD elimination slots still awaiting feeders.
             // Team sub-matches always carry both participant ids, so they pass through.
             if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
-                throw new Exception("This match has no opponent yet and cannot be reported.");
+                throw new BusinessRuleException("This match has no opponent yet and cannot be reported.");
 
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
@@ -1700,7 +1700,7 @@ namespace GameHubz.Logic.Services
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
-                ?? throw new Exception("Tournament not found");
+                ?? throw new BusinessRuleException("Tournament not found");
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             // When the tournament requires result approval and the caller is a participant
@@ -1709,12 +1709,12 @@ namespace GameHubz.Logic.Services
             if (approvalCtx.RequireResultApproval && !isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
-                    throw new Exception("You are not a participant of this match.");
+                    throw new BusinessRuleException("You are not a participant of this match.");
 
                 // Once a result is confirmed in approval mode, only an admin / hub owner can change it.
                 // Otherwise the approval gate could be bypassed via the edit path.
                 if (match.Status == MatchStatus.Completed)
-                    throw new Exception("This result is final. Ask the hub owner or an admin to amend it.");
+                    throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to amend it.");
 
                 await SaveProposal(match, request.HomeScore, request.AwayScore, currentUser);
                 return;
@@ -1734,7 +1734,7 @@ namespace GameHubz.Logic.Services
                     {
                         var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
                         if (nextTeamMatch.Status != TeamMatchStatus.Pending)
-                            throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                            throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
                     }
 
                     if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
@@ -1742,14 +1742,14 @@ namespace GameHubz.Logic.Services
                         // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
                         var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
                         if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
-                            throw new Exception("This match is locked because the match its loser feeds into has already progressed. To edit this, you must revert that match first.");
+                            throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. To edit this, you must revert that match first.");
                     }
                 }
                 else
                 {
                     if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
                     {
-                        throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                        throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
                     }
 
                     if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
@@ -1758,7 +1758,7 @@ namespace GameHubz.Logic.Services
                         // received this WB match's loser. Same lock applies in both cases.
                         bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
                         var label = isThirdPlace ? "third-place match" : "loser bracket match";
-                        throw new Exception($"This match is locked because the {label} has already progressed. To edit this, you must revert the downstream {label} first.");
+                        throw new BusinessRuleException($"This match is locked because the {label} has already progressed. To edit this, you must revert the downstream {label} first.");
                     }
                 }
 
@@ -1793,15 +1793,15 @@ namespace GameHubz.Logic.Services
         public async Task RevertMatchResult(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (match.Status != MatchStatus.Completed)
-                throw new Exception("This match has no result to delete.");
+                throw new BusinessRuleException("This match has no result to delete.");
 
             // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
             // real reported result — nothing to delete.
             if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
-                throw new Exception("This match has no result to delete.");
+                throw new BusinessRuleException("This match has no result to delete.");
 
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
@@ -1819,7 +1819,7 @@ namespace GameHubz.Logic.Services
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
-                ?? throw new Exception("Tournament not found");
+                ?? throw new BusinessRuleException("Tournament not found");
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             // Trust boundary matches UpdateMatchResult: the controller [Authorize] plus the
@@ -1829,7 +1829,7 @@ namespace GameHubz.Logic.Services
             // confirmed result is locked to managers, mirroring how UpdateMatchResult refuses a
             // participant edit of a confirmed result.
             if (!isPrivileged && approvalCtx.RequireResultApproval)
-                throw new Exception("This result is final. Ask the hub owner or an admin to delete it.");
+                throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to delete it.");
 
             // Downstream lock — identical to the revert guard in UpdateMatchResult: a result can't
             // be deleted once the next round / third-place / loser-bracket match has progressed.
@@ -1842,7 +1842,7 @@ namespace GameHubz.Logic.Services
                 {
                     var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
                     if (nextTeamMatch.Status != TeamMatchStatus.Pending)
-                        throw new Exception("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                        throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
                 }
 
                 if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
@@ -1850,21 +1850,21 @@ namespace GameHubz.Logic.Services
                     // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
                     var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
                     if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
-                        throw new Exception("This match is locked because the match its loser feeds into has already progressed. You must revert that match first.");
+                        throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. You must revert that match first.");
                 }
             }
             else
             {
                 if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
                 {
-                    throw new Exception("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                    throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
                 }
 
                 if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
                 {
                     bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
                     var label = isThirdPlace ? "third-place match" : "loser bracket match";
-                    throw new Exception($"This match is locked because the {label} has already progressed. You must revert the downstream {label} first.");
+                    throw new BusinessRuleException($"This match is locked because the {label} has already progressed. You must revert the downstream {label} first.");
                 }
             }
 

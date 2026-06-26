@@ -81,7 +81,7 @@ namespace GameHubz.Logic.Services
 
                 if (alreadyRegistered || alreadyParticipant)
                 {
-                    throw new Exception("You're already registered for this tournament.");
+                    throw new BusinessRuleException("You're already registered for this tournament.");
                 }
             }
 

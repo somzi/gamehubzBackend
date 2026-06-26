@@ -15,6 +15,11 @@ namespace GameHubz.DataModels.Domain
         public int? AwayUserScore { get; set; }
         public DateTime? ScheduledStartTime { get; set; }
         public DateTime? RoundDeadline { get; set; }
+
+        // How far the round-deadline reminder waves have progressed for this match, set by the
+        // background sweep: 0 = none, 1 = early (24h) reminder sent, 2 = last-call sent (done).
+        public int RoundReminderStage { get; set; }
+
         public MatchStatus Status { get; set; }
         public Guid? WinnerParticipantId { get; set; }
         public TournamentEntity? Tournament { get; set; }

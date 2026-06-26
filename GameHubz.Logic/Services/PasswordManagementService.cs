@@ -133,7 +133,7 @@ namespace GameHubz.Logic.Services
         public async Task<string> SendEmailWithForgotPasswordToken(string email)
         {
             email = (email ?? string.Empty).Trim().ToLowerInvariant();
-            var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new Exception("This email does not exists.");
+            var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new BusinessRuleException("This email does not exists.");
 
             int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);
             string otpCode = otpNumber.ToString("000 000");

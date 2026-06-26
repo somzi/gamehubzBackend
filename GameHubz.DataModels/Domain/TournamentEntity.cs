@@ -13,6 +13,11 @@ namespace GameHubz.DataModels.Domain
         public int? MaxPlayers { get; set; }
         public DateTime? StartDate { get; set; }
         public DateTime? RegistrationDeadline { get; set; }
+
+        // Set by the deadline-reminder background sweep once the "registration closing soon"
+        // push has been sent for this tournament, so the same hub is never reminded twice.
+        // Null = reminder not yet sent.
+        public DateTime? RegistrationDeadlineReminderSentOn { get; set; }
         public TournamentFormat Format { get; set; }
         public HubEntity? Hub { get; set; }
         public int Prize { get; set; }
