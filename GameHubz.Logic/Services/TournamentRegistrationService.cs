@@ -290,6 +290,19 @@ namespace GameHubz.Logic.Services
 
         public async Task RegisterTeam(Guid tournamentId, Guid teamId)
         {
+            // Idempotent: this is exposed as a GET, which HTTP clients (OkHttp, etc.) freely retry
+            // on a flaky connection. If the first call already created the registration but the
+            // response was lost, the retry would otherwise hit BeforeSave's duplicate guard and
+            // surface a confusing "already registered" error for something that actually succeeded.
+            // Treat an existing non-rejected registration / participant as success instead.
+            bool alreadyRegistered = await this.AppUnitOfWork.TournamentRegistrationRepository
+                .ExistsNonRejected(tournamentId, null, teamId);
+            bool alreadyParticipant = await this.AppUnitOfWork.TournamentParticipantRepository
+                .ExistsForTeam(tournamentId, teamId);
+
+            if (alreadyRegistered || alreadyParticipant)
+                return;
+
             var tournamentRegistrationPost = new TournamentRegistrationPost
             {
                 Status = TournamentRegistrationStatus.Pending,
