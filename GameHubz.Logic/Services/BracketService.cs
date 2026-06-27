@@ -415,8 +415,14 @@ namespace GameHubz.Logic.Services
                 throw new Exception($"Not enough participants. Need at least {numberOfGroups * 2} players for {numberOfGroups} groups.");
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
-            if (!IsPowerOfTwo(totalQualifiers))
-                throw new Exception($"Total qualifiers ({totalQualifiers}) must be a power of 2 (4, 8, 16, 32) for the bracket to work.");
+            if (totalQualifiers < 2)
+                throw new Exception("Need at least 2 qualifiers to build a knockout bracket.");
+            // Single-elimination pads the bracket up to the next power of two with byes, so any
+            // qualifier count works (e.g. 6 qualifiers → bracket of 8 with the top 2 seeds on a bye).
+            // Double-elimination from groups has no bye-collapse handling yet, so it still requires an
+            // exact power of two.
+            if (UseDoubleEliminationKnockout(tournament) && totalQualifiers >= 4 && !IsPowerOfTwo(totalQualifiers))
+                throw new Exception($"Double-elimination knockout needs the total qualifiers ({totalQualifiers}) to be a power of 2 (4, 8, 16, 32).");
 
             var groupStage = new TournamentStageEntity
             {
@@ -584,8 +590,14 @@ namespace GameHubz.Logic.Services
                 throw new Exception($"Not enough participants. Need at least {numberOfGroups * 2} teams for {numberOfGroups} groups.");
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
-            if (!IsPowerOfTwo(totalQualifiers))
-                throw new Exception($"Total qualifiers ({totalQualifiers}) must be a power of 2 (4, 8, 16, 32) for the bracket to work.");
+            if (totalQualifiers < 2)
+                throw new Exception("Need at least 2 qualifiers to build a knockout bracket.");
+            // Single-elimination pads the bracket up to the next power of two with byes, so any
+            // qualifier count works (e.g. 6 qualifiers → bracket of 8 with the top 2 seeds on a bye).
+            // Double-elimination from groups has no bye-collapse handling yet, so it still requires an
+            // exact power of two.
+            if (UseDoubleEliminationKnockout(tournament) && totalQualifiers >= 4 && !IsPowerOfTwo(totalQualifiers))
+                throw new Exception($"Double-elimination knockout needs the total qualifiers ({totalQualifiers}) to be a power of 2 (4, 8, 16, 32).");
 
             var groupStage = new TournamentStageEntity
             {
@@ -4182,140 +4194,66 @@ namespace GameHubz.Logic.Services
             int totalQualifiers = qualifiers.Count;
             var rand = new Random();
 
+            // The knockout bracket is padded up to the next power of two; the empty slots become byes
+            // that the generators auto-advance. Seeds are handed out pot by pot (group winners first),
+            // so the strongest qualifiers take the top seeds — and therefore the byes.
+            int bracketSize = GetNextPowerOfTwo(totalQualifiers);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+
+            // Pots by group finish: pot 1 = group winners, pot 2 = runners-up, ... Within a pot every
+            // team is from a different group, so the only same-group risk is a round-1 meeting between
+            // teams of a different rank from the same group.
             var pots = qualifiers
                 .GroupBy(q => q.groupRank)
                 .OrderBy(g => g.Key)
-                .Select(g => g.OrderBy(_ => rand.Next()).ToList())
+                .Select(g => g.ToList())
                 .ToList();
 
-            bool drawSuccessful = false;
-            List<(TournamentParticipantEntity p1, TournamentParticipantEntity p2)> drawnPairs = null!;
-
-            int maxAttempts = 100;
-            while (!drawSuccessful && maxAttempts > 0)
-            {
-                maxAttempts--;
-                drawSuccessful = true;
-                drawnPairs = new List<(TournamentParticipantEntity, TournamentParticipantEntity)>();
-
-                var potsCopy = pots.Select(p => p.ToList()).ToList();
-                int left = 0, right = potsCopy.Count - 1;
-
-                while (left <= right)
-                {
-                    if (left < right)
-                    {
-                        var potA = potsCopy[left].OrderBy(_ => rand.Next()).ToList();
-                        var potB = potsCopy[right];
-
-                        foreach (var first in potA)
-                        {
-                            var validSecond = potB
-                                .Where(s => s.groupName != first.groupName)
-                                .OrderBy(_ => rand.Next())
-                                .FirstOrDefault();
-
-                            if (validSecond == default)
-                            {
-                                drawSuccessful = false;
-                                break;
-                            }
-
-                            drawnPairs.Add((first.participant, validSecond.participant));
-                            potB.Remove(validSecond);
-                        }
-                    }
-                    else
-                    {
-                        // N=1 ili srednji pot (N=3) — uparujemo iz istog pota
-                        var middlePot = potsCopy[left].OrderBy(_ => rand.Next()).ToList();
-
-                        while (middlePot.Count > 0)
-                        {
-                            var first = middlePot.First();
-                            middlePot.Remove(first);
-
-                            var validSecond = middlePot
-                                .Where(s => s.groupName != first.groupName)
-                                .OrderBy(_ => rand.Next())
-                                .FirstOrDefault();
-
-                            if (validSecond == default)
-                            {
-                                drawSuccessful = false;
-                                break;
-                            }
-
-                            drawnPairs.Add((first.participant, validSecond.participant));
-                            middlePot.Remove(validSecond);
-                        }
-                    }
-
-                    if (!drawSuccessful) break;
-                    left++;
-                    right--;
-                }
-            }
-
-            if (!drawSuccessful)
-                throw new Exception($"Draw failed after 100 attempts. Qualifiers: {qualifiers.Count}");
-
-            // ------------------------------------------------------------------
-            // DISTRIBUCIJA U KOSTUR: Razdvajanje istih grupa na suprotne strane
-            // ------------------------------------------------------------------
-            int numPairs = drawnPairs.Count;
-            var pairSeeds = GetStandardSeedOrder(GetNextPowerOfTwo(numPairs));
-            var validPairSeeds = pairSeeds.Where(s => s <= numPairs).ToList();
-
-            var topHalfSeeds = validPairSeeds.Take(numPairs / 2 + numPairs % 2).ToList();
-            var bottomHalfSeeds = validPairSeeds.Skip(numPairs / 2 + numPairs % 2).ToList();
-
+            // Try several random within-pot orderings and keep the bracket with the fewest round-1
+            // same-group meetings (primary) and the best spread of each group's teams across the two
+            // halves (secondary). Pot order is preserved, so winners always outrank runners-up.
+            Dictionary<Guid, int> seedMap = null!;
+            List<TournamentParticipantEntity?> bracketSlots = null!;
             int bestScore = int.MaxValue;
-            List<(TournamentParticipantEntity p1, TournamentParticipantEntity p2)> bestDistribution = null!;
 
             for (int attempt = 0; attempt < 500; attempt++)
             {
-                var shuffledPairs = drawnPairs.OrderBy(_ => rand.Next()).ToList();
-                var topPairs = shuffledPairs.Take(topHalfSeeds.Count).ToList();
-                var bottomPairs = shuffledPairs.Skip(topHalfSeeds.Count).ToList();
+                var seedToParticipant = new Dictionary<int, TournamentParticipantEntity>();
+                int seed = 1;
+                foreach (var pot in pots)
+                    foreach (var q in pot.OrderBy(_ => rand.Next()))
+                        seedToParticipant[seed++] = q.participant;
 
-                var topGroups = topPairs.SelectMany(p => new[] { p.p1.TournamentGroupId, p.p2.TournamentGroupId }).ToList();
-                var bottomGroups = bottomPairs.SelectMany(p => new[] { p.p1.TournamentGroupId, p.p2.TournamentGroupId }).ToList();
+                var slots = seedOrder
+                    .Select(s => seedToParticipant.TryGetValue(s, out var p) ? p : (TournamentParticipantEntity?)null)
+                    .ToList();
 
-                int topDuplicates = topGroups.Count - topGroups.Distinct().Count();
-                int bottomDuplicates = bottomGroups.Count - bottomGroups.Distinct().Count();
-                int totalScore = topDuplicates + bottomDuplicates;
-
-                if (totalScore < bestScore)
+                int round1Clashes = 0;
+                for (int i = 0; i + 1 < slots.Count; i += 2)
                 {
-                    bestScore = totalScore;
-                    bestDistribution = shuffledPairs;
+                    var home = slots[i];
+                    var away = slots[i + 1];
+                    if (home != null && away != null && home.TournamentGroupId == away.TournamentGroupId)
+                        round1Clashes++;
+                }
+
+                int half = slots.Count / 2;
+                var topGroups = slots.Take(half).Where(p => p != null).Select(p => p!.TournamentGroupId).ToList();
+                var bottomGroups = slots.Skip(half).Where(p => p != null).Select(p => p!.TournamentGroupId).ToList();
+                int halfClashes = (topGroups.Count - topGroups.Distinct().Count())
+                                + (bottomGroups.Count - bottomGroups.Distinct().Count());
+
+                // Round-1 separation dominates; the half spread only breaks ties between clean draws.
+                int score = round1Clashes * 1000 + halfClashes;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bracketSlots = slots;
+                    seedMap = seedToParticipant.ToDictionary(kv => kv.Value.Id!.Value, kv => kv.Key);
                 }
 
                 if (bestScore == 0) break;
             }
-
-            var finalTop = bestDistribution.Take(topHalfSeeds.Count).ToList();
-            var finalBottom = bestDistribution.Skip(topHalfSeeds.Count).ToList();
-
-            var seedMap = new Dictionary<Guid, int>();
-
-            for (int i = 0; i < finalTop.Count; i++)
-            {
-                int seedP1 = topHalfSeeds[i];
-                int seedP2 = totalQualifiers - seedP1 + 1;
-                seedMap[finalTop[i].p1.Id!.Value] = seedP1;
-                seedMap[finalTop[i].p2.Id!.Value] = seedP2;
-            }
-
-            for (int i = 0; i < finalBottom.Count; i++)
-            {
-                int seedP1 = bottomHalfSeeds[i];
-                int seedP2 = totalQualifiers - seedP1 + 1;
-                seedMap[finalBottom[i].p1.Id!.Value] = seedP1;
-                seedMap[finalBottom[i].p2.Id!.Value] = seedP2;
-            }
-            // ------------------------------------------------------------------
 
             foreach (var q in qualifiers)
             {
@@ -4334,27 +4272,16 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            var seededQualifiers = qualifiers
-                .Select(q => q.participant)
-                .OrderBy(p => p.Seed ?? 999)
-                .ToList();
-
-            var bracketSeeded = GetStandardBracketSeeding(seededQualifiers);
-
             if (tournament.IsTeamTournament)
             {
                 int teamSize = tournament.TeamSize ?? 1;
-                int playerCount = GetNextPowerOfTwo(bracketSeeded.Count);
-
-                var bracketSlots = bracketSeeded.Cast<TournamentParticipantEntity?>().ToList();
-                while (bracketSlots.Count < playerCount) bracketSlots.Add(null);
 
                 List<TeamMatchEntity> teamMatches;
                 if (useDoubleKnockout)
                 {
                     // Double-elim knockout: fill the WB + LB team stages created up-front (LB sits at
-                    // the order right after the WB). Qualifier count is a validated power of two, so
-                    // there are no byes to collapse here.
+                    // the order right after the WB). DE from groups still requires a power-of-two
+                    // qualifier count (validated at generation), so there are no byes to collapse here.
                     var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
                     if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
 
@@ -4363,16 +4290,18 @@ namespace GameHubz.Logic.Services
                 }
                 else
                 {
+                    // bracketSlots already carries null bye slots; GenerateEliminationTeamMatches
+                    // auto-advances them so the top seeds walk into the next round.
                     teamMatches = GenerateEliminationTeamMatches(tournamentId, knockoutStage.Id!.Value, bracketSlots);
 
                     if (tournament.HasThirdPlaceMatch)
-                        BuildThirdPlaceTeamMatchIfApplicable(teamMatches, (int)Math.Log2(playerCount), bracketSeeded.Count, tournamentId, knockoutStage.Id);
+                        BuildThirdPlaceTeamMatchIfApplicable(teamMatches, (int)Math.Log2(bracketSize), totalQualifiers, tournamentId, knockoutStage.Id);
                 }
 
                 foreach (var tm in teamMatches)
                     await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
 
-                var membersByParticipant = await BuildMembersByParticipantMap(bracketSeeded);
+                var membersByParticipant = await BuildMembersByParticipantMap(qualifiers.Select(q => q.participant));
 
                 foreach (var tm in teamMatches)
                 {
@@ -4386,13 +4315,12 @@ namespace GameHubz.Logic.Services
             }
             else if (useDoubleKnockout)
             {
-                // Solo double-elimination knockout: fill the Winners + Losers bracket stages that
-                // were created up-front (LB sits at the order right after the WB). The qualifier
-                // count is a validated power of two, so there are no byes to collapse here.
+                // Solo double-elimination knockout: fill the Winners + Losers bracket stages that were
+                // created up-front (LB sits at the order right after the WB). DE from groups still
+                // requires a power-of-two qualifier count, so there are no byes to collapse here.
                 var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
                 if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
 
-                var bracketSlots = bracketSeeded.Cast<TournamentParticipantEntity?>().ToList();
                 var matches = GenerateDoubleEliminationMatches(
                     tournamentId, knockoutStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
 
@@ -4401,13 +4329,12 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded, tournament.HasThirdPlaceMatch);
+                // Single-elim: bracketSlots already includes null bye slots; GenerateEliminationMatches
+                // auto-advances them (leaving real first-round matches Pending), so don't reset status.
+                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSlots, tournament.HasThirdPlaceMatch);
 
                 foreach (var m in matches)
-                {
-                    m.Status = MatchStatus.Pending;
                     await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
-                }
             }
 
             await this.SaveAsync();
