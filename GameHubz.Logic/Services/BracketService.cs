@@ -2575,7 +2575,8 @@ namespace GameHubz.Logic.Services
                 .Select(p => new LeagueStandingDto
                 {
                     ParticipantId = p.Id!.Value,
-                    UserId = p.UserId!.Value,
+                    // Team participants have no UserId — see BuildGroupStandings.
+                    UserId = p.UserId ?? Guid.Empty,
                     Points = p.Points,
                     Wins = p.Wins,
                     Draws = p.Draws,
@@ -5073,8 +5074,11 @@ namespace GameHubz.Logic.Services
             var standings = participants.Select(p => new LeagueStandingDto
             {
                 ParticipantId = p.Id!.Value,
-                UserId = p.UserId!.Value,
-                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId!.Value.ToString(),
+                // Team participants have no UserId (Team-vs-Team groups) — mirror the
+                // `UserId ?? Guid.Empty` convention used in MapMatchToDto so standings
+                // for team groups don't throw "Nullable object must have a value".
+                UserId = p.UserId ?? Guid.Empty,
+                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId?.ToString() ?? p.Id!.Value.ToString(),
                 Points = p.Points,
                 Wins = p.Wins,
                 Draws = p.Draws,
