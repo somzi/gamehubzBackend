@@ -1723,43 +1723,37 @@ namespace GameHubz.Logic.Services
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
             {
-                if (match.TeamMatchId.HasValue)
+                // Same-winner in-place edit (solo elimination): only the score line changes while the
+                // winner — and therefore everything that advanced downstream — stays identical, so there
+                // is nothing to revert and no downstream lock to honour. This is the common "typed the
+                // wrong score" fix; a cascade here would needlessly wipe already-played downstream results.
+                if (!match.TeamMatchId.HasValue
+                    && IsElimination(match.TournamentStage?.Type)
+                    && WinnerSideUnchanged(match, request.HomeScore, request.AwayScore))
                 {
-                    // Team sub-matches don't carry the Next* links (those live on TeamMatchEntity), so the
-                    // solo guards below never fire for them. Mirror the lock at the team-match level, otherwise
-                    // reverting a semi-final would silently cascade-delete an already-played final / third-place.
-                    var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
-
-                    if (parentTeamMatch.NextTeamMatchId.HasValue)
-                    {
-                        var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
-                        if (nextTeamMatch.Status != TeamMatchStatus.Pending)
-                            throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
-                    }
-
-                    if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
-                    {
-                        // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
-                        var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
-                        if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
-                            throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. To edit this, you must revert that match first.");
-                    }
+                    await UpdateScoreInPlaceAsync(match, request.HomeScore, request.AwayScore);
+                    return;
                 }
-                else
-                {
-                    if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
-                    {
-                        throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
-                    }
 
-                    if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
-                    {
-                        // Single-elim → third-place play-off. DE → the Losers Bracket match that
-                        // received this WB match's loser. Same lock applies in both cases.
-                        bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
-                        var label = isThirdPlace ? "third-place match" : "loser bracket match";
-                        throw new BusinessRuleException($"This match is locked because the {label} has already progressed. To edit this, you must revert the downstream {label} first.");
-                    }
+                var lockReason = await GetDownstreamLockReasonAsync(match, nextMatch, loserBracketMatch, forEdit: true);
+                if (lockReason != null)
+                {
+                    // Default (and every existing client): refuse, naming the downstream match to revert
+                    // first. Opt-in cascade reverts that chain automatically (owner/admin only, solo
+                    // brackets only) so the winner-changing edit can go through.
+                    if (!request.Cascade)
+                        throw new BusinessRuleException(lockReason);
+                    if (!isPrivileged)
+                        throw new BusinessRuleException("Only the hub owner or an admin can change a result once downstream matches have been played.");
+                    if (match.TeamMatchId.HasValue)
+                        throw new BusinessRuleException("Changing this result would undo already-played team matches. Revert the downstream team match first.");
+
+                    await CascadeRevertDownstream(match);
+
+                    // The chain below is reopened now; reload the target and its links from committed state.
+                    match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId)
+                        ?? throw new BusinessRuleException("Match not found");
+                    (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
                 }
 
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
@@ -1788,9 +1782,11 @@ namespace GameHubz.Logic.Services
         /// match. Reuses the same downstream-lock guards and revert primitives as the edit path
         /// in <see cref="UpdateMatchResult"/>, so the bracket / standings stay consistent.
         /// Caller must be a match participant or a tournament manager (platform admin / hub owner /
-        /// hub admin).
+        /// hub admin). When <paramref name="cascade"/> is set, an owner/admin can also delete a
+        /// result whose downstream matches were already played: every already-played match below it
+        /// (next round + loser-bracket drop, transitively) is reverted first, deepest-first.
         /// </summary>
-        public async Task RevertMatchResult(Guid matchId)
+        public async Task RevertMatchResult(Guid matchId, bool cascade = false)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) throw new BusinessRuleException("Match not found");
@@ -1831,43 +1827,37 @@ namespace GameHubz.Logic.Services
             if (!isPrivileged && approvalCtx.RequireResultApproval)
                 throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to delete it.");
 
-            // Downstream lock — identical to the revert guard in UpdateMatchResult: a result can't
-            // be deleted once the next round / third-place / loser-bracket match has progressed.
-            // The downstream match must be reverted first.
-            if (match.TeamMatchId.HasValue)
+            var lockReason = await GetDownstreamLockReasonAsync(match, nextMatch, loserBracketMatch, forEdit: false);
+            if (lockReason != null)
             {
-                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+                // Default (and every existing client): refuse, naming the downstream match to revert
+                // first. Opt-in cascade reverts that whole chain automatically (owner/admin only, solo
+                // brackets only) so this result can then be deleted.
+                if (!cascade)
+                    throw new BusinessRuleException(lockReason);
+                if (!isPrivileged)
+                    throw new BusinessRuleException("Only the hub owner or an admin can delete a result once downstream matches have been played.");
+                if (match.TeamMatchId.HasValue)
+                    throw new BusinessRuleException("Deleting this result would undo already-played team matches. Revert the downstream team match first.");
 
-                if (parentTeamMatch.NextTeamMatchId.HasValue)
-                {
-                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
-                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
-                        throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
-                }
+                await CascadeRevertDownstream(match);
 
-                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
-                {
-                    // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
-                    var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
-                    if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
-                        throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. You must revert that match first.");
-                }
-            }
-            else
-            {
-                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
-                {
-                    throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
-                }
-
-                if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
-                {
-                    bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
-                    var label = isThirdPlace ? "third-place match" : "loser bracket match";
-                    throw new BusinessRuleException($"This match is locked because the {label} has already progressed. You must revert the downstream {label} first.");
-                }
+                // The chain below is reopened now; reload the target and its links from committed state.
+                match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId)
+                    ?? throw new BusinessRuleException("Match not found");
+                (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
             }
 
+            await RevertMatchResultCore(match, nextMatch, loserBracketMatch);
+        }
+
+        // Core of a single-match revert: undo this match's own advancement / stats, clear its result,
+        // reopen it, and invalidate caches. Split out of RevertMatchResult so the cascade path can
+        // reuse the exact, tested behaviour on each downstream match without re-running the auth and
+        // downstream-lock checks (the cascade walks deepest-first, so each step's downstream is already
+        // reopened by the time it runs).
+        private async Task RevertMatchResultCore(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch)
+        {
             // 1. Revert downstream advancement / stats, reusing the same primitives as the edit
             //    path. Solo league/group/Swiss stats are derived from the Match table, so they are
             //    re-synced below once this match drops out of "Completed" (mirrors how
@@ -1941,7 +1931,13 @@ namespace GameHubz.Logic.Services
                 await this.SaveAsync();
             }
 
-            // 3. Invalidate caches (mirrors FinalizeMatchResult).
+            await InvalidateMatchCachesAsync(match);
+        }
+
+        // Drop the caches a result change touches (mirrors FinalizeMatchResult): per-player stats for
+        // everyone in the match plus the tournament's bracket / standings / PDF snapshots.
+        private async Task InvalidateMatchCachesAsync(MatchEntity match)
+        {
             var affectedUserIds = new HashSet<Guid>();
             if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
             if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
@@ -1962,6 +1958,194 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+        }
+
+        // Returns the lock message when this completed match can't be reverted/edited in place because
+        // something downstream has already progressed (next round, third-place play-off, or the
+        // loser-bracket match its loser dropped into); null when it is safe. <paramref name="forEdit"/>
+        // only varies the wording so the existing edit vs delete messages stay byte-identical.
+        private async Task<string?> GetDownstreamLockReasonAsync(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch, bool forEdit)
+        {
+            string verb = forEdit ? "To edit this, you must revert" : "You must revert";
+
+            if (match.TeamMatchId.HasValue)
+            {
+                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                if (parentTeamMatch.NextTeamMatchId.HasValue)
+                {
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                        return $"This match is locked because the next round has already progressed. {verb} the downstream match first.";
+                }
+
+                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                {
+                    // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
+                    var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                    if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
+                        return $"This match is locked because the match its loser feeds into has already progressed. {verb} that match first.";
+                }
+
+                return null;
+            }
+
+            if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                return $"This match is locked because the next round has already progressed. {verb} the downstream match first.";
+
+            if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+            {
+                // Single-elim → third-place play-off. DE → the Losers Bracket match that received this
+                // WB match's loser. Same lock applies in both cases.
+                bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
+                var label = isThirdPlace ? "third-place match" : "loser bracket match";
+                return $"This match is locked because the {label} has already progressed. {verb} the downstream {label} first.";
+            }
+
+            return null;
+        }
+
+        // True when re-scoring a completed solo elimination match keeps the same winning side, so the
+        // bracket below it is unaffected and the edit can be applied in place. A draw is never
+        // "unchanged" (and isn't a valid elimination result anyway).
+        private static bool WinnerSideUnchanged(MatchEntity match, int homeScore, int awayScore)
+        {
+            if (!match.WinnerParticipantId.HasValue) return false;
+            if (homeScore == awayScore) return false;
+            var newWinner = homeScore > awayScore ? match.HomeParticipantId : match.AwayParticipantId;
+            return newWinner.HasValue && newWinner.Value == match.WinnerParticipantId.Value;
+        }
+
+        // Applies a same-winner score correction without touching the bracket: only the score line and
+        // any stale proposal are updated; the winner (and everything that advanced from it) is left as-is.
+        private async Task UpdateScoreInPlaceAsync(MatchEntity match, int homeScore, int awayScore)
+        {
+            match.HomeUserScore = homeScore;
+            match.AwayUserScore = awayScore;
+            match.ScheduledStartTime ??= DateTime.UtcNow;
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await InvalidateMatchCachesAsync(match);
+        }
+
+        private static IEnumerable<Guid> DownstreamIds(MatchEntity m)
+        {
+            if (m.NextMatchId.HasValue) yield return m.NextMatchId.Value;
+            if (m.NextMatchLoserBracketId.HasValue) yield return m.NextMatchLoserBracketId.Value;
+        }
+
+        // Every already-played match downstream of <paramref name="matchId"/>, ordered deepest-first
+        // (a match appears only after everything below it), following both the winner edge (NextMatchId)
+        // and the loser edge (NextMatchLoserBracketId) across stages. An unplayed match stops the walk —
+        // nothing below it can be played. Solo brackets only; team links live on TeamMatchEntity. Read
+        // from the no-tracking snapshot, so callers reload tracked entities before mutating them.
+        private async Task<List<MatchEntity>> ComputeDownstreamCompletedChain(Guid tournamentId, Guid matchId)
+        {
+            var all = await this.AppUnitOfWork.MatchRepository.GetAllByTournamentId(tournamentId);
+            var byId = all.Where(m => m.Id.HasValue).ToDictionary(m => m.Id!.Value, m => m);
+
+            var collected = new Dictionary<Guid, MatchEntity>();
+            var queue = new Queue<Guid>();
+            if (byId.TryGetValue(matchId, out var start))
+                foreach (var d in DownstreamIds(start)) queue.Enqueue(d);
+
+            while (queue.Count > 0)
+            {
+                var id = queue.Dequeue();
+                if (collected.ContainsKey(id)) continue;
+                if (!byId.TryGetValue(id, out var m)) continue;
+                if (m.Status != MatchStatus.Completed) continue;
+                collected[id] = m;
+                foreach (var d in DownstreamIds(m)) queue.Enqueue(d);
+            }
+
+            // Topological order, leaves first (Kahn): repeatedly take the matches whose own downstream
+            // is no longer in the remaining set. The bracket is a DAG, so this always drains.
+            var ordered = new List<MatchEntity>();
+            var remaining = new HashSet<Guid>(collected.Keys);
+            while (remaining.Count > 0)
+            {
+                var leaves = remaining
+                    .Where(id => DownstreamIds(collected[id]).All(d => !remaining.Contains(d)))
+                    .ToList();
+                if (leaves.Count == 0)
+                {
+                    ordered.AddRange(remaining.Select(id => collected[id])); // safety net; unreachable for a DAG
+                    break;
+                }
+                foreach (var id in leaves) ordered.Add(collected[id]);
+                foreach (var id in leaves) remaining.Remove(id);
+            }
+
+            return ordered;
+        }
+
+        // Reverts every already-played match downstream of the target (deepest-first) so the target can
+        // then be deleted or re-finalised. Each step reuses the proven single-match revert core; because
+        // we go deepest-first, each match's own downstream is already reopened when its turn comes, so no
+        // downstream-lock is violated.
+        private async Task CascadeRevertDownstream(MatchEntity match)
+        {
+            var chain = await ComputeDownstreamCompletedChain(match.TournamentId, match.Id!.Value);
+            foreach (var snapshot in chain)
+            {
+                // Reload fresh (reads are no-tracking) and skip anything a prior step already reopened.
+                var dm = await this.AppUnitOfWork.MatchRepository.GetWithStage(snapshot.Id!.Value);
+                if (dm == null || dm.Status != MatchStatus.Completed) continue;
+                var (dnext, dlb) = await LoadDownstreamRefsAsync(dm);
+                await RevertMatchResultCore(dm, dnext, dlb);
+
+                // RevertMatchResultCore attaches everything it saved (UpdateEntity sets state Modified),
+                // and a downstream match can be another match's next/loser link, so drop the tracked
+                // instances before the next reload to avoid an identity collision — same save-then-reload
+                // discipline as the double-walkover settle pass. Leaves the tracker clean for the caller's
+                // post-cascade reload of the target.
+                this.AppUnitOfWork.MatchRepository.DetachAll();
+            }
+        }
+
+        private async Task<(MatchEntity? nextMatch, MatchEntity? loserBracketMatch)> LoadDownstreamRefsAsync(MatchEntity match)
+        {
+            MatchEntity? nextMatch = null;
+            if (match.NextMatchId.HasValue)
+                nextMatch = match.NextMatch ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+                loserBracketMatch = match.NextMatchLoserBracket ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+
+            return (nextMatch, loserBracketMatch);
+        }
+
+        /// <summary>
+        /// Read-only preview of what a cascade delete/edit on this match would reopen: every
+        /// already-played downstream match, in the order it would be reverted (deepest-first). Lets the
+        /// client list the collateral before the user confirms. Owner/admin only; returns an empty list
+        /// when nothing downstream has been played (no cascade needed).
+        /// </summary>
+        public async Task<List<CascadeAffectedMatchDto>> GetCascadeRevertPreview(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) throw new BusinessRuleException("Match not found");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can preview a cascade revert.");
+
+            var chain = await ComputeDownstreamCompletedChain(match.TournamentId, matchId);
+
+            return chain.Select(m => new CascadeAffectedMatchDto
+            {
+                MatchId = m.Id!.Value,
+                Round = m.RoundNumber ?? 1,
+                Stage = m.Stage,
+                IsUpperBracket = m.IsUpperBracket,
+                HomeScore = m.HomeUserScore ?? 0,
+                AwayScore = m.AwayUserScore ?? 0,
+            }).ToList();
         }
 
         /// <summary>

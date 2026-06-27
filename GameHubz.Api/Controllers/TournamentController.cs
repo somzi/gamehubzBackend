@@ -80,9 +80,20 @@ namespace GameHubz.Api.Controllers
         [HttpPost("matchResult/revert")]
         public async Task<IActionResult> RevertMatchResult([FromBody] MatchResultDecisionRequest request)
         {
-            await this.bracketService.RevertMatchResult(request.MatchId);
+            await this.bracketService.RevertMatchResult(request.MatchId, request.Cascade);
 
             return Ok();
+        }
+
+        // Owner/admin: lists every already-played match a cascade delete/edit on this match would
+        // reopen, deepest-first, so the client can show the collateral before the user confirms.
+        // Empty list = nothing downstream has been played (no cascade needed).
+        [HttpPost("matchResult/cascadePreview")]
+        public async Task<IActionResult> CascadeRevertPreview([FromBody] MatchResultDecisionRequest request)
+        {
+            var affected = await this.bracketService.GetCascadeRevertPreview(request.MatchId);
+
+            return Ok(affected);
         }
 
         // Admin/owner-only: both sides no-showed an elimination match, so it is closed with no winner
