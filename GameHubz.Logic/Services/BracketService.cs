@@ -5073,6 +5073,26 @@ namespace GameHubz.Logic.Services
         {
             var subs = tm.SubMatches ?? new List<MatchEntity>();
             var anySub = subs.FirstOrDefault();
+
+            // Team match score = sub-matches won by each side (same tally the match-details
+            // AggregateScore uses). Only surfaced once the team match is decided, so unplayed
+            // cards keep showing "—" instead of a misleading 0 : 0.
+            int? homeScore = null, awayScore = null;
+            if (tm.Status == TeamMatchStatus.Completed)
+            {
+                int h = 0, a = 0;
+                foreach (var sm in subs)
+                {
+                    if (sm.Status == MatchStatus.Completed && sm.WinnerParticipantId.HasValue)
+                    {
+                        if (sm.WinnerParticipantId == tm.HomeTeamParticipantId) h++;
+                        else if (sm.WinnerParticipantId == tm.AwayTeamParticipantId) a++;
+                    }
+                }
+                homeScore = h;
+                awayScore = a;
+            }
+
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
@@ -5092,6 +5112,7 @@ namespace GameHubz.Logic.Services
                     UserId = tm.HomeTeamParticipant.UserId ?? Guid.Empty,
                     Username = tm.HomeTeamParticipant.Team?.TeamName ?? "Unknown",
                     TeamName = tm.HomeTeamParticipant.Team?.TeamName,
+                    Score = homeScore,
                     IsWinner = tm.WinnerTeamParticipantId == tm.HomeTeamParticipant.Id
                 },
                 Away = tm.AwayTeamParticipant == null ? null : new MatchParticipantDto
@@ -5100,6 +5121,7 @@ namespace GameHubz.Logic.Services
                     UserId = tm.AwayTeamParticipant.UserId ?? Guid.Empty,
                     Username = tm.AwayTeamParticipant.Team?.TeamName ?? "Unknown",
                     TeamName = tm.AwayTeamParticipant.Team?.TeamName,
+                    Score = awayScore,
                     IsWinner = tm.WinnerTeamParticipantId == tm.AwayTeamParticipant.Id
                 }
             };
