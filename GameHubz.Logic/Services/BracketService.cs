@@ -2805,7 +2805,8 @@ namespace GameHubz.Logic.Services
                 .Select(p => new LeagueStandingDto
                 {
                     ParticipantId = p.Id!.Value,
-                    UserId = p.UserId!.Value,
+                    // Team participants have no UserId — see BuildGroupStandings.
+                    UserId = p.UserId ?? Guid.Empty,
                     Points = p.Points,
                     Wins = p.Wins,
                     Draws = p.Draws,
@@ -5384,9 +5385,11 @@ namespace GameHubz.Logic.Services
         {
             var standings = participants.Select(p => new LeagueStandingDto
             {
-                ParticipantId = p.Id!.Value,
-                UserId = p.UserId!.Value,
-                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId!.Value.ToString(),
+                ParticipantId = p.Id ?? Guid.Empty,
+                // Team participants have no UserId — fall back to empty so standings don't crash.
+                // The client treats an empty UserId as "not a player" and disables the row tap.
+                UserId = p.UserId ?? Guid.Empty,
+                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId?.ToString() ?? "",
                 Points = p.Points,
                 Wins = p.Wins,
                 Draws = p.Draws,
