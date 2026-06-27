@@ -29,7 +29,7 @@ namespace GameHubz.Data.Repository
             return !hasUnfinished;
         }
 
-        public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
+        public async Task<MatchAvailabilityDto?> GetAvailability(Guid id, Guid userId)
         {
             return await this.BaseDbSet()
                 .Where(x => x.Id == id)
@@ -44,7 +44,7 @@ namespace GameHubz.Data.Repository
                          : x.HomeSlotsJson,
                     MatchDeadline = x.RoundDeadline
                 })
-                .FirstAsync();
+                .FirstOrDefaultAsync();
         }
 
         public Task<List<MatchEntity>> GetByStageId(Guid groupStageId)
@@ -361,7 +361,7 @@ namespace GameHubz.Data.Repository
             return stats ?? new PlayerStatsDto();
         }
 
-        public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)
+        public async Task<MatchResultDetailDto?> GetWithEvidence(Guid id)
         {
             return await this.BaseDbSet()
                 .Where(x => x.Id == id)
@@ -385,7 +385,7 @@ namespace GameHubz.Data.Repository
                     AdminHelpRequested = x.AdminHelpRequested,
                     AdminHelpRequestedByUserId = x.AdminHelpRequestedByUserId,
                 })
-                .FirstAsync();
+                .FirstOrDefaultAsync();
         }
 
         public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)

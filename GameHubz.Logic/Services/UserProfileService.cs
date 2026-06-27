@@ -89,7 +89,7 @@ namespace GameHubz.Logic.Services
             var userEntity = await this.AppUnitOfWork.UserRepository.GetWithSocials(userId);
 
             if (userEntity == null)
-                throw new Exception("User not found");
+                throw new BusinessRuleException("User not found");
 
             var userProfileDto = this.mapper.Map<UserProfileDto>(userEntity);
 

@@ -24,7 +24,7 @@ namespace GameHubz.Logic.Interfaces
 
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
-        Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId);
+        Task<MatchAvailabilityDto?> GetAvailability(Guid id, Guid userId);
 
         Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId);
 
@@ -49,7 +49,7 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber);
 
-        Task<MatchResultDetailDto> GetWithEvidence(Guid id);
+        Task<MatchResultDetailDto?> GetWithEvidence(Guid id);
 
         Task<MatchUploadDto> GetForMatchEvidence(Guid matchId);
 

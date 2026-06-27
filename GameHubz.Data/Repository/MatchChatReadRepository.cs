@@ -22,6 +22,14 @@ namespace GameHubz.Data.Repository
 
         public async Task MarkRead(Guid matchId, Guid userId, IUserContextReader userContextReader)
         {
+            // The read marker FKs to Match. A stale client can POST /read for a match that was
+            // already deleted (e.g. a double-elim cascade delete), and the insert below would blow
+            // up with a foreign-key violation (FK_MatchChatRead_Match → 500). There is nothing to
+            // mark read on a match that no longer exists, so silently no-op.
+            bool matchExists = await this.ContextBase.Set<MatchEntity>()
+                .AnyAsync(m => m.Id == matchId);
+            if (!matchExists) return;
+
             // Tracked lookup (not AsNoTracking) so the update is persisted on save.
             var existing = await this.ContextBase.Set<MatchChatReadEntity>()
                 .FirstOrDefaultAsync(r => r.MatchId == matchId && r.UserId == userId);

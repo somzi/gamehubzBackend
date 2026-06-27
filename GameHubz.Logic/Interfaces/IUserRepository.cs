@@ -32,7 +32,7 @@ namespace GameHubz.Logic.Interfaces
 
         bool IsObjectIdUnique(UserEntity entity, string? objectId);
 
-        Task<UserEntity> GetWithSocials(Guid id);
+        Task<UserEntity?> GetWithSocials(Guid id);
 
         Task<UserEntity> GetWithSocialsAndStats(Guid id);
 

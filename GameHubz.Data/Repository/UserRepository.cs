@@ -167,12 +167,12 @@ namespace GameHubz.Data.Repository
                 .Include(x => x.UserRole);
         }
 
-        public async Task<UserEntity> GetWithSocials(Guid id)
+        public async Task<UserEntity?> GetWithSocials(Guid id)
         {
             return await this.BaseDbSet()
                 .Include(x => x.UserSocials)
                 .Where(x => x.Id == id)
-                .SingleAsync();
+                .SingleOrDefaultAsync();
         }
 
         public async Task<UserEntity> GetWithSocialsAndStats(Guid id)

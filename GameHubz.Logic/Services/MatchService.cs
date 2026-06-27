@@ -45,7 +45,9 @@ namespace GameHubz.Logic.Services
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
         {
-            return await this.AppUnitOfWork.MatchRepository.GetAvailability(id, userId);
+            var availability = await this.AppUnitOfWork.MatchRepository.GetAvailability(id, userId);
+            if (availability == null) throw new BusinessRuleException("Match not found");
+            return availability;
         }
 
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
@@ -77,7 +79,9 @@ namespace GameHubz.Logic.Services
 
         public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)
         {
-            return await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
+            var detail = await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
+            if (detail == null) throw new BusinessRuleException("Match not found");
+            return detail;
         }
 
         public async Task<MatchEntity?> GetMatchEntityById(Guid id)
@@ -91,7 +95,7 @@ namespace GameHubz.Logic.Services
 
             var userId = user.UserId;
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             // 1. Determine side (Home vs Away)
             bool isHome = match.HomeParticipant != null &&
@@ -199,7 +203,7 @@ namespace GameHubz.Logic.Services
         public async Task SetScheduled(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             match.ScheduledStartTime = DateTime.UtcNow;
             match.Status = MatchStatus.Scheduled;
@@ -321,8 +325,11 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
+            // 400 (not 401) on purpose: the mobile 401-interceptor would otherwise fire a spurious
+            // token refresh + retry for a plain authorization failure. BusinessRuleException keeps
+            // the descriptive message and stays out of the ErrorLog server-fault noise.
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
-                throw new Exception("Only tournament admins can view help requests");
+                throw new BusinessRuleException("Only tournament admins can view help requests");
 
             return await this.AppUnitOfWork.MatchRepository.GetAdminHelpRequests(tournamentId);
         }
@@ -332,7 +339,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
-                throw new Exception("Only tournament admins can view pending approvals");
+                throw new BusinessRuleException("Only tournament admins can view pending approvals");
 
             return await this.AppUnitOfWork.MatchRepository.GetPendingApprovalMatches(tournamentId);
         }
@@ -409,13 +416,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (!IsStreamingPlatform(request.Platform))
-                throw new Exception("Unsupported streaming platform. Choose Twitch, YouTube or Kick.");
+                throw new BusinessRuleException("Unsupported streaming platform. Choose Twitch, YouTube or Kick.");
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (!IsMatchParticipant(match, user.UserId))
-                throw new Exception("Only match participants can stream this match.");
+                throw new BusinessRuleException("Only match participants can stream this match.");
 
             // Resolve the channel handle: explicit handle wins, otherwise fall back to a saved social.
             var socials = await this.AppUnitOfWork.UserSocialRepository.GetByUserId(user.UserId);
