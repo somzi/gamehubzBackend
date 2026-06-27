@@ -53,6 +53,14 @@ namespace GameHubz.Api.Controllers
             return Ok(structure);
         }
 
+        [HttpGet("{tournamentId}/structure/v3")]
+        public async Task<IActionResult> GetTournamentStructureV3(Guid tournamentId)
+        {
+            var structure = await this.bracketService.GetTournamentStructureV3(tournamentId);
+
+            return Ok(structure);
+        }
+
         [HttpPost("matchResult")]
         public async Task<IActionResult> UpdateMatchResult([FromBody] MatchResultDto request)
         {

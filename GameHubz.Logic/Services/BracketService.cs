@@ -101,8 +101,48 @@ namespace GameHubz.Logic.Services
             return response;
         }
 
+        /// <summary>
+        /// v3 of the structure endpoint. Identical to v2 except group-stage matches in team
+        /// tournaments are returned as one Team-vs-Team card per <see cref="TeamMatchEntity"/>
+        /// (instead of the per-player sub-match cards v1/v2 emit). v1/v2 are left byte-identical so
+        /// the live app keeps working until clients update. Cached under a separate key so the two
+        /// group shapes never cross-pollute the shared bracket cache.
+        /// </summary>
+        public async Task<TournamentStructureDto> GetTournamentStructureV3(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
+            Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
+
+            string cacheKey = $"bracket:v3:{tournamentId}";
+            var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
+
+            var tournament = cachedBracket == null
+                            ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
+                            : null;
+
+            if (cachedBracket == null && tournament == null)
+                throw new Exception("Tournament not found");
+
+            bool canManage = currentUser != null
+                && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
+
+            if (cachedBracket != null)
+            {
+                PatchCanRevert(cachedBracket, currentUserId, canManage);
+                cachedBracket.CanManage = canManage;
+                return cachedBracket;
+            }
+
+            var response = await BuildStructureResponse(tournament!, currentUserId, canManage, cacheKey, teamGroupMatches: true);
+
+            PatchCanRevert(response, currentUserId, canManage);
+            response.CanManage = canManage;
+
+            return response;
+        }
+
         private async Task<TournamentStructureDto> BuildStructureResponse(
-            TournamentEntity tournament, Guid currentUserId, bool isPrivileged, string cacheKey)
+            TournamentEntity tournament, Guid currentUserId, bool isPrivileged, string cacheKey, bool teamGroupMatches = false)
         {
             var response = new TournamentStructureDto
             {
@@ -144,7 +184,7 @@ namespace GameHubz.Logic.Services
                     || stageEntity.Type == StageType.Swiss)
                 {
                     // Swiss renders like a league: one group with standings + matches grouped by round.
-                    stageDto.Groups = await MapGroups(stageEntity, currentUserId, isPrivileged);
+                    stageDto.Groups = await MapGroups(stageEntity, currentUserId, isPrivileged, teamGroupMatches);
                 }
 
                 response.Stages.Add(stageDto);
@@ -214,6 +254,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
@@ -1956,6 +1997,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
         }
@@ -2227,6 +2269,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
 
             // Proposal cleared → the opponent's "result to confirm" badge drops. Refresh both
@@ -2309,6 +2352,7 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
         }
@@ -2548,6 +2592,7 @@ namespace GameHubz.Logic.Services
                 await this.badgeService.PushAsync(userId);
 
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
         }
@@ -2561,6 +2606,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
 
             // The opponent now has a result waiting for them — bump their badge and push.
@@ -3840,6 +3886,7 @@ namespace GameHubz.Logic.Services
                     await CheckAndCompleteLeague(teamMatch.TournamentId);
 
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -3853,6 +3900,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
                 await this.SaveAsync();
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -3968,6 +4016,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -5017,6 +5066,45 @@ namespace GameHubz.Logic.Services
                 _ => MatchStatus.Pending
             };
 
+        // Group-stage team match → card. Like MapTeamMatchToDto but tags Stage as GroupStage and
+        // pulls per-match schedule (start / deadline / round lock) from the sub-matches, which is
+        // where a team match's round timing actually lives (TeamMatchEntity has no schedule columns).
+        private MatchStructureDto MapGroupTeamMatchToDto(TeamMatchEntity tm)
+        {
+            var subs = tm.SubMatches ?? new List<MatchEntity>();
+            var anySub = subs.FirstOrDefault();
+            return new MatchStructureDto
+            {
+                Id = tm.Id!.Value,
+                Round = tm.RoundNumber ?? 1,
+                Order = tm.MatchOrder ?? 0,
+                Stage = MatchStage.GroupStage,
+                Status = MapTeamMatchStatus(tm.Status),
+                TeamMatchId = tm.Id,
+                StartTime = anySub?.ScheduledStartTime,
+                RoundDeadline = subs.Count > 0 ? subs.Max(s => s.RoundDeadline) : null,
+                IsRoundLocked = anySub?.RoundOpenAt.HasValue == true && anySub.RoundOpenAt!.Value > DateTime.UtcNow,
+                MatchOpensAt = anySub?.RoundOpenAt,
+                Evidences = [],
+                Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
+                {
+                    ParticipantId = tm.HomeTeamParticipant.Id!.Value,
+                    UserId = tm.HomeTeamParticipant.UserId ?? Guid.Empty,
+                    Username = tm.HomeTeamParticipant.Team?.TeamName ?? "Unknown",
+                    TeamName = tm.HomeTeamParticipant.Team?.TeamName,
+                    IsWinner = tm.WinnerTeamParticipantId == tm.HomeTeamParticipant.Id
+                },
+                Away = tm.AwayTeamParticipant == null ? null : new MatchParticipantDto
+                {
+                    ParticipantId = tm.AwayTeamParticipant.Id!.Value,
+                    UserId = tm.AwayTeamParticipant.UserId ?? Guid.Empty,
+                    Username = tm.AwayTeamParticipant.Team?.TeamName ?? "Unknown",
+                    TeamName = tm.AwayTeamParticipant.Team?.TeamName,
+                    IsWinner = tm.WinnerTeamParticipantId == tm.AwayTeamParticipant.Id
+                }
+            };
+        }
+
         private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged, bool dropCollapsedByes = false)
         {
             var rounds = new List<BracketRoundDto>();
@@ -5059,7 +5147,7 @@ namespace GameHubz.Logic.Services
             return rounds;
         }
 
-        private async Task<List<GroupDto>> MapGroups(TournamentStageEntity stage, Guid currentUserId, bool isPrivileged)
+        private async Task<List<GroupDto>> MapGroups(TournamentStageEntity stage, Guid currentUserId, bool isPrivileged, bool teamGroupMatches = false)
         {
             var groupDtos = new List<GroupDto>();
             var groups = stage.TournamentGroups ?? new List<TournamentGroupEntity>();
@@ -5074,6 +5162,12 @@ namespace GameHubz.Logic.Services
                 .GroupBy(p => p.TournamentGroupId!.Value)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
+            // Team group stages keep the team-vs-team matches in TeamMatches; the per-player
+            // sub-matches in stage.Matches are only used here for standings/deadline timing.
+            // Gated behind teamGroupMatches (v3 only) so v1/v2 keep emitting per-player sub-match
+            // cards byte-identically for the live app.
+            bool isTeamGroup = teamGroupMatches && stage.TeamMatches != null && stage.TeamMatches.Count > 0;
+
             foreach (var group in groups)
             {
                 var groupMatches = stage.Matches?
@@ -5086,11 +5180,23 @@ namespace GameHubz.Logic.Services
                     .Where(m => m.Id.HasValue)
                     .ToDictionary(m => m.Id!.Value, m => m);
 
+                // For team tournaments show one card per team match (Team vs Team). TeamMatchEntity
+                // has no group column, so a match belongs to this group when its participants do.
+                var groupMatchDtos = isTeamGroup
+                    ? stage.TeamMatches!
+                        .Where(tm => tm.HomeTeamParticipant != null
+                            && tm.HomeTeamParticipant.TournamentGroupId == group.Id)
+                        .OrderBy(tm => tm.RoundNumber)
+                        .ThenBy(tm => tm.MatchOrder)
+                        .Select(MapGroupTeamMatchToDto)
+                        .ToList()
+                    : groupMatches.Select(m => MapMatchToDto(m, currentUserId, isPrivileged, matchById)).ToList();
+
                 var dto = new GroupDto
                 {
                     GroupId = group.Id!.Value,
                     Name = group.Name,
-                    Matches = groupMatches.Select(m => MapMatchToDto(m, currentUserId, isPrivileged, matchById)).ToList(),
+                    Matches = groupMatchDtos,
                     RoundDeadlines = groupMatches
                         .GroupBy(m => m.RoundNumber ?? 1)
                         .OrderBy(g => g.Key)
