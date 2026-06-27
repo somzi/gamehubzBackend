@@ -83,6 +83,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
 
             return new SubmitRepresentativeResponse
             {
@@ -191,7 +192,10 @@ namespace GameHubz.Logic.Services
                     Status = sm.Status,
                     WinnerUserId = winnerUserId,
                     IsTieBreakMatch = isTieBreakMatch,
-                    Evidences = sm.Evidences
+                    Evidences = sm.Evidences,
+                    ProposedHomeScore = sm.ProposedHomeScore,
+                    ProposedAwayScore = sm.ProposedAwayScore,
+                    ProposedByUserId = sm.ProposedByUserId
                 };
             }).ToList();
 
@@ -241,7 +245,8 @@ namespace GameHubz.Logic.Services
                     IsRequired = projection.Status == TeamMatchStatus.TieBreakRequired,
                     HomeRepresentative = homeRepresentative,
                     AwayRepresentative = awayRepresentative
-                }
+                },
+                RequireResultApproval = projection.RequireResultApproval
             };
         }
 

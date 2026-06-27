@@ -28,6 +28,67 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(x => x.Id == id);
         }
 
+        // Atomic CAS: exactly one request can move a tournament into InProgress and generate
+        // its bracket — a concurrent or repeated CreateBracket sees 0 rows updated and bails.
+        public async Task<bool> TryClaimBracketGeneration(Guid tournamentId)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId
+                    && t.Status != TournamentStatus.InProgress
+                    && t.Status != TournamentStatus.Completed)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, TournamentStatus.InProgress));
+
+            return affected > 0;
+        }
+
+        // Gives the claim back after a failed generation so the organizer can fix the config
+        // (e.g. invalid qualifier count) and retry, instead of the tournament wedging in
+        // InProgress with no bracket. Conditional on InProgress so a finished tournament is
+        // never downgraded.
+        public async Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus)
+        {
+            await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId && t.Status == TournamentStatus.InProgress)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, previousStatus));
+        }
+
+        /// <summary>
+        /// Serialises stage-advancement logic per tournament via a Postgres session advisory
+        /// lock. Round-completion checks and next-round / knockout generation are check-then-act
+        /// over multiple rows, so without this two concurrent "last results" of a round can both
+        /// generate the next round. The connection is pinned open so every SaveChanges between
+        /// acquire and release runs on the same session that owns the lock; Npgsql's pool reset
+        /// (DISCARD ALL) releases the lock even if the request dies before the explicit unlock.
+        /// </summary>
+        public async Task AcquireAdvancementLock(Guid tournamentId)
+        {
+            await this.ContextBase.Database.OpenConnectionAsync();
+            await this.ContextBase.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_lock({0})", ToAdvisoryKey(tournamentId));
+        }
+
+        public async Task ReleaseAdvancementLock(Guid tournamentId)
+        {
+            try
+            {
+                await this.ContextBase.Database.ExecuteSqlRawAsync(
+                    "SELECT pg_advisory_unlock({0})", ToAdvisoryKey(tournamentId));
+            }
+            finally
+            {
+                // Balances the OpenConnection in Acquire — EF reopens on demand afterwards.
+                await this.ContextBase.Database.CloseConnectionAsync();
+            }
+        }
+
+        // Folds the Guid into the bigint key space pg_advisory_lock expects. A collision between
+        // two tournaments only over-serialises them — never under-locks.
+        private static long ToAdvisoryKey(Guid id)
+        {
+            var bytes = id.ToByteArray();
+            return BitConverter.ToInt64(bytes, 0) ^ BitConverter.ToInt64(bytes, 8);
+        }
+
         public async Task<List<TournamentOverview>> GetByHubPaged(Guid hubId, TournamentStatus status, int page, int pageSize)
         {
             List<TournamentStatus> statuses = [];
@@ -54,13 +115,15 @@ namespace GameHubz.Data.Repository
                  {
                      Name = x.Name,
                      Region = x.Region,
+                     Countries = x.Countries,
                      StartDate = x.StartDate ?? DateTime.MinValue,
                      NumberOfParticipants = x.TournamentParticipants!.Count(),
                      Prize = x.Prize,
                      PrizeCurrency = x.PrizeCurrency,
                      Status = x.Status,
                      Id = x.Id!.Value!,
-                     IsTeamTournament = x.IsTeamTournament
+                     IsTeamTournament = x.IsTeamTournament,
+                     IsExclusive = x.IsExclusive
                  })
                 .ToListAsync();
 
@@ -70,12 +133,14 @@ namespace GameHubz.Data.Repository
         public async Task<List<TournamentOverview>> GetByHubsPaged(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             TournamentUserStatus filter,
             RegionType region,
+            string? userCountry,
             int page,
             int pageSize)
         {
-            var query = ApplyFilters(userId, hubIds, region, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
 
             return await query
                 .OrderByDescending(x => x.StartDate)
@@ -85,6 +150,7 @@ namespace GameHubz.Data.Repository
                 {
                     Name = x.Name,
                     Region = x.Region,
+                    Countries = x.Countries,
                     StartDate = x.StartDate ?? DateTime.MinValue,
                     NumberOfParticipants = x.TournamentParticipants!.Count(),
                     Prize = x.Prize,
@@ -96,7 +162,8 @@ namespace GameHubz.Data.Repository
                     Format = x.Format,
                     RoundDurationMinutes = x.RoundDurationMinutes,
                     IsTeamTournament = x.IsTeamTournament,
-                    TeamWinCondition = x.TeamWinCondition
+                    TeamWinCondition = x.TeamWinCondition,
+                    IsExclusive = x.IsExclusive
                 })
                 .ToListAsync();
         }
@@ -104,10 +171,12 @@ namespace GameHubz.Data.Repository
         public async Task<int> GetCountByHubs(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             RegionType region,
+            string? userCountry,
             TournamentUserStatus filter)
         {
-            var query = ApplyFilters(userId, hubIds, region, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
             return await query.CountAsync();
         }
 
@@ -185,6 +254,7 @@ namespace GameHubz.Data.Repository
                   {
                       Name = x.Name,
                       Region = x.Region,
+                      Countries = x.Countries,
                       StartDate = x.StartDate ?? DateTime.MinValue,
                       NumberOfParticipants = x.TournamentParticipants!.Count(),
                       Prize = x.Prize,
@@ -199,22 +269,54 @@ namespace GameHubz.Data.Repository
                       HubId = x.HubId!.Value,
                       Format = x.Format,
                       RoundDurationMinutes = x.RoundDurationMinutes,
+                      SwissRoundsCount = x.SwissRoundsCount,
+                      SwissKnockoutQualifiers = x.SwissKnockoutQualifiers,
+                      SwissDirectQualifiers = x.SwissDirectQualifiers,
+                      KnockoutEliminationType = x.KnockoutEliminationType,
                       HubName = x.Hub!.Name,
                       IsTeamTournament = x.IsTeamTournament,
                       TeamSize = x.TeamSize,
-                      TeamWinCondition = x.TeamWinCondition
+                      TeamWinCondition = x.TeamWinCondition,
+                      HasThirdPlaceMatch = x.HasThirdPlaceMatch,
+                      RequireResultApproval = x.RequireResultApproval,
+                      IsExclusive = x.IsExclusive,
+                      DoubleRoundRobin = x.DoubleRoundRobin,
+                      GroupsCount = x.GroupsCount,
+                      QualifiersPerGroup = x.QualifiersPerGroup
                   }).FirstOrDefaultAsync();
         }
 
         private IQueryable<TournamentEntity> ApplyFilters(
             Guid userId,
             List<Guid> hubIds,
+            List<Guid> exclusiveHubIds,
             RegionType region,
+            string? userCountry,
             TournamentUserStatus filter)
         {
-            var query = this.BaseDbSet()
-                .AsNoTracking()
-                .Where(x => hubIds.Contains(x.HubId!.Value) && (x.Region == region || x.Region == RegionType.GLOBAL));
+            // Visibility:
+            //  - Region-scoped tournaments (Countries == null): match the user's region or GLOBAL.
+            //  - Country-scoped tournaments (Countries set): visible only to users whose country is
+            //    in the list (Npgsql translates Contains to "userCountry = ANY(\"Countries\")").
+            // A user with no country sees only region/global tournaments. Codes are canonical ISO codes.
+            IQueryable<TournamentEntity> query = this.BaseDbSet().AsNoTracking();
+
+            if (string.IsNullOrEmpty(userCountry))
+            {
+                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
+                    && x.Countries == null
+                    && (x.Region == region || x.Region == RegionType.GLOBAL));
+            }
+            else
+            {
+                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
+                    && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
+                        || (x.Countries != null && x.Countries.Contains(userCountry))));
+            }
+
+            // Exclusive tournaments are visible only in hubs where the user has exclusive-or-higher
+            // access. Non-exclusive tournaments stay visible to every member of the hub.
+            query = query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
 
             switch (filter)
             {
@@ -275,7 +377,7 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .AnyAsync(t => t.Id == id &&
                    (t.TournamentParticipants!.Any(tp => tp.UserId == userId) ||
-                    t.TournamentRegistrations!.Any(tr => tr.UserId == userId)));
+                    t.TournamentRegistrations!.Any(tr => tr.UserId == userId && tr.Status == TournamentRegistrationStatus.Pending)));
         }
 
         public async Task<TournamentEntity> GetWithHubById(Guid id)
@@ -290,6 +392,30 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .Where(t => t.Id == tournamentId)
                 .Select(t => t.Hub!.UserId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId && t.Hub != null)
+                .Select(t => new HubOwnershipInfo
+                {
+                    HubId = t.Hub!.Id!.Value,
+                    OwnerUserId = t.Hub!.UserId
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => new TournamentApprovalContext
+                {
+                    HubOwnerUserId = t.Hub!.UserId,
+                    RequireResultApproval = t.RequireResultApproval
+                })
                 .FirstOrDefaultAsync();
         }
     }

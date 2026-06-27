@@ -149,6 +149,17 @@ namespace GameHubz.Api.Controllers
             return Ok(otpCode);
         }
 
+        // v2: the reset code is sent only by email and is never returned in the response, and the
+        // endpoint always reports success so it can't be used to probe which emails are registered.
+        // The legacy route above is kept byte-identical for app versions already in the wild.
+        [HttpPost("v2/forgotPassword")]
+        public async Task<IActionResult> ForgotPasswordV2([FromBody] string email)
+        {
+            await this.passwordManagementService.SendForgotPasswordOtp(email);
+
+            return Ok();
+        }
+
         [HttpPost("resetPassword")]
         public async Task ResetPassword([FromBody] ResetPasswordOtpRequestDto resetPasswordRequest)
         {

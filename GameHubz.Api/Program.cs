@@ -1,9 +1,11 @@
 ﻿using GameHubz.Api.BackgroundTasks;
+using GameHubz.Api.Json;
 using GameHubz.Api.Middleware;
 using GameHubz.Api.Startup;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.Data.UnitOfWork;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Config.RabbitMqConfig;
 using GameHubz.Localization;
 using GameHubz.Logic;
@@ -40,7 +42,13 @@ namespace GameHubz.Api
             ConfigureDataContext(builder);
 
             // Add services to the container.
-            builder.Services.AddControllers();
+            builder.Services.AddControllers().AddJsonOptions(opts =>
+            {
+                // Always emit DateTime values with an explicit UTC marker ("Z") so the
+                // client knows to parse as UTC and render in the user's local timezone.
+                opts.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+                opts.JsonSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+            });
 
             builder.Configuration.AddEnvironmentVariables();
 
@@ -50,15 +58,27 @@ namespace GameHubz.Api
 
             builder.Services.AddHostedService<SendEmailTask>();
 
+            // Approaching-deadline push reminders (registration closing / round deadline). The
+            // hosted task runs the sweep on a fresh scope each tick; the runner does the work.
+            builder.Services.AddScoped<DeadlineNotificationRunner>();
+            builder.Services.AddHostedService<DeadlineNotificationTask>();
+
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
             });
 
+            // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
+            // and the pattern-based delete path in RedisCacheService (used for invalidating
+            // every page of a paginated key family at once).
+            var redisConnectionString = builder.Configuration.GetConnectionString("Redis")!;
+            var sharedMultiplexer = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+            builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sharedMultiplexer);
+
             builder.Services.AddStackExchangeRedisCache(options =>
             {
-                options.Configuration = builder.Configuration.GetConnectionString("Redis");
+                options.ConnectionMultiplexerFactory = () => Task.FromResult<StackExchange.Redis.IConnectionMultiplexer>(sharedMultiplexer);
                 options.InstanceName = "GameHubz_";
             });
 
@@ -66,7 +86,16 @@ namespace GameHubz.Api
 
             IConfigurationSection rabbitMqSettings = builder.Configuration.GetSection(nameof(RabbitMq));
             builder.Services.Configure<RabbitMq>(rabbitMqSettings);
-            builder.Services.AddSignalR();
+
+            IConfigurationSection shareLinksSettings = builder.Configuration.GetSection(nameof(ShareLinksConfig));
+            builder.Services.Configure<ShareLinksConfig>(shareLinksSettings);
+            builder.Services.AddSignalR().AddJsonProtocol(opts =>
+            {
+                // Same UTC marker treatment for messages pushed through SignalR hubs
+                // (chat, DM, live updates) — otherwise client-side timestamps drift.
+                opts.PayloadSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+                opts.PayloadSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+            });
 
             builder.Services.AddCors(options =>
             {
@@ -86,6 +115,8 @@ namespace GameHubz.Api
             ConfigurePipeline(app, builder.Configuration);
 
             app.MapHub<MatchChatHub>("/hubs/chat");
+            app.MapHub<DirectChatHub>("/hubs/dm");
+            app.MapHub<UserHub>("/hubs/user");
 
             app.Run();
         }

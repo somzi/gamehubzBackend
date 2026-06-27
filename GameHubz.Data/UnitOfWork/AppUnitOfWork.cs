@@ -45,10 +45,29 @@ namespace GameHubz.Data.UnitOfWork
 
 public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatRepository>();
 
+        public IMatchChatReadRepository MatchChatReadRepository => this.GetRepository<MatchChatReadRepository>();
+
+        public IMatchStreamRepository MatchStreamRepository => this.GetRepository<MatchStreamRepository>();
+
         public ITournamentTeamRepository TournamentTeamRepository => this.GetRepository<TournamentTeamRepository>();
         public ITournamentTeamMemberRepository TournamentTeamMemberRepository => this.GetRepository<TournamentTeamMemberRepository>();
         public ITeamJoinRequestRepository TeamJoinRequestRepository => this.GetRepository<TeamJoinRequestRepository>();
         public ITeamMatchRepository TeamMatchRepository => this.GetRepository<TeamMatchRepository>();
+        public IUserHubRequestRepository UserHubRequestRepository => this.GetRepository<UserHubRequestRepository>();
+
+        public IUserHubBanRepository UserHubBanRepository => this.GetRepository<UserHubBanRepository>();
+
+        public IHubVerificationRequestRepository HubVerificationRequestRepository => this.GetRepository<HubVerificationRequestRepository>();
+
+        public IFriendshipRepository FriendshipRepository => this.GetRepository<FriendshipRepository>();
+
+        public IFriendRequestRepository FriendRequestRepository => this.GetRepository<FriendRequestRepository>();
+
+        public IDirectChatRepository DirectChatRepository => this.GetRepository<DirectChatRepository>();
+
+        public IDirectMessageRepository DirectMessageRepository => this.GetRepository<DirectMessageRepository>();
+
+        public IUserBlockRepository UserBlockRepository => this.GetRepository<UserBlockRepository>();
 
         // DO NOT DELETE - Generated Repository Tag
     }

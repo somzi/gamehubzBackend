@@ -1,4 +1,5 @@
 using GameHubz.Common;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
 {
@@ -11,5 +12,7 @@ namespace GameHubz.DataModels.Domain
         public Guid? HubId { get; set; }
 
         public HubEntity? Hub { get; set; }
+
+        public HubRole HubRole { get; set; } = HubRole.HubMember;
     }
 }

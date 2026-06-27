@@ -42,6 +42,17 @@ namespace GameHubz.Data.Base
             return this.DetachEntity(entity);
         }
 
+        public async Task DetachById(Guid id)
+        {
+            var entry = this.ContextBase.ChangeTracker.Entries<TEntity>()
+                .FirstOrDefault(e => e.Entity.Id == id);
+            if (entry != null)
+            {
+                entry.State = EntityState.Detached;
+            }
+            await Task.Yield();
+        }
+
         public async Task<TEntity> GetByIdOrThrowIfNull(Guid id)
         {
             var entity = await this.DbSetForSingle()

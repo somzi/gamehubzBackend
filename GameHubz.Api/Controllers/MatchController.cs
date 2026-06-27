@@ -79,12 +79,89 @@ namespace GameHubz.Api.Controllers
             return Ok(new { message = "Match scheduled successfully." });
         }
 
+        [HttpPost("{id}/adminHelp")]
+        public async Task<IActionResult> RequestAdminHelp(Guid id)
+        {
+            await this.Service.RequestAdminHelp(id);
+            return Ok(new { message = "Tournament admins have been notified." });
+        }
+
+        [HttpPost("{id}/adminHelp/resolve")]
+        public async Task<IActionResult> ResolveAdminHelp(Guid id)
+        {
+            await this.Service.ResolveAdminHelp(id);
+            return Ok(new { message = "Help request resolved." });
+        }
+
+        [HttpGet("adminHelp/tournament/{tournamentId}")]
+        public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
+        {
+            return await this.Service.GetAdminHelpRequests(tournamentId);
+        }
+
+        [HttpGet("pendingApproval/tournament/{tournamentId}")]
+        public async Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId)
+        {
+            return await this.Service.GetPendingApprovalMatches(tournamentId);
+        }
+
         [HttpGet("{id}/team/details")]
         public async Task<IActionResult> GetDetailsTeamMatch(Guid id)
         {
             var teamMatchDetails = await this.teamMatchService.GetTeamMatchDetails(id);
             var s = JsonSerializer.Serialize(teamMatchDetails);
             return Ok(teamMatchDetails);
+        }
+
+        // ─── Match streaming ────────────────────────────────────────────────
+
+        // Latest stream for a match (null when there is none). Kept for back-compat.
+        [HttpGet("{id}/stream")]
+        public async Task<IActionResult> GetStream(Guid id)
+        {
+            var stream = await this.Service.GetStream(id);
+            return Ok(stream);
+        }
+
+        // All current streams for a match (latest per streamer) — both opponents can stream at once.
+        [HttpGet("{id}/streams")]
+        public async Task<IActionResult> GetStreams(Guid id)
+        {
+            var streams = await this.Service.GetStreams(id);
+            return Ok(streams);
+        }
+
+        // One-tap "I'm streaming this match" — sets the stream Live and saves the channel to socials.
+        [HttpPost("{id}/stream/start")]
+        public async Task<IActionResult> StartStream(Guid id, [FromBody] StartMatchStreamRequest request)
+        {
+            var stream = await this.Service.StartStream(id, request);
+            return Ok(stream);
+        }
+
+        // Streamer stops — marks Ended and auto-resolves the VOD link (manual VodUrl overrides).
+        [HttpPost("{id}/stream/end")]
+        public async Task<IActionResult> EndStream(Guid id, [FromBody] EndMatchStreamRequest? request)
+        {
+            var stream = await this.Service.EndStream(id, request);
+            return Ok(stream);
+        }
+
+        // Manual VOD fallback (mainly Kick) / correction.
+        [HttpPost("{id}/stream/vod")]
+        public async Task<IActionResult> SetStreamVod(Guid id, [FromBody] SetMatchStreamVodRequest request)
+        {
+            var stream = await this.Service.SetStreamVod(id, request);
+            return Ok(stream);
+        }
+
+        // Soft-deletes the caller's stream (admins can pass streamerUserId to delete another's).
+        // Used when the streamer attached the wrong channel or ended by mistake and wants to start fresh.
+        [HttpDelete("{id}/stream")]
+        public async Task<IActionResult> DeleteStream(Guid id, [FromQuery] Guid? streamerUserId)
+        {
+            await this.Service.DeleteStream(id, streamerUserId);
+            return Ok(new { message = "Stream deleted" });
         }
     }
 }

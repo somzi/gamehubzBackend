@@ -1,4 +1,5 @@
 ﻿using FluentValidation;
+using GameHubz.DataModels.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 
@@ -9,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly TournamentService tournamentService;
         private readonly ICacheService cacheService;
         private readonly CloudinaryStorageService storageService;
+        private readonly UserHubService userHubService;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -20,7 +22,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             TournamentService tournamentService,
             ICacheService cacheService,
-            CloudinaryStorageService storageService)
+            CloudinaryStorageService storageService,
+            UserHubService userHubService)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -33,6 +36,7 @@ namespace GameHubz.Logic.Services
             this.tournamentService = tournamentService;
             this.cacheService = cacheService;
             this.storageService = storageService;
+            this.userHubService = userHubService;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -77,6 +81,17 @@ namespace GameHubz.Logic.Services
 
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
             hubDto.IsUserFollowHub = isFollowing;
+
+            if (!hubDto.IsUserOwner)
+            {
+                var callerRole = await this.userHubService.GetUserHubRoleCachedAsync(user.UserId, id);
+                hubDto.IsUserAdmin = callerRole == HubRole.HubAdmin;
+            }
+
+            if (!hubDto.IsPublic && !isFollowing && !hubDto.IsUserOwner)
+            {
+                hubDto.HasPendingJoinRequest = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(id, user.UserId);
+            }
 
             return hubDto;
         }
@@ -123,16 +138,23 @@ namespace GameHubz.Logic.Services
 
         public async Task<HubOverviewDto> UpdateDetails(HubPost request)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(request.Id!.Value);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can edit hub details.");
 
             hub.Name = request.Name;
             hub.Description = request.Description;
+            hub.IsPublic = request.IsPublic;
 
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"hub_overview:{request.Id}");
+            await cacheService.RemoveAsync($"hubs_overview_all");
 
             return this.Mapper.Map<HubOverviewDto>(hub);
         }
@@ -149,14 +171,29 @@ namespace GameHubz.Logic.Services
             {
                 Name = request.Name,
                 Description = request.Description,
-                UserId = user.UserId
+                UserId = user.UserId,
+                IsPublic = request.IsPublic
             };
 
             await this.AppUnitOfWork.HubRepository.AddEntity(hub, this.UserContextReader);
 
+            var ownerMembership = new UserHubEntity
+            {
+                UserId = hub.UserId,
+                HubId = hub.Id,
+                HubRole = HubRole.HubOwner
+            };
+
+            await this.AppUnitOfWork.UserHubRepository.AddEntity(ownerMembership, this.UserContextReader);
+
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"hubs_overview_all");
+            // The new owner's joined-hubs list now includes this hub, and the discovery list
+            // (hubs the user hasn't joined) shrinks by one. Wipe both.
+            await cacheService.RemoveByPatternAsync($"user_joined_hubs:{hub.UserId}:*");
+            await cacheService.RemoveByPatternAsync($"user_discovery_hubs:{hub.UserId}:*");
+            await cacheService.RemoveAsync($"user_hubs_list:{hub.UserId}");
         }
 
         protected override IRepository<HubEntity> GetRepository()
@@ -166,6 +203,12 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeDelete(Guid entityId)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(entityId);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can delete the hub.");
+
             var activities = await this.AppUnitOfWork.HubActivityRepository.GetByHubId(entityId);
 
             foreach (var act in activities)
@@ -178,21 +221,38 @@ namespace GameHubz.Logic.Services
 
         public async Task<IEnumerable<HubDto>> GetJoinedByUser(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, search);
+            // Search variants would create unbounded cache keys — only cache no-search.
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, search);
 
-            return data;
+            string key = $"user_joined_hubs:{userId}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<List<HubDto>>(key);
+            if (cached != null) return cached;
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, true, null);
+            var list = data.ToList();
+            await cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<IEnumerable<HubDto>> GetUserNotJoined(Guid userId, int pageNumber, string? search = null)
         {
-            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, search);
+            if (!string.IsNullOrWhiteSpace(search))
+                return await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, search);
 
-            return data;
+            string key = $"user_discovery_hubs:{userId}:p:{pageNumber}";
+            var cached = await cacheService.GetAsync<List<HubDto>>(key);
+            if (cached != null) return cached;
+
+            var data = await this.AppUnitOfWork.HubRepository.GetHubsByUserId(userId, pageNumber, false, null);
+            var list = data.ToList();
+            await cacheService.SetAsync(key, list, TimeSpan.FromMinutes(1));
+            return list;
         }
 
         public async Task<IEnumerable<UserHubOverview>> GetMembers(Guid id)
         {
-            string cacheKey = $"hubs:{id}:members";
+            string cacheKey = $"hubs:{id}:members:v2";
 
             var cachedHubs = await cacheService.GetAsync<IEnumerable<UserHubOverview>>(cacheKey);
 
@@ -208,6 +268,12 @@ namespace GameHubz.Logic.Services
             return data;
         }
 
+        public Task<List<UserHubOverview>> GetMembersPaged(Guid id, int pageNumber, string? search)
+        {
+            const int pageSize = 10;
+            return this.AppUnitOfWork.UserHubRepository.GetUsersByHubPaged(id, pageNumber, pageSize, search);
+        }
+
         public async Task KickUserFromHub(Guid hubId, Guid userId)
         {
             var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
@@ -221,12 +287,21 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"hubs_overview_all");
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"hubs:{hubId}:members");
+            await cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
+            await cacheService.RemoveAsync($"user_hub_role:{userId}:{hubId}");
+            await cacheService.RemoveByPatternAsync($"user_joined_hubs:{userId}:*");
+            await cacheService.RemoveByPatternAsync($"user_discovery_hubs:{userId}:*");
+            await cacheService.RemoveByPatternAsync($"tournament_authz:{userId}:*");
         }
 
         public async Task UploadAvatar(Guid id, IFormFile file)
         {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
+
+            if (hub.UserId != caller.UserId)
+                throw new Exception("Only the hub owner can change the hub avatar.");
 
             string fileName = $"avatar";
             string folderPath = $"hubs/{hub!.Name}";

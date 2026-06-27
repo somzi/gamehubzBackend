@@ -30,6 +30,7 @@ namespace GameHubz.Data.Repository
                 {
                     HubName = x.Hub!.Name,
                     HubAvatarUrl = x.Hub!.AvatarUrl,
+                    TournamentId = x.TournamentId,
                     TournamentName = x.Tournament!.Name,
                     Type = x.Type,
                     CreatedOn = x.CreatedOn!.Value
@@ -52,6 +53,7 @@ namespace GameHubz.Data.Repository
                 {
                     HubName = x.Hub!.Name,
                     HubAvatarUrl = x.Hub!.AvatarUrl,
+                    TournamentId = x.TournamentId,
                     TournamentName = x.Tournament!.Name,
                     Type = x.Type,
                     CreatedOn = x.CreatedOn!.Value

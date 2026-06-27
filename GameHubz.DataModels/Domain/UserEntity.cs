@@ -31,6 +31,13 @@ namespace GameHubz.DataModels.Domain
 
         public RegionType Region { get; set; }
 
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country code (e.g. "RS"), or null when the user hasn't set one.
+        /// Once set it locks (only null → value transitions are allowed via the API); selecting a
+        /// country also derives <see cref="Region"/> from <see cref="Catalog.CountryCatalog"/>.
+        /// </summary>
+        public string? Country { get; set; }
+
         public Guid UserRoleId { get; set; }
 
         public List<RefreshTokenEntity> RefreshTokens { get; }

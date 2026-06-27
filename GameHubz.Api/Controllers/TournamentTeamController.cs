@@ -24,6 +24,14 @@ namespace GameHubz.Api.Controllers
             return Ok(team);
         }
 
+        // Resolves a shared /team/{id} link into the team's tournament + basic info.
+        [HttpGet("{teamId}")]
+        public async Task<IActionResult> GetTeam(Guid teamId)
+        {
+            var summary = await this.tournamentTeamService.GetTeamShareSummary(teamId);
+            return Ok(summary);
+        }
+
         [HttpPut("{teamId}/name")]
         public async Task<IActionResult> RenameTeam(Guid teamId, [FromBody] RenameTeamRequest request)
         {

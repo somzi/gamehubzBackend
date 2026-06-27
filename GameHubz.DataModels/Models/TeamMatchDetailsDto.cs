@@ -12,6 +12,7 @@ namespace GameHubz.DataModels.Models
         public List<TeamSubMatchDto> SubMatches { get; set; } = new();
         public TeamAggregateScoreDto? AggregateScore { get; set; }
         public TeamTieBreakInfoDto? TieBreak { get; set; }
+        public bool RequireResultApproval { get; set; }
     }
 
     public class TeamMatchTeamInfoDto
@@ -33,6 +34,9 @@ namespace GameHubz.DataModels.Models
         public Guid? WinnerUserId { get; set; }
         public bool IsTieBreakMatch { get; set; }
         public List<string> Evidences { get; set; } = [];
+        public int? ProposedHomeScore { get; set; }
+        public int? ProposedAwayScore { get; set; }
+        public Guid? ProposedByUserId { get; set; }
     }
 
     public class TeamAggregateScoreDto

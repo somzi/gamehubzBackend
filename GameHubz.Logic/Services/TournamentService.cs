@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
@@ -8,6 +9,7 @@ namespace GameHubz.Logic.Services
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -19,7 +21,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService) : base(
+            INotificationService notificationService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -31,6 +34,7 @@ namespace GameHubz.Logic.Services
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
             this.notificationService = notificationService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -72,12 +76,18 @@ namespace GameHubz.Logic.Services
 
             List<Guid> hubIds = await this.AppUnitOfWork.HubRepository.GetHubIdsByUserId(userId);
 
-            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var userRegion = (RegionType)user.Region!.Value;
+            // Subset of hubIds where the user is Exclusive-or-higher — gates exclusive tournaments.
+            List<Guid> exclusiveHubIds = await this.AppUnitOfWork.UserHubRepository.GetHubIdsWithExclusiveAccess(userId);
 
-            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, request.Status, userRegion, request.Page, request.PageSize);
+            // Read region + country from the DB (not the token): selecting a country changes the
+            // user's region, and the JWT's region claim can be stale until the next token refresh.
+            var userEntity = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(userId);
+            var userRegion = userEntity.Region;
+            var userCountry = userEntity.Country;
 
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, userRegion, request.Status);
+            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, exclusiveHubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize);
+
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, exclusiveHubIds, userRegion, userCountry, request.Status);
 
             var response = new TournamentPagedResponse
             {
@@ -116,6 +126,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{id}");
             await cacheService.RemoveAsync($"bracket:{id}");
+            await cacheService.RemoveAsync($"league_standings:{id}");
         }
 
         public async Task Publish(Guid id)
@@ -151,6 +162,37 @@ namespace GameHubz.Logic.Services
             return data!;
         }
 
+        /// <summary>
+        /// v2 of the overview endpoint. Same payload as v1 plus <see cref="TournamentOverview.CanManage"/>
+        /// so the client can surface owner-level controls to hub admins / platform admins as well.
+        /// CanManage is computed per request and never cached (v1 omits it entirely).
+        /// </summary>
+        public async Task<TournamentOverview> GetOverviewV2(Guid id)
+        {
+            var data = await GetOverview(id);
+
+            data.CanManage = await this.tournamentAuth.CanManageTournamentAsync(id);
+
+            // Tell the client whether the caller passes the exclusivity gate so it can hide the
+            // Join button for plain members. Short-circuits: no query for non-exclusive tournaments
+            // or for managers (who always have access).
+            data.HasExclusiveAccess = !data.IsExclusive
+                || data.CanManage
+                || await CallerHasExclusiveRole(data.HubId);
+
+            return data;
+        }
+
+        // Exclusive-or-higher role (Exclusive/Admin/Owner) in the given hub for the current caller.
+        private async Task<bool> CallerHasExclusiveRole(Guid hubId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (user == null) return false;
+
+            var role = await this.AppUnitOfWork.UserHubRepository.GetRole(user.UserId, hubId);
+            return role == HubRole.HubOwner || role == HubRole.HubAdmin || role == HubRole.HubExclusive;
+        }
+
         private async Task RejectPendings(TournamentEntity tournament)
         {
             foreach (var registration in tournament.TournamentRegistrations!)
@@ -170,18 +212,20 @@ namespace GameHubz.Logic.Services
             return isUserAlreadyRegistred;
         }
 
-        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart)
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null)
         {
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
 
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
 
-            if (tournament.Hub!.UserId != currentUser.UserId)
-                throw new Exception("Only tournament admin can manage round deadlines.");
-
-            var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
+            // When a stage is given, scope the update to that bracket only — the Winners and Losers
+            // brackets are separate stages that share RoundNumber, so a tournament-wide update would
+            // leak the deadline across both. Null keeps the legacy tournament-wide behavior.
+            var roundMatches = stageId.HasValue
+                ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
+                : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
                 throw new Exception("Round not found.");
 
@@ -194,6 +238,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
@@ -244,12 +289,11 @@ namespace GameHubz.Logic.Services
 
         private async Task<TournamentEntity> GetHubOwnedTournamentOrThrow(Guid tournamentId)
         {
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
 
-            if (tournament.Hub?.UserId != currentUser.UserId)
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
             {
-                throw new Exception("Only hub owner can manage this tournament.");
+                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             return tournament;
@@ -277,12 +321,84 @@ namespace GameHubz.Logic.Services
             else
             {
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
+                // Tournament-level settings (e.g. RequireResultApproval) are projected into the
+                // bracket structure response, so flush the bracket cache too — otherwise the new
+                // setting won't be visible until the 5-minute cache window expires.
+                await cacheService.RemoveAsync($"bracket:{model.Id}");
+                await cacheService.RemoveAsync($"league_standings:{model.Id}");
             }
 
-            await cacheService.RemoveAsync($"tournaments:hub:{inputDto.HubId}:status:RegistrationOpen:p:0:s:10");
+            // Wipe every paginated tournament list cached for this hub — the new (or edited)
+            // tournament could appear on any page, not just page 0.
+            await cacheService.RemoveByPatternAsync($"tournaments:hub:{inputDto.HubId}:*");
             await cacheService.RemoveAsync($"hub_overview:{model.HubId!.Value}");
 
             return model;
+        }
+
+        /// <summary>
+        /// Solo-vs-team is locked at creation (flipping it would orphan team rosters or solo
+        /// participants). Team size, win condition, exclusivity, country scope and double round-robin
+        /// can still be edited, but only before the tournament starts and only by clients that opt in
+        /// via <see cref="TournamentPost.AllowStructuralEdits"/>. Older clients leave the flag off and
+        /// don't send these fields — without preservation, default bool/null on the DTO would silently
+        /// flip a team tournament to solo (and unscope countries / clear exclusivity) on every edit.
+        /// </summary>
+        protected override async Task BeforeDtoMapToEntity(TournamentPost inputDto, bool isNew)
+        {
+            if (isNew || !inputDto.Id.HasValue) return;
+
+            var existing = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(inputDto.Id.Value);
+            if (existing == null) return;
+
+            inputDto.IsTeamTournament = existing.IsTeamTournament;
+
+            bool canEditStructural = inputDto.AllowStructuralEdits
+                && existing.Status < TournamentStatus.InProgress;
+            if (canEditStructural) return;
+
+            inputDto.TeamSize = existing.TeamSize;
+            inputDto.TeamWinCondition = existing.TeamWinCondition;
+            inputDto.IsExclusive = existing.IsExclusive;
+            inputDto.Countries = existing.Countries == null ? null : new List<string>(existing.Countries);
+            inputDto.DoubleRoundRobin = existing.DoubleRoundRobin;
+            // Newer field that old clients don't send — without this, their edits would null it out
+            // and silently downgrade a double-elimination knockout back to single.
+            inputDto.KnockoutEliminationType = existing.KnockoutEliminationType;
+        }
+
+        /// <summary>
+        /// When a tournament is created/edited with one or more countries, it becomes country-scoped
+        /// and its Region is derived from the first country (country dictates region). An empty/null
+        /// list leaves the tournament region-scoped using the explicitly chosen Region. Stored as
+        /// canonical, de-duplicated ISO codes (null when none — never an empty array).
+        /// </summary>
+        protected override async Task BeforeSave(TournamentEntity entity, TournamentPost inputDto, bool isNew)
+        {
+            var codes = inputDto.Countries?
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c =>
+                {
+                    var country = CountryCatalog.Get(c)
+                        ?? throw new Exception($"Unknown country code '{c}'.");
+                    return country.Code;
+                })
+                .Distinct()
+                .ToList();
+
+            if (codes is null || codes.Count == 0)
+            {
+                entity.Countries = null;
+            }
+            else
+            {
+                entity.Countries = codes;
+                // Region is cosmetic for country-scoped tournaments (filtering uses Countries);
+                // derive it from the first country so the displayed region stays sensible.
+                entity.Region = CountryCatalog.Get(codes[0])!.Region;
+            }
+
+            await Task.CompletedTask;
         }
 
         private void SendNotification(TournamentDto model)
@@ -295,7 +411,9 @@ namespace GameHubz.Logic.Services
                     if (hubMembers == null || hubMembers.Count == 0) return;
 
                     var pushTokens = hubMembers
-                        .Where(m => !string.IsNullOrEmpty(m.PushToken))
+                        .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
+                        // Exclusive tournaments are invisible to plain members, so don't notify them.
+                        .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
                         .Select(m => m.PushToken)
                         .Distinct()
                         .ToList();
@@ -331,14 +449,12 @@ namespace GameHubz.Logic.Services
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.InProgress}:p:{1}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationOpen}:p:{1}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{0}:s:{10}");
-            await cacheService.RemoveAsync($"tournaments:hub:{hubId}:status:{TournamentStatus.RegistrationClosed}:p:{1}:s:{10}");
+            // Wipes every cached page of every status for this hub — replaces the old
+            // p:0/p:1 hand-listed invalidation that left page 2+ stale.
+            await cacheService.RemoveByPatternAsync($"tournaments:hub:{hubId}:*");
         }
 
         private async Task UpdateRoundSchedule(Guid tournamentId, int roundNumber, DateTime? opensAt = null, DateTime? deadline = null)
@@ -346,11 +462,8 @@ namespace GameHubz.Logic.Services
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
 
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
-
-            if (tournament.Hub!.UserId != currentUser.UserId)
-                throw new Exception("Only tournament admin can manage round deadlines.");
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
 
             var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
@@ -365,6 +478,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
     }

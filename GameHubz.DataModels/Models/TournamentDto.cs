@@ -23,12 +23,22 @@ namespace GameHubz.DataModels.Models
         public DateTime? RegistrationDeadline { get; set; }
         public RegionType Region { get; set; }
 
+        /// <summary>ISO 3166-1 alpha-2 country codes when country-scoped, else null (region-scoped).</summary>
+        public List<string>? Countries { get; set; }
+
         public int Prize { get; set; }
 
         public Guid CreatedBy { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
 
         public TeamWinCondition TeamWinCondition { get; set; }
+
+        public bool HasThirdPlaceMatch { get; set; }
+
+        public bool RequireResultApproval { get; set; }
+
+        /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
+        public bool IsExclusive { get; set; }
 
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 

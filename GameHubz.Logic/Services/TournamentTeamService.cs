@@ -5,15 +5,21 @@ namespace GameHubz.Logic.Services
     public class TournamentTeamService : AppBaseService
     {
         private readonly ICacheService cacheService;
+        private readonly INotificationService notificationService;
+        private readonly BadgeService badgeService;
 
         public TournamentTeamService(
             IUnitOfWorkFactory unitOfWorkFactory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            INotificationService notificationService,
+            BadgeService badgeService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.cacheService = cacheService;
+            this.notificationService = notificationService;
+            this.badgeService = badgeService;
         }
 
         public async Task<TeamDto> CreateTeam(CreateTeamRequest request)
@@ -203,6 +209,14 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TeamJoinRequestRepository.AddEntity(request, this.UserContextReader);
             await this.SaveAsync();
 
+            // The captain has a new join request waiting — bump their badge and push.
+            await this.badgeService.PushAsync(data.CaptainUserId);
+            await NotifyUserAsync(
+                data.CaptainUserId,
+                data.TeamName,
+                $"{user.Username} asked to join your team.",
+                new { teamId = data.TeamId.ToString(), tournamentId = data.TournamentId.ToString(), type = "teamJoinRequest" });
+
             return new TeamDto
             {
                 TeamId = data.TeamId,
@@ -213,6 +227,40 @@ namespace GameHubz.Logic.Services
                 UserRequestStatus = JoinRequestStatus.Pending,
                 Members = data.Members,
                 MemberCount = data.CurrentMemberCount
+            };
+        }
+
+        // Fire-and-forget push to a single user by id. Resolves the token in the request scope,
+        // then sends in the background so the DbContext is never touched off-thread.
+        private async Task NotifyUserAsync(Guid userId, string title, string body, object data)
+        {
+            var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
+            if (string.IsNullOrEmpty(target?.PushToken)) return;
+
+            var token = target.PushToken!;
+            _ = Task.Run(async () =>
+            {
+                try { await notificationService.SendToOneAsync(token, title, body, data); }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        // Resolves a shared /team/{id} link: returns the team's tournament + a bit of
+        // context so the recipient's app can land on the right tournament and offer a
+        // join / request. No auth on the data beyond the controller's [Authorize].
+        public async Task<TeamShareSummaryDto> GetTeamShareSummary(Guid teamId)
+        {
+            var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
+            if (team == null) throw new Exception("Team not found.");
+
+            return new TeamShareSummaryDto
+            {
+                TeamId = team.Id!.Value,
+                TournamentId = team.TournamentId!.Value,
+                TeamName = team.TeamName,
+                RequiresApproval = team.RequiresApproval,
+                MemberCount = team.Members.Count,
+                TeamSize = team.Tournament?.TeamSize,
             };
         }
 
@@ -281,6 +329,14 @@ namespace GameHubz.Logic.Services
 
             await InvalidateCache(team.TournamentId!.Value);
 
+            // Captain's pending-requests badge drops; tell the approved player.
+            await this.badgeService.PushAsync(user.UserId);
+            await NotifyUserAsync(
+                request.UserId!.Value,
+                team.TeamName,
+                "You've been added to the team.",
+                new { teamId = team.Id.ToString(), tournamentId = team.TournamentId!.Value.ToString(), type = "teamJoinApproved" });
+
             return MapTeamsToDto(team, [.. team.Members, member], tournament.TeamSize);
         }
 
@@ -298,6 +354,14 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TeamJoinRequestRepository.UpdateEntity(request, this.UserContextReader);
 
             await this.SaveAsync();
+
+            // Captain's pending-requests badge drops; tell the player their request was declined.
+            await this.badgeService.PushAsync(user.UserId);
+            await NotifyUserAsync(
+                request.UserId!.Value,
+                request.Team!.TeamName,
+                "Your request to join the team was declined.",
+                new { teamId = request.TeamId!.Value.ToString(), tournamentId = request.Team!.TournamentId!.Value.ToString(), type = "teamJoinRejected" });
         }
 
         public async Task<List<TeamDto>> GetFinalTeamsByTournament(Guid tournamentId)
@@ -351,6 +415,8 @@ namespace GameHubz.Logic.Services
         {
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
         }
 
         private static TeamDto MapTeamsToDto(TournamentTeamEntity team, IEnumerable<TournamentTeamMemberEntity> members, int? teamSize)

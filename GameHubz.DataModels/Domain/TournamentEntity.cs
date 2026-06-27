@@ -13,11 +13,24 @@ namespace GameHubz.DataModels.Domain
         public int? MaxPlayers { get; set; }
         public DateTime? StartDate { get; set; }
         public DateTime? RegistrationDeadline { get; set; }
+
+        // Set by the deadline-reminder background sweep once the "registration closing soon"
+        // push has been sent for this tournament, so the same hub is never reminded twice.
+        // Null = reminder not yet sent.
+        public DateTime? RegistrationDeadlineReminderSentOn { get; set; }
         public TournamentFormat Format { get; set; }
         public HubEntity? Hub { get; set; }
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }
+
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country codes when the tournament is country-scoped, or null when it
+        /// is region-scoped (uses <see cref="Region"/>). When set, the tournament is visible only to
+        /// users whose country is in this list. Stored as a Postgres text[] array. Null (never empty)
+        /// means region-scoped. <see cref="Region"/> is derived from the first country for display.
+        /// </summary>
+        public List<string>? Countries { get; set; }
         public Guid? WinnerUserId { get; set; }
         public UserEntity? WinnerUser { get; set; }
 
@@ -30,6 +43,41 @@ namespace GameHubz.DataModels.Domain
         public int? QualifiersPerGroup { get; set; }
         public int? GroupsCount { get; set; }
         public int? RoundDurationMinutes { get; set; }
+
+        // When true, League and GroupStageWithKnockout formats run a double round-robin:
+        // every pair plays twice (reverse fixtures generated in rounds N+1..2N).
+        public bool DoubleRoundRobin { get; set; }
+
+        // Swiss format: number of rounds chosen by the organizer. Null = auto
+        // (ceil(log2(participants)), the standard Swiss round count).
+        public int? SwissRoundsCount { get; set; }
+
+        // Swiss format: knockout bracket size after the Swiss rounds (power of 2).
+        // Null = pure Swiss — the standings leader wins the tournament outright.
+        public int? SwissKnockoutQualifiers { get; set; }
+
+        // Swiss format: how many of the knockout slots are direct berths from the standings.
+        // The remaining (N - D) slots are decided by a play-in round between standings
+        // D+1 .. D+2(N-D). Null or == SwissKnockoutQualifiers = no play-in.
+        public int? SwissDirectQualifiers { get; set; }
+
+        // GroupStageWithKnockout / Swiss: whether the knockout phase is single- or double-elimination.
+        // Null = Single (back-compat for every existing tournament). Double is solo-only — the engine
+        // has no team double-elimination, so this is ignored for team tournaments.
+        public KnockoutEliminationType? KnockoutEliminationType { get; set; }
+
+        // When true, single-elimination brackets also generate a play-off match
+        // between the two semi-final losers. Default false for all existing tournaments.
+        public bool HasThirdPlaceMatch { get; set; }
+
+        // When true, a reported match result becomes a pending proposal that the opponent
+        // (or an admin / hub owner) must approve before the bracket advances.
+        public bool RequireResultApproval { get; set; }
+
+        // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
+        // can see this tournament in their feed and register. Default false = open to all members.
+        public bool IsExclusive { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

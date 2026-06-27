@@ -63,5 +63,13 @@ namespace GameHubz.Data.Repository
             return await this.BaseDbSet()
                 .AnyAsync(r => r.TeamId == teamId && r.UserId == userId && r.Status == JoinRequestStatus.Pending);
         }
+
+        // Pending join requests across every team the user captains — captain badge.
+        public async Task<int> CountPendingForCaptain(Guid captainUserId)
+        {
+            return await this.BaseDbSet()
+                .CountAsync(r => r.Status == JoinRequestStatus.Pending
+                    && r.Team!.CaptainUserId == captainUserId);
+        }
     }
 }

@@ -41,12 +41,185 @@ namespace GameHubz.Data.Context
             UserRoleConfigurator(modelBuilder);
             AssetsConfigurator(modelBuilder);
             EmailQueueConfigurator(modelBuilder);
+            ErrorLogConfigurator(modelBuilder);
             HubConfigurator(modelBuilder);
 
             modelBuilder.Entity<RefreshTokenEntity>().ToTable("RefreshToken")
                 .HasQueryFilter(x => x.IsDeleted == false);
 
             GeneratedEntityConfigurator(modelBuilder);
+            SocialConfigurator(modelBuilder);
+            ShareConfigurator(modelBuilder);
+            StreamConfigurator(modelBuilder);
+            MatchChatReadConfigurator(modelBuilder);
+        }
+
+        private static void MatchChatReadConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<MatchChatReadEntity>().ToTable("MatchChatRead")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasOne(x => x.Match)
+                .WithMany()
+                .HasForeignKey(x => x.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MatchChatReadEntity>()
+                .HasIndex(x => new { x.MatchId, x.UserId })
+                .IsUnique();
+        }
+
+        private static void StreamConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<MatchStreamEntity>().ToTable("MatchStream")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasOne(x => x.Match)
+                .WithMany()
+                .HasForeignKey(x => x.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasOne(x => x.Streamer)
+                .WithMany()
+                .HasForeignKey(x => x.StreamerUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MatchStreamEntity>()
+                .HasIndex(x => x.MatchId);
+        }
+
+        private static void ShareConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<ShareLogEntity>().ToTable("ShareLog")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<ShareLogEntity>()
+                .HasIndex(x => new { x.EntityType, x.EntityId });
+        }
+
+        private static void SocialConfigurator(ModelBuilder modelBuilder)
+        {
+            // ─── Friendship ────────────────────────────────────────────
+            modelBuilder.Entity<FriendshipEntity>().ToTable("Friendship").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<FriendshipEntity>()
+                .HasOne(x => x.UserA)
+                .WithMany()
+                .HasForeignKey(x => x.UserAId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FriendshipEntity>()
+                .HasOne(x => x.UserB)
+                .WithMany()
+                .HasForeignKey(x => x.UserBId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FriendshipEntity>()
+                .HasIndex(x => new { x.UserAId, x.UserBId })
+                .IsUnique();
+
+            modelBuilder.Entity<FriendshipEntity>()
+                .HasIndex(x => x.UserAId);
+
+            modelBuilder.Entity<FriendshipEntity>()
+                .HasIndex(x => x.UserBId);
+
+            // ─── FriendRequest ─────────────────────────────────────────
+            modelBuilder.Entity<FriendRequestEntity>().ToTable("FriendRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<FriendRequestEntity>()
+                .HasOne(x => x.FromUser)
+                .WithMany()
+                .HasForeignKey(x => x.FromUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FriendRequestEntity>()
+                .HasOne(x => x.ToUser)
+                .WithMany()
+                .HasForeignKey(x => x.ToUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FriendRequestEntity>()
+                .HasIndex(x => new { x.ToUserId, x.Status });
+
+            modelBuilder.Entity<FriendRequestEntity>()
+                .HasIndex(x => new { x.FromUserId, x.Status });
+
+            // ─── DirectChat ────────────────────────────────────────────
+            modelBuilder.Entity<DirectChatEntity>().ToTable("DirectChat").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<DirectChatEntity>()
+                .HasOne(x => x.UserA)
+                .WithMany()
+                .HasForeignKey(x => x.UserAId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DirectChatEntity>()
+                .HasOne(x => x.UserB)
+                .WithMany()
+                .HasForeignKey(x => x.UserBId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DirectChatEntity>()
+                .HasIndex(x => new { x.UserAId, x.UserBId })
+                .IsUnique();
+
+            modelBuilder.Entity<DirectChatEntity>()
+                .HasIndex(x => new { x.UserAId, x.LastMessageAt })
+                .IsDescending(false, true);
+
+            modelBuilder.Entity<DirectChatEntity>()
+                .HasIndex(x => new { x.UserBId, x.LastMessageAt })
+                .IsDescending(false, true);
+
+            // ─── DirectMessage ─────────────────────────────────────────
+            modelBuilder.Entity<DirectMessageEntity>().ToTable("DirectMessage").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<DirectMessageEntity>()
+                .HasOne(x => x.Chat)
+                .WithMany(x => x.Messages)
+                .HasForeignKey(x => x.ChatId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<DirectMessageEntity>()
+                .HasOne(x => x.Sender)
+                .WithMany()
+                .HasForeignKey(x => x.SenderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DirectMessageEntity>()
+                .HasIndex(x => new { x.ChatId, x.CreatedOn });
+
+            modelBuilder.Entity<DirectMessageEntity>()
+                .HasIndex(x => new { x.ChatId, x.IsRead });
+
+            // ─── UserBlock ─────────────────────────────────────────────
+            modelBuilder.Entity<UserBlockEntity>().ToTable("UserBlock").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserBlockEntity>()
+                .HasOne(x => x.Blocker)
+                .WithMany()
+                .HasForeignKey(x => x.BlockerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<UserBlockEntity>()
+                .HasOne(x => x.Blocked)
+                .WithMany()
+                .HasForeignKey(x => x.BlockedId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<UserBlockEntity>()
+                .HasIndex(x => new { x.BlockerId, x.BlockedId })
+                .IsUnique();
         }
 
         private static void HubConfigurator(ModelBuilder modelBuilder)
@@ -319,6 +492,51 @@ namespace GameHubz.Data.Context
             modelBuilder.Entity<UserHubEntity>()
                 .HasIndex(x => new { x.UserId, x.HubId });
 
+            modelBuilder.Entity<UserHubRequestEntity>().ToTable("UserHubRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasOne(x => x.Hub)
+                .WithMany(x => x.JoinRequests)
+                .HasForeignKey(x => x.HubId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<UserHubRequestEntity>()
+                .HasIndex(x => new { x.HubId, x.Status });
+
+            modelBuilder.Entity<UserHubBanEntity>().ToTable("UserHubBan").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserHubBanEntity>()
+                .HasOne(x => x.Hub)
+                .WithMany()
+                .HasForeignKey(x => x.HubId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserHubBanEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<UserHubBanEntity>()
+                .HasIndex(x => new { x.HubId, x.UserId });
+
+            modelBuilder.Entity<HubVerificationRequestEntity>().ToTable("HubVerificationRequest").HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<HubVerificationRequestEntity>()
+                .HasOne(x => x.Hub)
+                .WithMany()
+                .HasForeignKey(x => x.HubId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<HubVerificationRequestEntity>()
+                .HasIndex(x => new { x.HubId, x.Status });
+
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence").HasQueryFilter(x => x.IsDeleted == false);
 
             modelBuilder.Entity<MatchEvidenceEntity>().ToTable("MatchEvidence")
@@ -414,6 +632,18 @@ namespace GameHubz.Data.Context
                 .HasQueryFilter(x => x.IsDeleted == false);
         }
 
+        private static void ErrorLogConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<ErrorLogEntity>().ToTable("ErrorLog")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<ErrorLogEntity>()
+                .HasIndex(x => new { x.IsResolved, x.CreatedOn });
+
+            modelBuilder.Entity<ErrorLogEntity>()
+                .HasIndex(x => x.UserId);
+        }
+
         private static void TeamTournamentConfigurator(ModelBuilder modelBuilder)
         {
             // TournamentTeam
@@ -501,6 +731,12 @@ namespace GameHubz.Data.Context
                 .HasOne(x => x.NextTeamMatch)
                 .WithMany()
                 .HasForeignKey(x => x.NextTeamMatchId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<TeamMatchEntity>()
+                .HasOne(x => x.NextTeamMatchLoserBracket)
+                .WithMany()
+                .HasForeignKey(x => x.NextTeamMatchLoserBracketId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<TeamMatchEntity>()

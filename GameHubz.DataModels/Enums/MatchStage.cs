@@ -16,6 +16,10 @@
         RoundOf128 = 12,
         RoundOf256 = 13,
         RoundOf512 = 14,
-        RoundOf1024 = 15
+        RoundOf1024 = 15,
+        PlayIn = 16,
+        // Double-elimination reset final: played only when the Losers Bracket champion beats the
+        // Winners Bracket champion in the Grand Final, leaving both with one loss.
+        GrandFinalReset = 17
     }
 }

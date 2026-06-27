@@ -14,9 +14,13 @@
 
         public bool IsUserFollowHub { get; set; }
         public bool IsUserOwner { get; set; }
+        public bool IsUserAdmin { get; set; }
         public List<HubSocialDto> HubSocials { get; set; } = [];
         public Guid UserId { get; set; }
         public string? AvatarUrl { get; set; }
         public string OwnerName { get; set; }
+        public bool IsPublic { get; set; } = true;
+        public bool IsVerified { get; set; } = false;
+        public bool HasPendingJoinRequest { get; set; }
     }
 }

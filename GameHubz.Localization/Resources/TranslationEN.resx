@@ -147,6 +147,9 @@
   <data name="EmailQueueValidator.ToIsEmpty" xml:space="preserve">
     <value>To is required</value>
   </data>
+  <data name="Common.UnexpectedError" xml:space="preserve">
+    <value>An unexpected error occurred. Please try again. If the problem persists, contact support with the reference below.</value>
+  </data>
   <data name="Error.TokenCannotBeCreated" xml:space="preserve">
     <value>Token cannot be created.</value>
   </data>

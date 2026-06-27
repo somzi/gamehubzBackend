@@ -11,6 +11,9 @@ namespace GameHubz.DataModels.Domain
         public List<UserHubEntity>? UserHubs { get; set; } = new();
         public List<TournamentEntity>? Tournaments { get; set; } = new();
         public List<HubSocialEntity>? HubSocials { get; set; } = new();
+        public List<UserHubRequestEntity>? JoinRequests { get; set; } = new();
         public string? AvatarUrl { get; set; }
+        public bool IsPublic { get; set; } = true;
+        public bool IsVerified { get; set; } = false;
     }
 }

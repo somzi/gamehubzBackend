@@ -11,11 +11,20 @@ namespace GameHubz.Api.Controllers
     public class HubController : ControllerBase
     {
         private readonly HubService hubService;
+        private readonly UserHubRequestService hubJoinRequestService;
+        private readonly UserHubService userHubService;
+        private readonly HubVerificationService hubVerificationService;
 
         public HubController(
-            HubService service)
+            HubService service,
+            UserHubRequestService hubJoinRequestService,
+            UserHubService userHubService,
+            HubVerificationService hubVerificationService)
         {
             this.hubService = service;
+            this.hubJoinRequestService = hubJoinRequestService;
+            this.userHubService = userHubService;
+            this.hubVerificationService = hubVerificationService;
         }
 
         [HttpGet("getAll")]
@@ -80,6 +89,48 @@ namespace GameHubz.Api.Controllers
             return await hubService.GetMembers(id);
         }
 
+        [HttpGet("{id}/members/paged")]
+        public async Task<IEnumerable<UserHubOverview>> GetMembersPaged(Guid id, [FromQuery] int pageNumber = 0, [FromQuery] string? search = null)
+        {
+            return await hubService.GetMembersPaged(id, pageNumber, search);
+        }
+
+        [HttpPost("{id}/members")]
+        public async Task<UserHubDto> AddMember(Guid id, [FromBody] AddHubMemberRequest request)
+        {
+            return await userHubService.AddMember(id, request.UserId, request.Role);
+        }
+
+        [HttpPut("{id}/members/{userId}")]
+        public async Task<UserHubDto> ChangeMemberRole(Guid id, Guid userId, [FromBody] ChangeHubMemberRoleRequest request)
+        {
+            return await userHubService.ChangeMemberRole(id, userId, request.Role);
+        }
+
+        [HttpDelete("{id}/members/{userId}")]
+        public async Task RemoveMember(Guid id, Guid userId)
+        {
+            await userHubService.RemoveMember(id, userId);
+        }
+
+        [HttpPost("{id}/members/{userId}/ban")]
+        public async Task BanMember(Guid id, Guid userId)
+        {
+            await userHubService.BanMember(id, userId);
+        }
+
+        [HttpGet("{id}/bans")]
+        public async Task<IEnumerable<HubBanOverview>> GetBans(Guid id)
+        {
+            return await userHubService.GetBans(id);
+        }
+
+        [HttpDelete("{id}/bans/{userId}")]
+        public async Task UnbanMember(Guid id, Guid userId)
+        {
+            await userHubService.UnbanMember(id, userId);
+        }
+
         [HttpPost("{id}/user/{userId}/kick")]
         public async Task KickMember(Guid id, Guid userid)
         {
@@ -104,6 +155,59 @@ namespace GameHubz.Api.Controllers
             await hubService.DeleteEntity(id);
 
             return Ok();
+        }
+
+        [HttpPost("{id}/join-request")]
+        public async Task<IActionResult> RequestJoin(Guid id)
+        {
+            await hubJoinRequestService.RequestJoin(id);
+            return Ok();
+        }
+
+        [HttpDelete("{id}/join-request")]
+        public async Task<IActionResult> CancelMyJoinRequest(Guid id)
+        {
+            await hubJoinRequestService.CancelMyRequest(id);
+            return Ok();
+        }
+
+        [HttpGet("{id}/join-requests")]
+        public async Task<IEnumerable<UserHubRequestDto>> GetJoinRequests(Guid id)
+        {
+            return await hubJoinRequestService.GetPendingRequests(id);
+        }
+
+        [HttpPost("join-request/{requestId}/approve")]
+        public async Task<IActionResult> ApproveJoinRequest(Guid requestId)
+        {
+            await hubJoinRequestService.ApproveRequest(requestId);
+            return Ok();
+        }
+
+        [HttpPost("join-request/{requestId}/reject")]
+        public async Task<IActionResult> RejectJoinRequest(Guid requestId)
+        {
+            await hubJoinRequestService.RejectRequest(requestId);
+            return Ok();
+        }
+
+        [HttpPost("{id}/verification-request")]
+        public async Task<HubVerificationRequestDto> RequestVerification(Guid id, [FromBody] RequestHubVerificationRequest request)
+        {
+            return await hubVerificationService.RequestVerification(id, request.Reason);
+        }
+
+        [HttpGet("{id}/verification-request")]
+        public async Task<HubVerificationRequestDto?> GetVerificationRequest(Guid id)
+        {
+            return await hubVerificationService.GetCurrentForHub(id);
+        }
+
+        [AllowAnonymous]
+        [HttpPost("{id}/verification-response")]
+        public async Task<HubVerificationRequestDto> RespondVerification(Guid id, [FromBody] RespondHubVerificationRequest request)
+        {
+            return await hubVerificationService.RespondVerification(id, request.Approved);
         }
     }
 }

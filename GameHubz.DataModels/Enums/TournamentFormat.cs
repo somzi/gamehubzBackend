@@ -7,6 +7,7 @@
         GroupsThenDoubleElimination,
         SingleElimination,
         DoubleElimination,
-        GroupStageWithKnockout
+        GroupStageWithKnockout,
+        Swiss
     }
 }

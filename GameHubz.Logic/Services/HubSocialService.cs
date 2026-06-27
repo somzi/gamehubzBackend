@@ -5,6 +5,7 @@ namespace GameHubz.Logic.Services
     public class HubSocialService : AppBaseServiceGeneric<HubSocialEntity, HubSocialDto, HubSocialPost, HubSocialEdit>
     {
         private readonly ICacheService cacheService;
+        private readonly UserHubService userHubService;
 
         public HubSocialService(
             IUnitOfWorkFactory factory,
@@ -14,7 +15,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            UserHubService userHubService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -24,6 +26,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.cacheService = cacheService;
+            this.userHubService = userHubService;
         }
 
         protected override IRepository<HubSocialEntity> GetRepository()
@@ -31,6 +34,12 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeSave(HubSocialEntity entity, HubSocialPost inputDto, bool isNew)
         {
+            if (inputDto.HubId.HasValue)
+            {
+                var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                await this.userHubService.EnsureCallerCanManage(inputDto.HubId.Value, caller.UserId);
+            }
+
             await cacheService.RemoveAsync($"hub_overview:{inputDto.HubId}");
         }
 
@@ -42,6 +51,9 @@ namespace GameHubz.Logic.Services
             var social = await this.GetRepository().GetById(entityId);
             if (social?.HubId != null)
             {
+                var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                await this.userHubService.EnsureCallerCanManage(social.HubId.Value, caller.UserId);
+
                 await cacheService.RemoveAsync($"hub_overview:{social.HubId}");
             }
         }

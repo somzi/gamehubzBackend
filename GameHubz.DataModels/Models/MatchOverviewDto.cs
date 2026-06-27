@@ -23,5 +23,9 @@ namespace GameHubz.DataModels.Models
         public Guid? HomeParticipantId { get; set; }
         public Guid? AwayParticipantId { get; set; }
         public string? OpponentAvatarUrl { get; set; }
+
+        // Unread chat messages in this match for the requesting user (drives the
+        // per-match chat badge in "My Matches").
+        public int UnreadMessages { get; set; }
     }
 }

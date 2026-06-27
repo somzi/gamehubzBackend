@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.DataModels.Models
 {
     public class UserHubDto
@@ -9,5 +11,7 @@ namespace GameHubz.DataModels.Models
         public Guid? HubId { get; set; }
 
         public HubDto? Hub { get; set; }
+
+        public HubRole HubRole { get; set; }
     }
 }

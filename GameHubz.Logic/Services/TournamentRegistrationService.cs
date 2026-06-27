@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly TournamentParticipantService tournamentParticipantService;
         private readonly ICacheService cacheService;
+        private readonly BadgeService badgeService;
 
         public TournamentRegistrationService(
             IUnitOfWorkFactory factory,
@@ -18,7 +19,8 @@ namespace GameHubz.Logic.Services
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
             TournamentParticipantService tournamentParticipantService,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            BadgeService badgeService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -29,6 +31,24 @@ namespace GameHubz.Logic.Services
         {
             this.tournamentParticipantService = tournamentParticipantService;
             this.cacheService = cacheService;
+            this.badgeService = badgeService;
+        }
+
+        /// <summary>
+        /// Creates the registration through the generic pipeline, then bumps the hub managers'
+        /// "pending registrations" badge. Badge-only by design — no push. Both solo registration
+        /// (generic POST) and <see cref="RegisterTeam"/> funnel through here.
+        /// </summary>
+        public override async Task<TournamentRegistrationDto> SaveEntity(TournamentRegistrationPost inputDto, bool doSave = true)
+        {
+            var dto = await base.SaveEntity(inputDto, doSave);
+
+            // New rows are always Pending (set in BeforeDtoMapToEntity). Edits keep their status;
+            // bumping on a Pending row is the only case the managers' queue cares about.
+            if (doSave && inputDto.TournamentId.HasValue && inputDto.Status == TournamentRegistrationStatus.Pending)
+                await this.badgeService.PushToTournamentManagersAsync(inputDto.TournamentId.Value);
+
+            return dto;
         }
 
         protected override async Task BeforeDtoMapToEntity(TournamentRegistrationPost inputDto, bool isNew)
@@ -38,41 +58,190 @@ namespace GameHubz.Logic.Services
             await Task.CompletedTask;
         }
 
+        /// <summary>
+        /// Enforces region/country eligibility for solo registrations so the loophole of reaching a
+        /// tournament via the hub (which doesn't apply the feed's visibility filter) can't be used to
+        /// join a tournament the user isn't eligible for. Team registrations have no single country,
+        /// so the country gate is skipped for them.
+        /// </summary>
+        protected override async Task BeforeSave(TournamentRegistrationEntity entity, TournamentRegistrationPost inputDto, bool isNew)
+        {
+            if (isNew && entity.TournamentId.HasValue && (entity.UserId.HasValue || entity.TeamId.HasValue))
+            {
+                // Block duplicate sign-ups. An entrant that already has a non-rejected registration,
+                // or is already a confirmed participant, must not be able to create a second row.
+                // Repeated rows were the root cause of duplicate participants that later broke the
+                // players list and couldn't be cleanly removed.
+                bool alreadyRegistered = await this.AppUnitOfWork.TournamentRegistrationRepository
+                    .ExistsNonRejected(entity.TournamentId.Value, entity.UserId, entity.TeamId);
+
+                bool alreadyParticipant = entity.TeamId.HasValue
+                    ? await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForTeam(entity.TournamentId.Value, entity.TeamId.Value)
+                    : await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForUser(entity.TournamentId.Value, entity.UserId!.Value);
+
+                if (alreadyRegistered || alreadyParticipant)
+                {
+                    throw new BusinessRuleException("You're already registered for this tournament.");
+                }
+            }
+
+            if (isNew && entity.UserId.HasValue && entity.TournamentId.HasValue)
+            {
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
+                var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(entity.UserId.Value);
+
+                if (!IsEligibleToJoin(tournament, user))
+                {
+                    throw new Exception("You can't join this tournament — it's restricted to a different region or country.");
+                }
+
+                // Exclusive tournaments require an Exclusive-or-higher role in the owning hub.
+                if (tournament.IsExclusive && tournament.HubId.HasValue)
+                {
+                    var role = await this.AppUnitOfWork.UserHubRepository.GetRole(entity.UserId.Value, tournament.HubId.Value);
+                    bool hasExclusiveAccess = role == HubRole.HubOwner
+                        || role == HubRole.HubAdmin
+                        || role == HubRole.HubExclusive;
+
+                    if (!hasExclusiveAccess)
+                    {
+                        throw new Exception("You can't join this tournament — it's restricted to exclusive members of this hub.");
+                    }
+                }
+            }
+
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Mirrors the tournament-feed visibility rules: country-scoped tournaments require the user's
+        /// country to be in the list; region-scoped tournaments require the user's region (or GLOBAL).
+        /// </summary>
+        private static bool IsEligibleToJoin(TournamentEntity tournament, UserEntity user)
+        {
+            if (tournament.Countries != null && tournament.Countries.Count > 0)
+            {
+                return !string.IsNullOrEmpty(user.Country) && tournament.Countries.Contains(user.Country!);
+            }
+
+            return tournament.Region == RegionType.GLOBAL || tournament.Region == user.Region;
+        }
+
         public async Task ApproveRegistration(Guid registrationId)
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
 
-            if (IsAlreadyFullTournament(tournamentRegistration, 1))
+            // If this entrant is already a participant (e.g. a stale/duplicate registration row, or
+            // this row was approved before), only flip the status — creating a second participant is
+            // exactly the bug that produced duplicate players, and it shouldn't count against capacity.
+            bool isTeamRegistration = tournamentRegistration.TeamId.HasValue;
+            bool alreadyParticipant = tournamentRegistration.Tournament?.TournamentParticipants?.Any(p =>
+                isTeamRegistration
+                    ? p.TeamId == tournamentRegistration.TeamId
+                    : p.UserId == tournamentRegistration.UserId) ?? false;
+
+            if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
             {
                 throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
             }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
-            await CreateTournamentParticipant(tournamentRegistration);
+
+            if (!alreadyParticipant)
+            {
+                await CreateTournamentParticipant(tournamentRegistration);
+            }
 
             await this.SaveAsync();
 
             if (tournamentRegistration.UserId.HasValue)
             {
-                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:AvailableToJoin:p:0:s:10");
-                await cacheService.RemoveAsync($"user_feed:{tournamentRegistration.UserId}:st:Upcoming:p:0:s:10");
+                // Approving registration affects this user's feed across every status / page.
+                await cacheService.RemoveByPatternAsync($"user_feed:{tournamentRegistration.UserId}:*");
                 await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
                 await cacheService.RemoveAsync($"bracket:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.TournamentId}");
             }
+            // Post-commit invalidation of the participants list — BeforeSave in the participant
+            // service runs before the DB commit, so this catches the rare race where a concurrent
+            // read between BeforeSave and SaveAsync could re-cache the stale list.
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.TournamentId!.Value);
         }
 
         public async Task ApproveRegistrations(List<Guid> registrationId)
         {
             List<TournamentRegistrationEntity> tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetByIds(registrationId);
 
-            if (tournamentRegistration.Count > 0 && IsAlreadyFullTournament(tournamentRegistration.First(), tournamentRegistration.Count))
+            if (tournamentRegistration.Count == 0)
             {
-                throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
+                return;
+            }
+
+            var tournament = tournamentRegistration.First().Tournament;
+
+            // Teams / solo users that are already participants of this tournament. Re-approving a
+            // stale pending row for one of them must neither create a second participant nor count
+            // against the capacity check below.
+            var existingTeamIds = new HashSet<Guid>();
+            var existingUserIds = new HashSet<Guid>();
+            if (tournament?.TournamentParticipants != null)
+            {
+                foreach (var participant in tournament.TournamentParticipants)
+                {
+                    if (participant.TeamId.HasValue) existingTeamIds.Add(participant.TeamId.Value);
+                    else if (participant.UserId.HasValue) existingUserIds.Add(participant.UserId.Value);
+                }
+            }
+
+            // A team can have more than one pending registration row, and a row can belong to a
+            // team/user that is already in. We mark every selected row as approved, but materialize
+            // exactly one participant per genuinely-new team or solo user. This both avoids attaching
+            // the same TournamentTeamEntity twice to the shared DbContext (EF tracking conflict) and
+            // gives an accurate incoming-participant count for the capacity check, instead of the raw
+            // batch size which over-counts duplicate-team rows.
+            var newTeamIds = new HashSet<Guid>();
+            var newUserIds = new HashSet<Guid>();
+            var registrationsToMaterialize = new List<TournamentRegistrationEntity>();
+
+            foreach (var registration in tournamentRegistration)
+            {
+                if (registration.TeamId.HasValue)
+                {
+                    if (!existingTeamIds.Contains(registration.TeamId.Value) && newTeamIds.Add(registration.TeamId.Value))
+                    {
+                        registrationsToMaterialize.Add(registration);
+                    }
+                }
+                else if (registration.UserId.HasValue)
+                {
+                    if (!existingUserIds.Contains(registration.UserId.Value) && newUserIds.Add(registration.UserId.Value))
+                    {
+                        registrationsToMaterialize.Add(registration);
+                    }
+                }
+                else
+                {
+                    // A registration is normally either team- or user-bound; if somehow neither,
+                    // fall back to the original behavior and still create a participant for it.
+                    registrationsToMaterialize.Add(registration);
+                }
+            }
+
+            if (IsAlreadyFullTournament(tournamentRegistration.First(), registrationsToMaterialize.Count))
+            {
+                throw new BusinessRuleException("Cannot approve registration. Tournament has reached maximum number of players.");
             }
 
             foreach (var registration in tournamentRegistration)
             {
                 await SetRegistrationStatus(registration, TournamentRegistrationStatus.Approved);
+            }
+
+            foreach (var registration in registrationsToMaterialize)
+            {
                 await CreateTournamentParticipant(registration);
             }
 
@@ -83,11 +252,19 @@ namespace GameHubz.Logic.Services
                 if (registration.UserId.HasValue)
                 {
                     await cacheService.RemoveAsync($"player_stats:{registration.UserId}");
+                    // Approval changes which feeds this user sees the tournament under.
+                    await cacheService.RemoveByPatternAsync($"user_feed:{registration.UserId}:*");
                 }
             }
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.First().TournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
+            // Post-commit safety net — see ApproveRegistration above.
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.First().TournamentId!.Value);
         }
 
         public async Task RejectRegistration(Guid registrationId)
@@ -99,6 +276,9 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
+
+            // The pending-registrations queue shrank — refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentRegistration.TournamentId!.Value);
         }
 
         public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId(Guid tournamentId)
@@ -110,6 +290,19 @@ namespace GameHubz.Logic.Services
 
         public async Task RegisterTeam(Guid tournamentId, Guid teamId)
         {
+            // Idempotent: this is exposed as a GET, which HTTP clients (OkHttp, etc.) freely retry
+            // on a flaky connection. If the first call already created the registration but the
+            // response was lost, the retry would otherwise hit BeforeSave's duplicate guard and
+            // surface a confusing "already registered" error for something that actually succeeded.
+            // Treat an existing non-rejected registration / participant as success instead.
+            bool alreadyRegistered = await this.AppUnitOfWork.TournamentRegistrationRepository
+                .ExistsNonRejected(tournamentId, null, teamId);
+            bool alreadyParticipant = await this.AppUnitOfWork.TournamentParticipantRepository
+                .ExistsForTeam(tournamentId, teamId);
+
+            if (alreadyRegistered || alreadyParticipant)
+                return;
+
             var tournamentRegistrationPost = new TournamentRegistrationPost
             {
                 Status = TournamentRegistrationStatus.Pending,
@@ -123,34 +316,62 @@ namespace GameHubz.Logic.Services
 
         private async Task CreateTournamentParticipant(TournamentRegistrationEntity tournamentRegistration)
         {
-            if (tournamentRegistration.TeamId.HasValue)
+            try
             {
-                // Team tournament: create participant linked to team
-                var tournamentParticipants = new TournamentParticipantPost
+                if (tournamentRegistration.TeamId.HasValue)
                 {
-                    TournamentId = tournamentRegistration.TournamentId,
-                    UserId = tournamentRegistration.UserId,
-                    TeamId = tournamentRegistration.TeamId
-                };
+                    // Team tournament: create participant linked to team
+                    var tournamentParticipants = new TournamentParticipantPost
+                    {
+                        TournamentId = tournamentRegistration.TournamentId,
+                        UserId = tournamentRegistration.UserId,
+                        TeamId = tournamentRegistration.TeamId
+                    };
 
-                var dto = await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                    var dto = await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
 
-                // Link the team to the participant
-                var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(tournamentRegistration.TeamId.Value);
-                team.TournamentParticipantId = dto.Id;
-                await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+                    // Link the team to the participant
+                    var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(tournamentRegistration.TeamId.Value);
+                    team.TournamentParticipantId = dto.Id;
+                    await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
+                }
+                else
+                {
+                    // Solo tournament: existing behavior
+                    var tournamentParticipants = new TournamentParticipantPost
+                    {
+                        TournamentId = tournamentRegistration.TournamentId,
+                        UserId = tournamentRegistration.UserId
+                    };
+
+                    await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                }
             }
-            else
+            catch (Exception ex) when (IsDuplicateParticipantViolation(ex))
             {
-                // Solo tournament: existing behavior
-                var tournamentParticipants = new TournamentParticipantPost
-                {
-                    TournamentId = tournamentRegistration.TournamentId,
-                    UserId = tournamentRegistration.UserId
-                };
-
-                await this.tournamentParticipantService.SaveEntity(tournamentParticipants);
+                // The unique index on TournamentParticipant rejected this insert because a
+                // concurrent approval (e.g. two admins approving at the same moment) already
+                // created the participant. The entrant is in — the desired end state — so surface
+                // a clear message instead of a raw DB error. The in-memory "already a participant"
+                // guard can't catch this; only the DB sees the other transaction's pending row.
+                throw new BusinessRuleException("This registration has already been approved.");
             }
+        }
+
+        // Detects a Postgres unique-violation (SqlState 23505) anywhere in the exception chain
+        // without taking a compile-time dependency on Npgsql in this layer.
+        private static bool IsDuplicateParticipantViolation(Exception ex)
+        {
+            for (Exception? e = ex; e != null; e = e.InnerException)
+            {
+                if (e.GetType().Name == "PostgresException"
+                    && e.GetType().GetProperty("SqlState")?.GetValue(e) as string == "23505")
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private async Task SetRegistrationStatus(TournamentRegistrationEntity tournamentRegistration, TournamentRegistrationStatus status)

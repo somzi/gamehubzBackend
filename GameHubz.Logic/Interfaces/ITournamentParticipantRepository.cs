@@ -4,6 +4,10 @@ namespace GameHubz.Logic.Interfaces
     {
         Task<List<TournamentParticipantEntity>> GetByGroupId(Guid? id);
 
+        Task<List<TournamentParticipantEntity>> GetForLeagueResync(Guid tournamentId);
+
+        Task<List<TournamentParticipantEntity>> GetEntitiesByTournamentId(Guid tournamentId);
+
         Task<List<TournamentParticipantEntity>> GetByGroupIdWithNames(Guid? id);
 
         Task<List<TournamentParticipantEntity>> GetByGroupIdsWithNames(List<Guid> groupIds);
@@ -15,6 +19,12 @@ namespace GameHubz.Logic.Interfaces
         Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize);
 
         Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId);
+
+        Task<List<TournamentParticipantEntity>> GetAllByTournamentAndUser(Guid tournamentId, Guid userId);
+
+        Task<bool> ExistsForUser(Guid tournamentId, Guid userId);
+
+        Task<bool> ExistsForTeam(Guid tournamentId, Guid teamId);
 
         Task<TournamentParticipantEntity?> GetByTeamId(Guid teamId);
 

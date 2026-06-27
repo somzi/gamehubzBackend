@@ -66,7 +66,10 @@ namespace GameHubz.Logic.Services
                     activities = new List<DashboardActivityDto>();
                 }
 
-                await cacheService.SetAsync(cacheKey, activities, TimeSpan.FromMinutes(1));
+                // Short TTL because LogActivity (called from many write paths) doesn't and
+                // can't cheaply invalidate every hub-follower's dashboard cache — keep the
+                // staleness window small instead of paying a fan-out cost on every activity.
+                await cacheService.SetAsync(cacheKey, activities, TimeSpan.FromSeconds(30));
             }
 
             foreach (var activity in activities)

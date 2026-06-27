@@ -28,7 +28,10 @@ namespace GameHubz.Logic.Services
 
             Claim email = this.GetClaim(claimsPrincipal, ClaimTypes.Email);
 
-            UserEntity? user = await this.AppUnitOfWork.UserRepository.ShallowGetByEmail(email.Value);
+            // Canonicalize email so lookups and storage are case-consistent across the app.
+            var normalizedEmail = (email.Value ?? string.Empty).Trim().ToLowerInvariant();
+
+            UserEntity? user = await this.AppUnitOfWork.UserRepository.ShallowGetByEmail(normalizedEmail);
 
             if (user != null)
             {
@@ -43,7 +46,7 @@ namespace GameHubz.Logic.Services
             {
                 FirstName = firstName.Value,
                 LastName = lastname.Value,
-                Email = email.Value,
+                Email = normalizedEmail,
                 Password = "",
                 UserRoleId = UserRoles.BasicUser,
                 IsNativeAuthentication = false,

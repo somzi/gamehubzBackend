@@ -97,6 +97,8 @@ namespace GameHubz.Logic.Services
                 throw new EmptyEmailException(this.LocalizationService);
             }
 
+            forgotPasswordRequest.Email = forgotPasswordRequest.Email.Trim().ToLowerInvariant();
+
             UserEntity? user = await this.AppUnitOfWork.UserRepository.ShallowGetByEmail(forgotPasswordRequest.Email);
 
             if (user == null)
@@ -130,7 +132,8 @@ namespace GameHubz.Logic.Services
 
         public async Task<string> SendEmailWithForgotPasswordToken(string email)
         {
-            var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new Exception("This email does not exists.");
+            email = (email ?? string.Empty).Trim().ToLowerInvariant();
+            var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new BusinessRuleException("This email does not exists.");
 
             int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);
             string otpCode = otpNumber.ToString("000 000");
@@ -143,6 +146,32 @@ namespace GameHubz.Logic.Services
             await SendMailForResetPassword(otpCode, email);
 
             return otpForDatabase;
+        }
+
+        /// <summary>
+        /// Secure forgot-password entry point (v2). Unlike the legacy overload above it:
+        /// (1) never returns the OTP in the response — the code is delivered only by email, and
+        /// (2) does not reveal whether an account exists for the address, so the endpoint can't be
+        /// used to enumerate registered emails. A missing user is a silent no-op.
+        /// </summary>
+        public async Task SendForgotPasswordOtp(string email)
+        {
+            email = (email ?? string.Empty).Trim().ToLowerInvariant();
+
+            var user = await AppUnitOfWork.UserRepository.GetByEmail(email);
+            if (user == null)
+            {
+                return;
+            }
+
+            int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);
+            string otpCode = otpNumber.ToString("000 000");
+
+            user.ForgotPasswordOtp = otpNumber.ToString();
+            user.ForgotPasswordTokenExpires = DateTime.UtcNow.AddMinutes(30);
+            await this.userService.AddUpdateUserAnonymously(user);
+
+            await SendMailForResetPassword(otpCode, email);
         }
 
         private async Task SendMailForResetPassword(string otpCode, string email)

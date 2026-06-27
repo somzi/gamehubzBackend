@@ -54,10 +54,124 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // All matches in a tournament (BaseDbSet is no-tracking). The settle pass reloads this between
+        // saves to read committed state; it crosses stages (DE WB ↔ LB feeders).
+        public Task<List<MatchEntity>> GetAllByTournamentId(Guid tournamentId)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentId == tournamentId)
+                .ToListAsync();
+        }
+
+        public void DetachAll() => this.ContextBase.ChangeTracker.Clear();
+
+        public Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId)
+        {
+            return this.BaseDbSet()
+                .AsNoTracking()
+                .Where(m =>
+                    m.TournamentStageId == stageId &&
+                    m.TournamentGroupId == groupId &&
+                    m.TeamMatchId == null &&
+                    m.Status == MatchStatus.Completed &&
+                    // Away may be null only for Swiss byes (home gets the free win);
+                    // league/group matches always carry both participants.
+                    m.HomeParticipantId.HasValue &&
+                    (excludeMatchId == null || m.Id != excludeMatchId))
+                .Select(m => new GroupMatchStatsRow
+                {
+                    HomeParticipantId = m.HomeParticipantId!.Value,
+                    AwayParticipantId = m.AwayParticipantId,
+                    HomeScore = m.HomeUserScore ?? 0,
+                    AwayScore = m.AwayUserScore ?? 0,
+                    WinnerParticipantId = m.WinnerParticipantId
+                })
+                .ToListAsync();
+        }
+
         public Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber)
         {
             return this.BaseDbSet()
                 .Where(m => m.TournamentId == tournamentId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
+        // Round scoped to a single stage. Used by the round-schedule editor so a deadline set on,
+        // say, Losers-Bracket round 2 doesn't also hit Winners-Bracket round 2 (separate stages,
+        // shared RoundNumber). Team sub-matches inherit their parent's TournamentStageId, so this
+        // works for team tournaments too where IsUpperBracket/Stage on the sub-match aren't set.
+        public Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentStageId == stageId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
+        // The set of "active" matches for a user — in-progress tournament, not yet finished,
+        // round open, and the user is one of the two sides (solo participant or team sub-match
+        // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
+        private static System.Linq.Expressions.Expression<Func<MatchEntity, bool>> ActiveForUserPredicate(Guid userId, DateTime now)
+            => x =>
+                x.Tournament!.Status == TournamentStatus.InProgress &&
+                (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
+                // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
+                (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
+                (
+                    // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
+                    (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
+                        (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
+                    ||
+                    // TEAM sub-matches: use the explicit user columns
+                    (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
+                );
+
+        public async Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId)
+        {
+            var now = DateTime.UtcNow;
+
+            return await this.BaseDbSet()
+                .AsNoTracking()
+                .Where(ActiveForUserPredicate(userId, now))
+                .Select(x => new MatchBadgeRow
+                {
+                    Id = x.Id!.Value,
+                    Status = x.Status,
+                    ProposedByUserId = x.ProposedByUserId,
+                })
+                .ToListAsync();
+        }
+
+        // Open "admin help" requests across every tournament owned by the given hubs.
+        // Drives the organizer AdminHelpRequests badge. Indexed on AdminHelpRequested.
+        public async Task<int> CountAdminHelpForHubs(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress);
+        }
+
+        // Per-tournament open admin-help counts across the given hubs — feeds the cascade badge.
+        public async Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<TournamentCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(m => m.AdminHelpRequested
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress)
+                .GroupBy(m => new { m.TournamentId, HubId = m.Tournament!.HubId!.Value, Status = (int)m.Tournament!.Status })
+                .Select(g => new TournamentCountRow
+                {
+                    TournamentId = g.Key.TournamentId,
+                    HubId = g.Key.HubId,
+                    Status = g.Key.Status,
+                    Count = g.Count()
+                })
                 .ToListAsync();
         }
 
@@ -67,20 +181,7 @@ namespace GameHubz.Data.Repository
 
             var matches = await this.BaseDbSet()
                 .AsNoTracking()
-                .Where(x =>
-                    x.Tournament!.Status == TournamentStatus.InProgress &&
-                    (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
-                    // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
-                    (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
-                    (
-                        // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
-                        (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
-                            (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
-                        ||
-                        // TEAM sub-matches: use the explicit user columns
-                        (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
-                    )
-                )
+                .Where(ActiveForUserPredicate(userId, now))
                 .Include(x => x.Tournament).ThenInclude(t => t!.Hub)
                 .Include(x => x.HomeParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.AwayParticipant).ThenInclude(p => p!.User)
@@ -211,12 +312,14 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId)
         {
-            return await this.BaseDbSet()
+            // Take the 10 most recent in SQL, then reverse in memory so the caller gets
+            // oldest → latest — the order the UI labels expect.
+            var recent = await this.BaseDbSet()
                 .Where(m =>
                     ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
                     || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
                     && m.Status == MatchStatus.Completed)
-                .OrderByDescending(m => m.ModifiedOn)
+                .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
                 .Take(10)
                 .Select(m => new PerformanceV2Dto
                 {
@@ -229,6 +332,8 @@ namespace GameHubz.Data.Repository
                             : "L",
                 })
                 .ToListAsync();
+
+            return recent;
         }
 
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
@@ -272,8 +377,88 @@ namespace GameHubz.Data.Repository
                     ScheduledTime = x.ScheduledStartTime,
                     HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
                     AwayUserAvatarUrl = x.AwayParticipant.User.AvatarUrl,
+                    RequireResultApproval = x.Tournament!.RequireResultApproval,
+                    ProposedHomeScore = x.ProposedHomeScore,
+                    ProposedAwayScore = x.ProposedAwayScore,
+                    ProposedByUserId = x.ProposedByUserId,
+                    HubOwnerUserId = x.Tournament!.Hub!.UserId,
+                    AdminHelpRequested = x.AdminHelpRequested,
+                    AdminHelpRequestedByUserId = x.AdminHelpRequestedByUserId,
                 })
                 .FirstAsync();
+        }
+
+        public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
+        {
+            // Direct HomeUserId/AwayUserId cover team sub-matches; solo matches resolve through participants.
+            return await this.BaseDbSet()
+                .Where(x => x.TournamentId == tournamentId && x.AdminHelpRequested)
+                .OrderBy(x => x.AdminHelpRequestedOn)
+                .Select(x => new MatchAdminHelpItemDto
+                {
+                    MatchId = x.Id!.Value,
+                    RoundNumber = x.RoundNumber,
+                    Status = x.Status,
+                    ScheduledStartTime = x.ScheduledStartTime,
+                    RequestedByUserId = x.AdminHelpRequestedByUserId,
+                    RequestedOn = x.AdminHelpRequestedOn,
+                    RequestedByUsername =
+                        x.AdminHelpRequestedByUserId == null ? null
+                        : x.HomeUser != null && x.HomeUserId == x.AdminHelpRequestedByUserId ? x.HomeUser.Username
+                        : x.AwayUser != null && x.AwayUserId == x.AdminHelpRequestedByUserId ? x.AwayUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.UserId == x.AdminHelpRequestedByUserId ? x.HomeParticipant.User!.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.UserId == x.AdminHelpRequestedByUserId ? x.AwayParticipant.User!.Username
+                        : null,
+                    HomeUserId = x.HomeUserId ?? (x.HomeParticipant != null ? x.HomeParticipant.UserId : null),
+                    HomeUsername = x.HomeUser != null ? x.HomeUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.Username : null,
+                    HomeAvatarUrl = x.HomeUser != null ? x.HomeUser.AvatarUrl
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.AvatarUrl : null,
+                    AwayUserId = x.AwayUserId ?? (x.AwayParticipant != null ? x.AwayParticipant.UserId : null),
+                    AwayUsername = x.AwayUser != null ? x.AwayUser.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.Username : null,
+                    AwayAvatarUrl = x.AwayUser != null ? x.AwayUser.AvatarUrl
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.AvatarUrl : null,
+                })
+                .ToListAsync();
+        }
+
+        public async Task<List<MatchPendingApprovalItemDto>> GetPendingApprovalMatches(Guid tournamentId)
+        {
+            // A match awaits approval when a result has been proposed but not yet applied
+            // (ProposedByUserId is cleared on approve/reject). Direct HomeUserId/AwayUserId
+            // cover team sub-matches; solo matches resolve through participants.
+            return await this.BaseDbSet()
+                .Where(x => x.TournamentId == tournamentId && x.ProposedByUserId != null)
+                .OrderBy(x => x.RoundNumber)
+                .Select(x => new MatchPendingApprovalItemDto
+                {
+                    MatchId = x.Id!.Value,
+                    RoundNumber = x.RoundNumber,
+                    Status = x.Status,
+                    ScheduledStartTime = x.ScheduledStartTime,
+                    ProposedHomeScore = x.ProposedHomeScore,
+                    ProposedAwayScore = x.ProposedAwayScore,
+                    ProposedByUserId = x.ProposedByUserId,
+                    ProposedByUsername =
+                        x.ProposedByUserId == null ? null
+                        : x.HomeUser != null && x.HomeUserId == x.ProposedByUserId ? x.HomeUser.Username
+                        : x.AwayUser != null && x.AwayUserId == x.ProposedByUserId ? x.AwayUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.UserId == x.ProposedByUserId ? x.HomeParticipant.User!.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.UserId == x.ProposedByUserId ? x.AwayParticipant.User!.Username
+                        : null,
+                    HomeUserId = x.HomeUserId ?? (x.HomeParticipant != null ? x.HomeParticipant.UserId : null),
+                    HomeUsername = x.HomeUser != null ? x.HomeUser.Username
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.Username : null,
+                    HomeAvatarUrl = x.HomeUser != null ? x.HomeUser.AvatarUrl
+                        : x.HomeParticipant != null && x.HomeParticipant.User != null ? x.HomeParticipant.User.AvatarUrl : null,
+                    AwayUserId = x.AwayUserId ?? (x.AwayParticipant != null ? x.AwayParticipant.UserId : null),
+                    AwayUsername = x.AwayUser != null ? x.AwayUser.Username
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.Username : null,
+                    AwayAvatarUrl = x.AwayUser != null ? x.AwayUser.AvatarUrl
+                        : x.AwayParticipant != null && x.AwayParticipant.User != null ? x.AwayParticipant.User.AvatarUrl : null,
+                })
+                .ToListAsync();
         }
 
         public async Task<MatchEntity?> GetWithParticipants(Guid matchId)

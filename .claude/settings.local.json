@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dotnet build *)"
+      "Bash(dotnet *)",
+      "Bash(git *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(ls *)",
+      "Bash(dir *)",
+      "PowerShell(*)",
+      "WebFetch(domain:docs.kick.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.nuget.org)"
     ]
   }
 }

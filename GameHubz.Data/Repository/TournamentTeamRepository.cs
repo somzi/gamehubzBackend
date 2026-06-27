@@ -55,8 +55,9 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<TeamDto>> GetTeamsDtoByTournamentId(Guid tournamentId, Guid userId)
         {
-            return await this.BaseDbSet()
-                .Where(t => t.TournamentId == tournamentId)
+            // Exclude teams that are already confirmed participants (they live in the "Confirmed" tab).
+            var teams = await this.BaseDbSet()
+                .Where(t => t.TournamentId == tournamentId && t.TournamentParticipantId == null)
                 .Select(t => new TeamDto
                 {
                     TeamId = t.Id!.Value,
@@ -78,6 +79,12 @@ namespace GameHubz.Data.Repository
                         .FirstOrDefault()
                 })
                 .ToListAsync();
+
+            // Teams that still need players come first so they're easy to find and fill.
+            return teams
+                .OrderBy(t => t.TeamSize.HasValue && t.MemberCount >= t.TeamSize.Value ? 1 : 0)
+                .ThenBy(t => t.TeamName)
+                .ToList();
         }
 
         public async Task<List<TournamentTeamEntity>> GetFinalByTournamentId(Guid tournamentId)
@@ -141,30 +148,31 @@ namespace GameHubz.Data.Repository
                 })
                 .FirstAsync();
         }
-            public async Task<TeamJoinData?> GetTeamForJoin(Guid teamId, Guid userId)
-            {
-                var membersQuery = this.ContextBase.Set<TournamentTeamMemberEntity>();
 
-                return await this.BaseDbSet()
-                    .Where(t => t.Id == teamId)
-                    .Select(t => new TeamJoinData
+        public async Task<TeamJoinData?> GetTeamForJoin(Guid teamId, Guid userId)
+        {
+            var membersQuery = this.ContextBase.Set<TournamentTeamMemberEntity>();
+
+            return await this.BaseDbSet()
+                .Where(t => t.Id == teamId)
+                .Select(t => new TeamJoinData
+                {
+                    TeamId = t.Id!.Value,
+                    TournamentId = t.TournamentId!.Value,
+                    CaptainUserId = t.CaptainUserId!.Value,
+                    TeamName = t.TeamName,
+                    TeamSize = t.Tournament!.TeamSize,
+                    CurrentMemberCount = t.Members.Count,
+                    RequiresApproval = t.RequiresApproval,
+                    Members = t.Members.Select(m => new TeamMemberDto
                     {
-                        TeamId = t.Id!.Value,
-                        TournamentId = t.TournamentId!.Value,
-                        CaptainUserId = t.CaptainUserId!.Value,
-                        TeamName = t.TeamName,
-                        TeamSize = t.Tournament!.TeamSize,
-                        CurrentMemberCount = t.Members.Count,
-                        RequiresApproval = t.RequiresApproval,
-                        Members = t.Members.Select(m => new TeamMemberDto
-                        {
-                            UserId = m.UserId!.Value,
-                            Username = m.User!.Username,
-                            AvatarUrl = m.User.AvatarUrl
-                        }).ToList(),
-                        UserAlreadyInTournament = membersQuery.Any(m => m.UserId == userId && m.Team!.TournamentId == t.TournamentId)
-                    })
-                    .FirstOrDefaultAsync();
-            }
+                        UserId = m.UserId!.Value,
+                        Username = m.User!.Username,
+                        AvatarUrl = m.User.AvatarUrl
+                    }).ToList(),
+                    UserAlreadyInTournament = membersQuery.Any(m => m.UserId == userId && m.Team!.TournamentId == t.TournamentId)
+                })
+                .FirstOrDefaultAsync();
         }
     }
+}

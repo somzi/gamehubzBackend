@@ -14,5 +14,9 @@
         public int GoalsFor { get; set; }
         public int GoalsAgainst { get; set; }
         public int GoalDifference { get; set; }
+
+        // Swiss only: sum of points scored by every opponent this participant has faced.
+        // Standard Swiss tiebreaker (Buchholz) — null on non-Swiss stages.
+        public int? OpponentPointsSum { get; set; }
     }
 }

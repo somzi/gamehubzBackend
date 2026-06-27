@@ -7,6 +7,7 @@ namespace GameHubz.DataModels.Models
         public string HubName { get; set; } = string.Empty;
         public string? HubAvatarUrl { get; set; }
         public string Message { get; set; } = string.Empty;
+        public Guid? TournamentId { get; set; }
         public string TournamentName { get; set; } = string.Empty;
         public string TimeAgo { get; set; } = string.Empty;
         public DateTime CreatedOn { get; set; }

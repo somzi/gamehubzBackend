@@ -8,6 +8,8 @@ namespace GameHubz.Logic.Services
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
+        private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly BadgeService badgeService;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -15,12 +17,16 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            TournamentAuthorizationService tournamentAuth,
+            BadgeService badgeService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
             this.notificationService = notificationService;
+            this.tournamentAuth = tournamentAuth;
+            this.badgeService = badgeService;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -49,6 +55,55 @@ namespace GameHubz.Logic.Services
                 return cachedBracket;
             }
 
+            var response = await BuildStructureResponse(tournament!, currentUserId, isPrivileged, cacheKey);
+
+            // Patch CanRevert after caching so the cached copy stays user-agnostic
+            PatchCanRevert(response, currentUserId, isPrivileged);
+
+            return response;
+        }
+
+        /// <summary>
+        /// v2 of the structure endpoint. Identical payload to v1 plus <see cref="TournamentStructureDto.CanManage"/>,
+        /// and it recognises hub admins (not just the owner / platform admin) as privileged so they receive the
+        /// same CanRevert flags. v1 is left untouched so the legacy client in review keeps its exact behaviour.
+        /// </summary>
+        public async Task<TournamentStructureDto> GetTournamentStructureV2(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
+            Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
+
+            string cacheKey = $"bracket:{tournamentId}";
+            var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
+
+            var tournament = cachedBracket == null
+                            ? await this.AppUnitOfWork.TournamentRepository.GetWithFullDetails(tournamentId)
+                            : null;
+
+            if (cachedBracket == null && tournament == null)
+                throw new Exception("Tournament not found");
+
+            bool canManage = currentUser != null
+                && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
+
+            if (cachedBracket != null)
+            {
+                PatchCanRevert(cachedBracket, currentUserId, canManage);
+                cachedBracket.CanManage = canManage;
+                return cachedBracket;
+            }
+
+            var response = await BuildStructureResponse(tournament!, currentUserId, canManage, cacheKey);
+
+            PatchCanRevert(response, currentUserId, canManage);
+            response.CanManage = canManage;
+
+            return response;
+        }
+
+        private async Task<TournamentStructureDto> BuildStructureResponse(
+            TournamentEntity tournament, Guid currentUserId, bool isPrivileged, string cacheKey)
+        {
             var response = new TournamentStructureDto
             {
                 TournamentId = tournament!.Id!.Value,
@@ -58,7 +113,8 @@ namespace GameHubz.Logic.Services
                 IsTeamTournament = tournament.IsTeamTournament,
                 Stages = new List<TournamentStageStructureDto>(),
                 HubOwnerId = tournament.Hub!.UserId,
-                QualifiersPerGroup = tournament.QualifiersPerGroup
+                QualifiersPerGroup = tournament.QualifiersPerGroup,
+                RequireResultApproval = tournament.RequireResultApproval
             };
 
             foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
@@ -71,14 +127,23 @@ namespace GameHubz.Logic.Services
                     Name = stageEntity.Name ?? stageEntity.Type.ToString()
                 };
 
-                if (stageEntity.Type == StageType.SingleEliminationBracket)
+                if (stageEntity.Type == StageType.SingleEliminationBracket
+                    || stageEntity.Type == StageType.DoubleEliminationWinnersBracket
+                    || stageEntity.Type == StageType.DoubleEliminationLosersBracket
+                    || stageEntity.Type == StageType.PlayIn)
                 {
+                    // LB matches that the DE generator collapsed (no participants, no winner —
+                    // both upstream feeders were byes) get filtered out of the structure so the
+                    // UI doesn't render empty "TBD vs TBD" placeholders for bypassed rounds.
+                    bool dropCollapsedByes = stageEntity.Type == StageType.DoubleEliminationLosersBracket;
                     stageDto.Rounds = tournament.IsTeamTournament
-                        ? MapTeamBracketRounds(stageEntity.TeamMatches)
-                        : MapBracketRounds(stageEntity.Matches, currentUserId, isPrivileged);
+                        ? MapTeamBracketRounds(stageEntity.TeamMatches, dropCollapsedByes)
+                        : MapBracketRounds(stageEntity.Matches, currentUserId, isPrivileged, dropCollapsedByes);
                 }
-                else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League)
+                else if (stageEntity.Type == StageType.GroupStage || stageEntity.Type == StageType.League
+                    || stageEntity.Type == StageType.Swiss)
                 {
+                    // Swiss renders like a league: one group with standings + matches grouped by round.
                     stageDto.Groups = await MapGroups(stageEntity, currentUserId, isPrivileged);
                 }
 
@@ -86,9 +151,6 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
-
-            // Patch CanRevert after caching so the cached copy stays user-agnostic
-            PatchCanRevert(response, currentUserId, isPrivileged);
 
             return response;
         }
@@ -129,6 +191,39 @@ namespace GameHubz.Logic.Services
                 ? TimeSpan.FromMinutes(tournament.RoundDurationMinutes.Value)
                 : null;
 
+            // Atomic claim (CAS on Status): exactly one request may generate the bracket.
+            // Without this, a double-tap or client retry produced two complete brackets —
+            // the InProgress flip used to happen only at the end of generation. Generators
+            // no longer touch Status themselves.
+            var previousStatus = tournament.Status;
+            bool claimed = await this.AppUnitOfWork.TournamentRepository.TryClaimBracketGeneration(tournamentId);
+            if (!claimed)
+                throw new Exception("Tournament already started.");
+
+            try
+            {
+                await GenerateBracketForFormat(tournament, tournamentId, roundDuration);
+            }
+            catch
+            {
+                // Hand the claim back so a failed generation (e.g. invalid Swiss/group config
+                // detected inside a generator) can be corrected and retried.
+                await this.AppUnitOfWork.TournamentRepository.RestoreBracketGenerationClaim(tournamentId, previousStatus);
+                throw;
+            }
+
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
+
+            // Notify all participants that the tournament is now live
+            SendNotification(tournament, tournamentId);
+        }
+
+        private async Task GenerateBracketForFormat(TournamentEntity tournament, Guid tournamentId, TimeSpan? roundDuration)
+        {
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
@@ -140,35 +235,38 @@ namespace GameHubz.Logic.Services
 
                 case TournamentFormat.League:
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamLeagueTournament(tournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
+                        await GenerateTeamLeagueTournament(tournamentId, doubleRoundRobin: tournament.DoubleRoundRobin, roundDuration: roundDuration);
                     else
-                        await GenerateLeagueTournament(tournamentId, doubleRoundRobin: false, roundDuration: roundDuration);
+                        await GenerateLeagueTournament(tournamentId, doubleRoundRobin: tournament.DoubleRoundRobin, roundDuration: roundDuration);
                     break;
 
                 case TournamentFormat.DoubleElimination:
-                    await GenerateDoubleEliminationBracket(tournamentId);
+                    if (tournament.IsTeamTournament)
+                        await GenerateTeamDoubleEliminationBracket(tournamentId);
+                    else
+                        await GenerateDoubleEliminationBracket(tournamentId);
                     break;
 
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new Exception("Group count and qualifiers count are required for this format.");
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
+                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
                     else
-                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration);
+                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
+                    break;
+
+                case TournamentFormat.Swiss:
+                    // Team Swiss is not wired up — round-by-round pairing would need TeamMatchEntity
+                    // generation on every advance plus the team result pipeline. Solo only for now.
+                    if (tournament.IsTeamTournament)
+                        throw new Exception("Team Swiss tournaments are not supported yet.");
+                    await GenerateSwissTournament(tournamentId, roundDuration);
                     break;
 
                 default:
                     throw new Exception($"Tournament format {tournament.Format} not supported");
             }
-
-            await cacheService.RemoveAsync($"tournament:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
-            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
-
-            // Notify all participants that the tournament is now live
-            SendNotification(tournament, tournamentId);
         }
 
         #endregion 1. Tournament Generation Entry Points
@@ -211,15 +309,13 @@ namespace GameHubz.Logic.Services
             };
             await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
 
-            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, bracketSlots);
+            var allMatches = GenerateEliminationMatches(tournamentId, stage.Id.Value, bracketSlots, tournament.HasThirdPlaceMatch);
 
             foreach (var match in allMatches)
             {
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
@@ -252,6 +348,7 @@ namespace GameHubz.Logic.Services
             foreach (var p in participants!)
             {
                 p.TournamentGroupId = group.Id;
+                p.Points = 0; p.Wins = 0; p.Draws = 0; p.Losses = 0; p.GoalsFor = 0; p.GoalsAgainst = 0;
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
             }
 
@@ -265,12 +362,10 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
-        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null)
+        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -342,7 +437,7 @@ namespace GameHubz.Logic.Services
                     tournamentId,
                     groupStage.Id.Value,
                     participantsInGroup,
-                    false
+                    doubleRoundRobin
                 );
 
                 foreach (var m in groupMatches)
@@ -360,19 +455,12 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
             }
 
-            var knockoutStage = new TournamentStageEntity
-            {
-                Id = Guid.NewGuid(),
-                TournamentId = tournamentId,
-                Type = StageType.SingleEliminationBracket,
-                Order = 2,
-                Name = "Knockout Stage",
-                QualifiedPlayersCount = totalQualifiers
-            };
-            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(knockoutStage, this.UserContextReader);
+            // Knockout phase: single-elim by default, or Winners+Losers bracket stages when the
+            // organizer chose double-elimination (solo only, and only when there are enough
+            // qualifiers for a real losers bracket). Matches are filled in when the groups finish.
+            bool useDoubleKnockout = UseDoubleEliminationKnockout(tournament) && totalQualifiers >= 4;
+            await AddKnockoutStages(tournamentId, useDoubleKnockout, firstOrder: 2, qualifiedPlayersCount: totalQualifiers);
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
@@ -437,12 +525,10 @@ namespace GameHubz.Logic.Services
             foreach (var sm in allSubMatches)
                 await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
-        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null)
+        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
@@ -518,7 +604,7 @@ namespace GameHubz.Logic.Services
                 var ps = groupParticipants[g.Id!.Value];
                 if (ps.Count < 2) continue;
 
-                var tms = GenerateRoundRobinTeamMatches(tournamentId, groupStage.Id.Value, ps, false);
+                var tms = GenerateRoundRobinTeamMatches(tournamentId, groupStage.Id.Value, ps, doubleRoundRobin);
                 allTeamMatches.AddRange(tms);
 
                 foreach (var tm in tms)
@@ -536,25 +622,891 @@ namespace GameHubz.Logic.Services
             foreach (var sm in allSubMatches)
                 await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
 
-            var knockoutStage = new TournamentStageEntity
-            {
-                Id = Guid.NewGuid(),
-                TournamentId = tournamentId,
-                Type = StageType.SingleEliminationBracket,
-                Order = 2,
-                Name = "Knockout Stage",
-                QualifiedPlayersCount = totalQualifiers
-            };
-            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(knockoutStage, this.UserContextReader);
+            // Knockout phase: single-elim by default, or Winners+Losers bracket stages when the
+            // organizer chose double-elimination and there are enough qualifiers for a real LB.
+            // Matches are filled in by CheckAndAdvanceGroupStage once the groups finish.
+            bool useDoubleKnockout = UseDoubleEliminationKnockout(tournament) && totalQualifiers >= 4;
+            await AddKnockoutStages(tournamentId, useDoubleKnockout, firstOrder: 2, qualifiedPlayersCount: totalQualifiers);
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
         public async Task GenerateDoubleEliminationBracket(Guid tournamentId)
         {
-            throw new NotImplementedException("Double Elimination logic is coming soon!");
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+            var participants = tournament!.TournamentParticipants?.ToList();
+
+            if (participants == null || participants.Count < 4)
+                throw new Exception("Double elimination requires at least 4 participants.");
+
+            // Solo-only generator. Team double-elimination has its own generator
+            // (GenerateTeamDoubleEliminationBracket); GenerateBracketForFormat routes teams there.
+            if (tournament.IsTeamTournament)
+                throw new Exception("Use GenerateTeamDoubleEliminationBracket for team tournaments.");
+
+            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                shuffled[i].Seed = i + 1;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
+            }
+
+            // Non-power-of-two counts are padded up to the next power of two — the standard
+            // bracket-seeding spread leaves the bye slots on the top-seed side so the byes
+            // get auto-advanced in WB R1 and the LB cascade below collapses any LB match
+            // that would otherwise have nothing to play.
+            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+            var participantsBySeed = shuffled
+                .Where(p => p.Seed.HasValue)
+                .ToDictionary(p => p.Seed!.Value, p => p);
+            var bracketSlots = seedOrder
+                .Select(s => participantsBySeed.TryGetValue(s, out var p) ? p : null)
+                .ToList();
+
+            // Two stages: Winners + Losers. The Grand Final lives in the Winners Bracket stage
+            // as a separate match flagged with MatchStage.GrandFinal so the structure endpoint
+            // can return both rounds cleanly without a dedicated "GF stage".
+            var wbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationWinnersBracket,
+                Order = 1,
+                Name = "Winners Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(wbStage, this.UserContextReader);
+
+            var lbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationLosersBracket,
+                Order = 2,
+                Name = "Losers Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(lbStage, this.UserContextReader);
+
+            var allMatches = GenerateDoubleEliminationMatches(
+                tournamentId, wbStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+
+            foreach (var match in allMatches)
+                await this.AppUnitOfWork.MatchRepository.AddEntity(match, this.UserContextReader);
+
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// Team variant of <see cref="GenerateDoubleEliminationBracket"/>: same Winners/Losers
+        /// bracket shape and Grand Final, but built on <see cref="TeamMatchEntity"/> with per-roster
+        /// sub-matches created for every fixture that already has both teams.
+        /// </summary>
+        public async Task GenerateTeamDoubleEliminationBracket(Guid tournamentId)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+            var participants = tournament!.TournamentParticipants?.ToList();
+
+            if (participants == null || participants.Count < 4)
+                throw new Exception("Double elimination requires at least 4 participants.");
+
+            if (!tournament.TeamSize.HasValue)
+                throw new Exception("TeamSize is required for team tournaments.");
+
+            int teamSize = tournament.TeamSize.Value;
+
+            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                shuffled[i].Seed = i + 1;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
+            }
+
+            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+            var participantsBySeed = shuffled
+                .Where(p => p.Seed.HasValue)
+                .ToDictionary(p => p.Seed!.Value, p => p);
+            var bracketSlots = seedOrder
+                .Select(s => participantsBySeed.TryGetValue(s, out var p) ? p : null)
+                .ToList();
+
+            // Two stages mirror the solo layout: Winners + Losers. The Grand Final lives in the
+            // Winners stage flagged IsGrandFinal so the structure endpoint can pull it out cleanly.
+            var wbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationWinnersBracket,
+                Order = 1,
+                Name = "Winners Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(wbStage, this.UserContextReader);
+
+            var lbStage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.DoubleEliminationLosersBracket,
+                Order = 2,
+                Name = "Losers Bracket"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(lbStage, this.UserContextReader);
+
+            var allTeamMatches = GenerateTeamDoubleEliminationMatches(
+                tournamentId, wbStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+
+            foreach (var tm in allTeamMatches)
+                await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
+
+            // Sub-matches for every fixture that already has both teams (single batched member
+            // lookup avoids per-match N+1) — same pattern as GenerateTeamSingleEliminationBracket.
+            var membersByParticipant = await BuildMembersByParticipantMap(shuffled);
+            var rand = new Random();
+
+            foreach (var tm in allTeamMatches)
+            {
+                if (!tm.HomeTeamParticipantId.HasValue || !tm.AwayTeamParticipantId.HasValue)
+                    continue;
+                if (tm.Status == TeamMatchStatus.Completed)
+                    continue;
+
+                var subs = BuildSubMatchesForTeamMatch(tm, teamSize, null, membersByParticipant, rand);
+                foreach (var sm in subs)
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
+            }
+
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// Builds a double-elimination bracket: Winners Bracket (single-elim tree), Losers Bracket
+        /// (with WB losers dropping in via reverse placement to avoid early rematches), and a
+        /// single-match Grand Final fed by the WB champion (home) and the LB champion (away).
+        /// </summary>
+        /// <remarks>
+        /// LB shape for bracket size C = 2^k (k ≥ 2):
+        ///   • LB Round 1 (major, takes WB R1 losers):           C/4 matches
+        ///   • LB Round 2 (major, takes WB R2 losers + LB R1):   C/4 matches
+        ///   • LB Round 3 (minor, LB R2 winners):                C/8 matches
+        ///   • LB Round 4 (major, takes WB R3 losers + LB R3):   C/8 matches
+        ///   • ... alternating minor/major down to a single LB Final fed by the WB Final loser.
+        /// Total LB rounds = 2(k-1).
+        ///
+        /// Non-power-of-two participant counts pad up to bracket size 2^k with bye slots in
+        /// WB R1. WB R1 byes auto-advance their lone participant to WB R2 (no loser produced),
+        /// and any LB match that would otherwise have nothing to play (both upstream WB sources
+        /// were byes) is collapsed: its single live upstream is re-routed to skip past it, so
+        /// at runtime the bracket plays without spurious 1-player matches.
+        /// </remarks>
+        private List<MatchEntity> GenerateDoubleEliminationMatches(
+            Guid tournamentId, Guid wbStageId, Guid lbStageId,
+            List<TournamentParticipantEntity?> bracketSlots)
+        {
+            int bracketSize = bracketSlots.Count;
+            int wbRounds = (int)Math.Log2(bracketSize);
+
+            // -- Winners Bracket --
+            var wbByRound = new Dictionary<int, List<MatchEntity>>();
+            int matchesInRound = bracketSize / 2;
+
+            var firstRoundWb = new List<MatchEntity>();
+            for (int i = 0; i < matchesInRound; i++)
+            {
+                var m = CreateMatch(tournamentId, wbStageId, 1, GetMatchStage(bracketSize, 1), i);
+                m.HomeParticipantId = bracketSlots[i * 2]?.Id;
+                m.AwayParticipantId = bracketSlots[i * 2 + 1]?.Id;
+                firstRoundWb.Add(m);
+            }
+            wbByRound[1] = firstRoundWb;
+
+            var current = firstRoundWb;
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                matchesInRound /= 2;
+                var next = new List<MatchEntity>();
+                for (int i = 0; i < matchesInRound; i++)
+                {
+                    var m = CreateMatch(tournamentId, wbStageId, r, GetMatchStage(bracketSize, r), i);
+                    current[i * 2].NextMatchId = m.Id;
+                    current[i * 2 + 1].NextMatchId = m.Id;
+                    next.Add(m);
+                }
+                wbByRound[r] = next;
+                current = next;
+            }
+
+            // -- Losers Bracket --
+            int lbRoundCount = 2 * (wbRounds - 1);
+            var lbByRound = new Dictionary<int, List<MatchEntity>>();
+            for (int l = 1; l <= lbRoundCount; l++)
+            {
+                int count = LosersBracketMatchCount(bracketSize, l);
+                var list = new List<MatchEntity>();
+                for (int i = 0; i < count; i++)
+                {
+                    var m = CreateMatch(tournamentId, lbStageId, l, MatchStage.LosersBracket, i);
+                    m.IsUpperBracket = false;
+                    list.Add(m);
+                }
+                lbByRound[l] = list;
+            }
+
+            // Wire LB → LB forward links.
+            for (int l = 1; l < lbRoundCount; l++)
+            {
+                var currentLb = lbByRound[l];
+                var nextLb = lbByRound[l + 1];
+
+                if (nextLb.Count == currentLb.Count)
+                {
+                    // Same-count step: previous round is the minor consolidation feeding a
+                    // major round (or LB R1 → LB R2 at the start). Winner takes home; the WB
+                    // drop fills away later.
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextMatchId = nextLb[i].Id;
+                        currentLb[i].NextMatchHomeAwaySlot = 0;
+                    }
+                }
+                else
+                {
+                    // Halving step: a major round feeds the next minor round — matches pair up
+                    // in the standard bracket-pair convention.
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextMatchId = nextLb[i / 2].Id;
+                        currentLb[i].NextMatchHomeAwaySlot = i % 2;
+                    }
+                }
+            }
+
+            // Wire WB losers → LB. WB R1 losers pair into LB R1 in the natural order
+            // (no rematch risk since they just played each other). All later WB rounds use
+            // REVERSE placement into the matching LB round — the seed-1 side of WB is sent to
+            // the seed-N side of LB so a WB-R(r) loser cannot face the player who just sent
+            // them down without first surviving the LB.
+            var wbR1 = wbByRound[1];
+            var lbR1 = lbByRound[1];
+            for (int i = 0; i < wbR1.Count; i++)
+            {
+                wbR1[i].NextMatchLoserBracketId = lbR1[i / 2].Id;
+                wbR1[i].NextMatchLoserBracketHomeAwaySlot = i % 2;
+            }
+
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                int targetLbRound = 2 * r - 2;
+                var wbRound = wbByRound[r];
+                var lbRound = lbByRound[targetLbRound];
+                int count = lbRound.Count; // matches WB round count by construction
+
+                for (int i = 0; i < count; i++)
+                {
+                    wbRound[i].NextMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextMatchLoserBracketHomeAwaySlot = 1; // away — LB winner already holds home
+                }
+            }
+
+            // -- Grand Final --
+            // Lives in the WB stage but flagged so the UI can pull it out and render separately.
+            // WB champion → home, LB champion → away.
+            var grandFinal = CreateMatch(tournamentId, wbStageId, wbRounds + 1, MatchStage.GrandFinal, 0);
+
+            var wbFinal = wbByRound[wbRounds].Single();
+            wbFinal.NextMatchId = grandFinal.Id;
+            wbFinal.NextMatchHomeAwaySlot = 0;
+
+            var lbFinal = lbByRound[lbRoundCount].Single();
+            lbFinal.NextMatchId = grandFinal.Id;
+            lbFinal.NextMatchHomeAwaySlot = 1;
+
+            var allMatches = new List<MatchEntity>();
+            foreach (var list in wbByRound.Values) allMatches.AddRange(list);
+            foreach (var list in lbByRound.Values) allMatches.AddRange(list);
+            allMatches.Add(grandFinal);
+
+            // WB R1 byes: auto-advance the lone participant to WB R2 (no loser is produced —
+            // the matching LB R1 slot stays empty and gets handled by the cascade below).
+            // We scope the auto-advance to WB matches because the shared AutoAdvanceByes()
+            // helper matches by RoundNumber and would otherwise mark every freshly-created
+            // LB R1 match (also RoundNumber=1, both slots null) as Completed prematurely.
+            var wbMatchesList = wbByRound.Values.SelectMany(x => x).Concat(new[] { grandFinal }).ToList();
+            AutoAdvanceByes(wbMatchesList);
+
+            // LB cascade: bypass any LB match whose upstream feeders won't both deliver a
+            // participant. 0 live sources → mark it Completed (empty); 1 live source → re-route
+            // that source's downstream pointer to skip this match. This keeps the runtime
+            // advance logic free of bye-special-casing — every match that's still Pending after
+            // generation is guaranteed to receive both participants once its feeders resolve.
+            CollapseLbByeCascade(allMatches, lbByRound);
+
+            return allMatches;
+        }
+
+        private static void CollapseLbByeCascade(
+            List<MatchEntity> allMatches,
+            Dictionary<int, List<MatchEntity>> lbByRound)
+        {
+            foreach (var lbRound in lbByRound.Keys.OrderBy(k => k))
+            {
+                foreach (var lbMatch in lbByRound[lbRound].OrderBy(m => m.MatchOrder))
+                {
+                    if (lbMatch.Status == MatchStatus.Completed) continue;
+
+                    var liveSources = new List<(MatchEntity Src, bool WinnerEdge)>();
+                    foreach (var s in allMatches)
+                    {
+                        if (s.NextMatchId == lbMatch.Id && SourceProducesWinner(s))
+                            liveSources.Add((s, true));
+                        if (s.NextMatchLoserBracketId == lbMatch.Id && SourceProducesLoser(s))
+                            liveSources.Add((s, false));
+                    }
+
+                    if (liveSources.Count >= 2)
+                        continue;
+
+                    if (liveSources.Count == 0)
+                    {
+                        // Both upstream feeders are dead — nothing to play, never will play.
+                        lbMatch.Status = MatchStatus.Completed;
+                        continue;
+                    }
+
+                    // Exactly one live source — re-route it past lbMatch so the participant
+                    // lands directly in lbMatch's downstream slot, preserving the bracket shape
+                    // for everything beyond this point.
+                    var (src, winnerEdge) = liveSources[0];
+                    if (winnerEdge)
+                    {
+                        src.NextMatchId = lbMatch.NextMatchId;
+                        src.NextMatchHomeAwaySlot = lbMatch.NextMatchHomeAwaySlot;
+                    }
+                    else
+                    {
+                        src.NextMatchLoserBracketId = lbMatch.NextMatchId;
+                        src.NextMatchLoserBracketHomeAwaySlot = lbMatch.NextMatchHomeAwaySlot;
+                    }
+                    lbMatch.Status = MatchStatus.Completed;
+                }
+            }
+        }
+
+        // A "live" winner source is any match that will eventually have a winner — either a
+        // bye that already has one (Status=Completed with WinnerParticipantId) or a Pending
+        // match (which by construction will be played and yield a winner).
+        private static bool SourceProducesWinner(MatchEntity src) =>
+            src.Status != MatchStatus.Completed || src.WinnerParticipantId.HasValue;
+
+        // A "live" loser source is any Pending match (Completed ones are either byes — which
+        // don't produce a loser — or already-collapsed LB matches, which produce nothing).
+        // WB R(≥2) matches are always Pending at generation time and always end up with two
+        // participants once R(r-1) winners advance, so they're guaranteed loser producers.
+        private static bool SourceProducesLoser(MatchEntity src) =>
+            src.Status != MatchStatus.Completed;
+
+        // Match count for LB round l with bracket size C: pairs of rounds share a count.
+        //   l=1,2 → C/4 ; l=3,4 → C/8 ; l=5,6 → C/16 ; …
+        private static int LosersBracketMatchCount(int bracketSize, int lbRound)
+        {
+            int exponent = ((lbRound - 1) / 2) + 2;
+            return Math.Max(1, bracketSize >> exponent);
+        }
+
+        /// <summary>
+        /// Team variant of <see cref="GenerateDoubleEliminationMatches"/> — identical bracket shape
+        /// and routing, expressed with <see cref="TeamMatchEntity"/> links (NextTeamMatch* + slot
+        /// overrides) and the IsUpperBracket / IsGrandFinal flags. See that method's remarks for the
+        /// LB round structure and the bye-collapse rationale.
+        /// </summary>
+        private List<TeamMatchEntity> GenerateTeamDoubleEliminationMatches(
+            Guid tournamentId, Guid wbStageId, Guid lbStageId,
+            List<TournamentParticipantEntity?> bracketSlots)
+        {
+            int bracketSize = bracketSlots.Count;
+            int wbRounds = (int)Math.Log2(bracketSize);
+
+            TeamMatchEntity NewTeamMatch(Guid stageId, int round, int order, bool isUpper) => new()
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                TournamentStageId = stageId,
+                RoundNumber = round,
+                MatchOrder = order,
+                Status = TeamMatchStatus.Pending,
+                IsUpperBracket = isUpper
+            };
+
+            // -- Winners Bracket --
+            var wbByRound = new Dictionary<int, List<TeamMatchEntity>>();
+            int matchesInRound = bracketSize / 2;
+
+            var firstRoundWb = new List<TeamMatchEntity>();
+            for (int i = 0; i < matchesInRound; i++)
+            {
+                var m = NewTeamMatch(wbStageId, 1, i, true);
+                m.HomeTeamParticipantId = bracketSlots[i * 2]?.Id;
+                m.AwayTeamParticipantId = bracketSlots[i * 2 + 1]?.Id;
+                firstRoundWb.Add(m);
+            }
+            wbByRound[1] = firstRoundWb;
+
+            var current = firstRoundWb;
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                matchesInRound /= 2;
+                var next = new List<TeamMatchEntity>();
+                for (int i = 0; i < matchesInRound; i++)
+                {
+                    var m = NewTeamMatch(wbStageId, r, i, true);
+                    current[i * 2].NextTeamMatchId = m.Id;
+                    current[i * 2 + 1].NextTeamMatchId = m.Id;
+                    next.Add(m);
+                }
+                wbByRound[r] = next;
+                current = next;
+            }
+
+            // -- Losers Bracket --
+            int lbRoundCount = 2 * (wbRounds - 1);
+            var lbByRound = new Dictionary<int, List<TeamMatchEntity>>();
+            for (int l = 1; l <= lbRoundCount; l++)
+            {
+                int count = LosersBracketMatchCount(bracketSize, l);
+                var list = new List<TeamMatchEntity>();
+                for (int i = 0; i < count; i++)
+                    list.Add(NewTeamMatch(lbStageId, l, i, false));
+                lbByRound[l] = list;
+            }
+
+            // Wire LB → LB forward links (same-count step: minor → major, winner takes home; the
+            // WB drop fills away later. Halving step: major → minor, standard bracket-pair).
+            for (int l = 1; l < lbRoundCount; l++)
+            {
+                var currentLb = lbByRound[l];
+                var nextLb = lbByRound[l + 1];
+
+                if (nextLb.Count == currentLb.Count)
+                {
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextTeamMatchId = nextLb[i].Id;
+                        currentLb[i].NextTeamMatchHomeAwaySlot = 0;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < currentLb.Count; i++)
+                    {
+                        currentLb[i].NextTeamMatchId = nextLb[i / 2].Id;
+                        currentLb[i].NextTeamMatchHomeAwaySlot = i % 2;
+                    }
+                }
+            }
+
+            // Wire WB losers → LB. WB R1 losers pair naturally into LB R1; later WB rounds use
+            // REVERSE placement into the away slot (LB winner already holds home).
+            var wbR1 = wbByRound[1];
+            var lbR1 = lbByRound[1];
+            for (int i = 0; i < wbR1.Count; i++)
+            {
+                wbR1[i].NextTeamMatchLoserBracketId = lbR1[i / 2].Id;
+                wbR1[i].NextTeamMatchLoserBracketHomeAwaySlot = i % 2;
+            }
+
+            for (int r = 2; r <= wbRounds; r++)
+            {
+                int targetLbRound = 2 * r - 2;
+                var wbRound = wbByRound[r];
+                var lbRound = lbByRound[targetLbRound];
+                int count = lbRound.Count; // matches WB round count by construction
+
+                for (int i = 0; i < count; i++)
+                {
+                    wbRound[i].NextTeamMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextTeamMatchLoserBracketHomeAwaySlot = 1; // away — LB winner holds home
+                }
+            }
+
+            // -- Grand Final -- lives in the WB stage, flagged so the UI renders it separately.
+            var grandFinal = NewTeamMatch(wbStageId, wbRounds + 1, 0, true);
+            grandFinal.IsGrandFinal = true;
+
+            var wbFinal = wbByRound[wbRounds].Single();
+            wbFinal.NextTeamMatchId = grandFinal.Id;
+            wbFinal.NextTeamMatchHomeAwaySlot = 0;
+
+            var lbFinal = lbByRound[lbRoundCount].Single();
+            lbFinal.NextTeamMatchId = grandFinal.Id;
+            lbFinal.NextTeamMatchHomeAwaySlot = 1;
+
+            var allMatches = new List<TeamMatchEntity>();
+            foreach (var list in wbByRound.Values) allMatches.AddRange(list);
+            foreach (var list in lbByRound.Values) allMatches.AddRange(list);
+            allMatches.Add(grandFinal);
+
+            // WB R1 byes: auto-advance the lone team to WB R2. Scope to WB matches so the shared
+            // AutoAdvanceTeamByes (matches by RoundNumber==1) doesn't mark fresh LB R1 as Completed.
+            var wbMatchesList = wbByRound.Values.SelectMany(x => x).Concat(new[] { grandFinal }).ToList();
+            AutoAdvanceTeamByes(wbMatchesList);
+
+            // LB cascade: bypass any LB match whose upstream feeders won't both deliver a team.
+            CollapseLbTeamByeCascade(allMatches, lbByRound);
+
+            return allMatches;
+        }
+
+        // Team mirror of CollapseLbByeCascade: 0 live sources → mark Completed (empty); 1 live
+        // source → re-route its downstream pointer to skip this match, preserving bracket shape.
+        private static void CollapseLbTeamByeCascade(
+            List<TeamMatchEntity> allMatches,
+            Dictionary<int, List<TeamMatchEntity>> lbByRound)
+        {
+            foreach (var lbRound in lbByRound.Keys.OrderBy(k => k))
+            {
+                foreach (var lbMatch in lbByRound[lbRound].OrderBy(m => m.MatchOrder))
+                {
+                    if (lbMatch.Status == TeamMatchStatus.Completed) continue;
+
+                    var liveSources = new List<(TeamMatchEntity Src, bool WinnerEdge)>();
+                    foreach (var s in allMatches)
+                    {
+                        if (s.NextTeamMatchId == lbMatch.Id && TeamSourceProducesWinner(s))
+                            liveSources.Add((s, true));
+                        if (s.NextTeamMatchLoserBracketId == lbMatch.Id && TeamSourceProducesLoser(s))
+                            liveSources.Add((s, false));
+                    }
+
+                    if (liveSources.Count >= 2)
+                        continue;
+
+                    if (liveSources.Count == 0)
+                    {
+                        lbMatch.Status = TeamMatchStatus.Completed;
+                        continue;
+                    }
+
+                    var (src, winnerEdge) = liveSources[0];
+                    if (winnerEdge)
+                    {
+                        src.NextTeamMatchId = lbMatch.NextTeamMatchId;
+                        src.NextTeamMatchHomeAwaySlot = lbMatch.NextTeamMatchHomeAwaySlot;
+                    }
+                    else
+                    {
+                        src.NextTeamMatchLoserBracketId = lbMatch.NextTeamMatchId;
+                        src.NextTeamMatchLoserBracketHomeAwaySlot = lbMatch.NextTeamMatchHomeAwaySlot;
+                    }
+                    lbMatch.Status = TeamMatchStatus.Completed;
+                }
+            }
+        }
+
+        private static bool TeamSourceProducesWinner(TeamMatchEntity src) =>
+            src.Status != TeamMatchStatus.Completed || src.WinnerTeamParticipantId.HasValue;
+
+        private static bool TeamSourceProducesLoser(TeamMatchEntity src) =>
+            src.Status != TeamMatchStatus.Completed;
+
+        /// <summary>
+        /// Swiss format: everyone plays every round against an opponent on a similar score,
+        /// nobody is eliminated. Rounds are paired lazily — each next round is generated by
+        /// <see cref="CheckAndAdvanceSwissStage"/> only once the current one fully completes,
+        /// because its matchups depend on the standings. Odd participant counts give one player
+        /// per round a bye (a pre-completed free win, stored as a match with no away side).
+        /// </summary>
+        public async Task GenerateSwissTournament(Guid tournamentId, TimeSpan? roundDuration = null)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
+
+            var participants = tournament!.TournamentParticipants?.ToList();
+            if (participants == null || participants.Count < 2)
+                throw new Exception("Not enough participants");
+
+            // Optional post-Swiss knockout: validate against the real participant count now,
+            // at generation time (mirrors how GroupStageWithKnockout validates its config).
+            var (knockoutSize, directBerths) = GetSwissKnockoutConfig(tournament);
+            if (knockoutSize.HasValue)
+            {
+                int n = participants.Count;
+                int size = knockoutSize.Value;
+                int direct = directBerths!.Value;
+
+                if (size < 2 || !IsPowerOfTwo(size))
+                    throw new Exception("Knockout qualifiers must be a power of 2 (2, 4, 8, 16, 32).");
+                if (size > n)
+                    throw new Exception($"Knockout qualifiers ({size}) cannot exceed the participant count ({n}).");
+                if (direct < 0 || direct > size)
+                    throw new Exception($"Direct qualifiers must be between 0 and {size}.");
+                if (direct < size && direct + 2 * (size - direct) > n)
+                    throw new Exception(
+                        $"Not enough participants for the play-in: {direct} direct + {2 * (size - direct)} play-in players need {direct + 2 * (size - direct)}, but only {n} registered.");
+            }
+
+            var stage = new TournamentStageEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                Type = StageType.Swiss,
+                Order = 1,
+                Name = "Swiss Rounds"
+            };
+            await this.AppUnitOfWork.TournamentStageRepository.AddEntity(stage, this.UserContextReader);
+
+            // Pre-create the post-Swiss stages (empty, filled when the Swiss rounds finish) so
+            // the client shows the full tournament shape from day one — same pattern as the
+            // knockout stage in GenerateGroupStageWithKnockout.
+            if (knockoutSize.HasValue)
+            {
+                int nextOrder = 2;
+                if (directBerths!.Value < knockoutSize.Value)
+                {
+                    await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        TournamentId = tournamentId,
+                        Type = StageType.PlayIn,
+                        Order = nextOrder++,
+                        Name = "Play-In",
+                        QualifiedPlayersCount = knockoutSize.Value - directBerths.Value
+                    }, this.UserContextReader);
+                }
+
+                // Single-elim by default, or Winners+Losers bracket stages for double-elimination
+                // (solo only — Swiss is always solo — and only with >= 4 qualifiers).
+                bool useDoubleKnockout = UseDoubleEliminationKnockout(tournament) && knockoutSize.Value >= 4;
+                await AddKnockoutStages(tournamentId, useDoubleKnockout, firstOrder: nextOrder, qualifiedPlayersCount: knockoutSize.Value);
+            }
+
+            // Single group so the league-style standings/resync machinery applies as-is.
+            var group = new TournamentGroupEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentStageId = stage.Id,
+                Name = "Standings"
+            };
+            await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(group, this.UserContextReader);
+
+            // Random order doubles as the round-1 pairing order and as the last-resort
+            // standings tiebreaker (Seed) for later rounds.
+            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                var p = shuffled[i];
+                p.Seed = i + 1;
+                p.TournamentGroupId = group.Id;
+                p.Points = 0; p.Wins = 0; p.Draws = 0; p.Losses = 0; p.GoalsFor = 0; p.GoalsAgainst = 0;
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
+            }
+
+            var (matches, byeParticipant) = BuildSwissRoundMatches(
+                tournamentId,
+                stage.Id!.Value,
+                group.Id,
+                roundNumber: 1,
+                orderedParticipants: shuffled,
+                playedPairs: new HashSet<(Guid, Guid)>(),
+                byeCounts: new Dictionary<Guid, int>(),
+                roundDuration);
+
+            foreach (var m in matches)
+                await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
+
+            // Persist the eager bye credit explicitly — same pattern as CheckAndAdvanceSwissStage.
+            // The participant is already EF-tracked here, but the explicit call documents intent
+            // and keeps the two round-paths symmetric.
+            if (byeParticipant != null)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(byeParticipant, this.UserContextReader);
+
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// Builds the matches for one Swiss round from a standings-ordered pool: best-vs-next
+        /// pairing that avoids rematches (backtracking), with plain adjacent pairing as the
+        /// fallback when the played-graph admits no rematch-free matching. With an odd pool the
+        /// lowest-ranked player among those with the fewest byes sits out and banks a free win
+        /// (3 points, no goals) — applied to the participant entity immediately so standings are
+        /// fresh, and re-derivable from the bye match row by the stats resync.
+        /// </summary>
+        private (List<MatchEntity> Matches, TournamentParticipantEntity? ByeParticipant) BuildSwissRoundMatches(
+            Guid tournamentId,
+            Guid stageId,
+            Guid? groupId,
+            int roundNumber,
+            List<TournamentParticipantEntity> orderedParticipants,
+            HashSet<(Guid, Guid)> playedPairs,
+            Dictionary<Guid, int> byeCounts,
+            TimeSpan? roundDuration)
+        {
+            var pool = new List<TournamentParticipantEntity>(orderedParticipants);
+
+            TournamentParticipantEntity? byeParticipant = null;
+            if (pool.Count % 2 != 0)
+            {
+                int fewestByes = pool.Min(p => byeCounts.GetValueOrDefault(p.Id!.Value));
+                byeParticipant = Enumerable.Reverse(pool)
+                    .First(p => byeCounts.GetValueOrDefault(p.Id!.Value) == fewestByes);
+                pool.Remove(byeParticipant);
+            }
+
+            var pairs = PairSwissPlayers(pool, playedPairs);
+
+            DateTime openAt = DateTime.UtcNow;
+            DateTime? deadline = roundDuration.HasValue ? openAt + roundDuration.Value : null;
+
+            var matches = new List<MatchEntity>();
+            int order = 0;
+            foreach (var (home, away) in pairs)
+            {
+                var m = CreateMatch(tournamentId, stageId, roundNumber, MatchStage.GroupStage, order++);
+                m.TournamentGroupId = groupId;
+                m.HomeParticipantId = home.Id;
+                m.AwayParticipantId = away.Id;
+                m.RoundOpenAt = openAt;
+                m.RoundDeadline = deadline;
+                matches.Add(m);
+            }
+
+            if (byeParticipant != null)
+            {
+                var bye = CreateMatch(tournamentId, stageId, roundNumber, MatchStage.GroupStage, order);
+                bye.TournamentGroupId = groupId;
+                bye.HomeParticipantId = byeParticipant.Id;
+                bye.WinnerParticipantId = byeParticipant.Id;
+                bye.Status = MatchStatus.Completed;
+                bye.RoundOpenAt = openAt;
+                bye.RoundDeadline = deadline;
+                matches.Add(bye);
+
+                // Mirror of the bye branch in ApplyMatchStats — keep the two in sync.
+                byeParticipant.Wins++;
+                byeParticipant.Points += 3;
+            }
+
+            return (matches, byeParticipant);
+        }
+
+        private static List<(TournamentParticipantEntity Home, TournamentParticipantEntity Away)> PairSwissPlayers(
+            List<TournamentParticipantEntity> orderedPool,
+            HashSet<(Guid, Guid)> playedPairs)
+        {
+            var result = new List<(TournamentParticipantEntity, TournamentParticipantEntity)>();
+            int probeBudget = 200_000;
+            if (TryPairAvoidingRematches(orderedPool, playedPairs, result, ref probeBudget))
+                return result;
+
+            // No rematch-free perfect matching (dense played-graph in late rounds, or the
+            // probe budget ran out) — fall back to adjacent pairing and accept rematches.
+            result.Clear();
+            for (int i = 0; i + 1 < orderedPool.Count; i += 2)
+                result.Add((orderedPool[i], orderedPool[i + 1]));
+            return result;
+        }
+
+        // Depth-first search over pairings: the top remaining player tries opponents in
+        // standings order, recursing on the rest. The probe budget bounds worst-case time;
+        // exhausting it reports failure and lets the caller fall back.
+        private static bool TryPairAvoidingRematches(
+            List<TournamentParticipantEntity> pool,
+            HashSet<(Guid, Guid)> playedPairs,
+            List<(TournamentParticipantEntity, TournamentParticipantEntity)> result,
+            ref int probeBudget)
+        {
+            if (pool.Count == 0) return true;
+            if (--probeBudget <= 0) return false;
+
+            var first = pool[0];
+            for (int i = 1; i < pool.Count; i++)
+            {
+                var candidate = pool[i];
+                if (HasPlayed(playedPairs, first.Id!.Value, candidate.Id!.Value)) continue;
+
+                var rest = new List<TournamentParticipantEntity>(pool);
+                rest.RemoveAt(i);
+                rest.RemoveAt(0);
+
+                result.Add((first, candidate));
+                if (TryPairAvoidingRematches(rest, playedPairs, result, ref probeBudget)) return true;
+                result.RemoveAt(result.Count - 1);
+            }
+
+            return false;
+        }
+
+        private static bool HasPlayed(HashSet<(Guid, Guid)> playedPairs, Guid a, Guid b)
+            => playedPairs.Contains((a, b)) || playedPairs.Contains((b, a));
+
+        // Normalised knockout config: (null, null) = pure Swiss; otherwise bracket size N plus
+        // direct berths D, where D == N means every slot is a direct berth (no play-in).
+        private static (int? KnockoutSize, int? DirectBerths) GetSwissKnockoutConfig(TournamentEntity tournament)
+        {
+            if (!tournament.SwissKnockoutQualifiers.HasValue || tournament.SwissKnockoutQualifiers.Value <= 0)
+                return (null, null);
+
+            int size = tournament.SwissKnockoutQualifiers.Value;
+            int direct = tournament.SwissDirectQualifiers ?? size;
+            return (size, Math.Min(direct, size));
+        }
+
+        // The post-group / post-swiss knockout phase runs as double-elimination when the organizer
+        // opted in. Callers additionally require a bracket of >= 4 so a real losers bracket exists.
+        // (Team Swiss is unsupported, so for teams this only ever applies to the group-stage path.)
+        private static bool UseDoubleEliminationKnockout(TournamentEntity tournament)
+            => tournament.KnockoutEliminationType == KnockoutEliminationType.Double;
+
+        // Creates the knockout-phase stage(s) up-front (matches are filled in once the feeding
+        // stage finishes). Double-elimination needs two stages — Winners + Losers brackets — laid
+        // out at consecutive orders; single-elimination is one stage. The created stage type is
+        // the single source of truth the population code later reads to pick the bracket shape.
+        private async Task AddKnockoutStages(Guid tournamentId, bool useDouble, int firstOrder, int qualifiedPlayersCount)
+        {
+            if (useDouble)
+            {
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.DoubleEliminationWinnersBracket,
+                    Order = firstOrder,
+                    Name = "Winners Bracket",
+                    QualifiedPlayersCount = qualifiedPlayersCount
+                }, this.UserContextReader);
+
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.DoubleEliminationLosersBracket,
+                    Order = firstOrder + 1,
+                    Name = "Losers Bracket"
+                }, this.UserContextReader);
+            }
+            else
+            {
+                await this.AppUnitOfWork.TournamentStageRepository.AddEntity(new TournamentStageEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TournamentId = tournamentId,
+                    Type = StageType.SingleEliminationBracket,
+                    Order = firstOrder,
+                    Name = "Knockout Stage",
+                    QualifiedPlayersCount = qualifiedPlayersCount
+                }, this.UserContextReader);
+            }
+        }
+
+        // Effective Swiss round count: organizer override (clamped) or ceil(log2(n)) — the
+        // smallest count that can isolate a single perfect-score winner.
+        private static int GetSwissTotalRounds(int participantCount, int? configuredRounds)
+        {
+            if (participantCount < 2) return 0;
+
+            // With rematch avoidance the schedule cannot exceed a full round robin:
+            // n-1 rounds for even n, n for odd n (one bye per round).
+            int maxRounds = participantCount % 2 == 0 ? participantCount - 1 : participantCount;
+
+            int rounds = configuredRounds ?? (int)Math.Ceiling(Math.Log2(participantCount));
+            return Math.Clamp(rounds, 1, maxRounds);
         }
 
         public async Task GenerateTeamSingleEliminationBracket(Guid tournamentId)
@@ -648,6 +1600,9 @@ namespace GameHubz.Logic.Services
             // Auto-advance byes for TeamMatches
             AutoAdvanceTeamByes(allTeamMatches);
 
+            if (tournament.HasThirdPlaceMatch)
+                BuildThirdPlaceTeamMatchIfApplicable(allTeamMatches, totalRounds, shuffled.Count, tournamentId, stage.Id);
+
             // Save all TeamMatchEntities
             foreach (var tm in allTeamMatches)
             {
@@ -670,8 +1625,6 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
             }
 
-            tournament.Status = TournamentStatus.InProgress;
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
         }
 
@@ -718,10 +1671,16 @@ namespace GameHubz.Logic.Services
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId);
 
-            if (match == null) throw new Exception("Match not found");
-            if (match.TournamentId != request.TournamentId) throw new Exception("Match wrong tournament");
+            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match.TournamentId != request.TournamentId) throw new BusinessRuleException("Match wrong tournament");
             if (match.RoundOpenAt.HasValue && match.RoundOpenAt.Value > DateTime.UtcNow)
-                throw new Exception("This round is not open yet.");
+                throw new BusinessRuleException("This round is not open yet.");
+
+            // A solo match without both sides can't take a result — covers Swiss byes
+            // (pre-completed free wins) and TBD elimination slots still awaiting feeders.
+            // Team sub-matches always carry both participant ids, so they pass through.
+            if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
+                throw new BusinessRuleException("This match has no opponent yet and cannot be reported.");
 
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
@@ -730,42 +1689,547 @@ namespace GameHubz.Logic.Services
                     ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
             }
 
-            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            bool isAdmin = currentUser.RoleEnum == UserRoleEnum.Admin;
+            // Semi-finals with a third-place play-off link their loser into this match.
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+            {
+                loserBracketMatch = match.NextMatchLoserBracket
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+            }
 
-            var hubOwnerId = await this.AppUnitOfWork.TournamentRepository.GetHubOwnerUserId(match.TournamentId);
-            bool isPrivileged = isAdmin || currentUser.UserId == hubOwnerId;
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new BusinessRuleException("Tournament not found");
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
+
+            // When the tournament requires result approval and the caller is a participant
+            // (not a tournament manager — platform admin, hub owner, or hub admin),
+            // persist a proposal instead of completing the match.
+            if (approvalCtx.RequireResultApproval && !isPrivileged)
+            {
+                if (!IsMatchParticipant(match, currentUser.UserId))
+                    throw new BusinessRuleException("You are not a participant of this match.");
+
+                // Once a result is confirmed in approval mode, only an admin / hub owner can change it.
+                // Otherwise the approval gate could be bypassed via the edit path.
+                if (match.Status == MatchStatus.Completed)
+                    throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to amend it.");
+
+                await SaveProposal(match, request.HomeScore, request.AwayScore, currentUser);
+                return;
+            }
 
             // 1. REVERT LOGIC
             if (match.Status == MatchStatus.Completed)
             {
-                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                if (match.TeamMatchId.HasValue)
                 {
-                    throw new Exception("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    // Team sub-matches don't carry the Next* links (those live on TeamMatchEntity), so the
+                    // solo guards below never fire for them. Mirror the lock at the team-match level, otherwise
+                    // reverting a semi-final would silently cascade-delete an already-played final / third-place.
+                    var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                    if (parentTeamMatch.NextTeamMatchId.HasValue)
+                    {
+                        var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                        if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                            throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    }
+
+                    if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                    {
+                        // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
+                        var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                        if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
+                            throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. To edit this, you must revert that match first.");
+                    }
+                }
+                else
+                {
+                    if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                    {
+                        throw new BusinessRuleException("This match is locked because the next round has already progressed. To edit this, you must revert the downstream match first.");
+                    }
+
+                    if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+                    {
+                        // Single-elim → third-place play-off. DE → the Losers Bracket match that
+                        // received this WB match's loser. Same lock applies in both cases.
+                        bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
+                        var label = isThirdPlace ? "third-place match" : "loser bracket match";
+                        throw new BusinessRuleException($"This match is locked because the {label} has already progressed. To edit this, you must revert the downstream {label} first.");
+                    }
                 }
 
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
                 {
+                    // Solo group/league stats are resynced from scratch at the end of FinalizeMatchResult,
+                    // so no explicit revert is needed here. Team matches still revert in place because
+                    // their stats path hasn't been migrated to the resync model yet.
                     if (match.TeamMatchId.HasValue)
                         await RevertTeamLeagueMatchStats(match);
-                    else
-                        await RevertLeagueStatistics(match);
                 }
                 else if (IsElimination(match.TournamentStage?.Type))
                 {
                     if (match.TeamMatchId.HasValue)
                         await RevertTeamMatchResult(match);
                     else
-                        await RevertEliminationResult(match, nextMatch);
+                        await RevertEliminationResult(match, nextMatch, loserBracketMatch);
                 }
             }
 
-            int homeScore = request.HomeScore;
-            int awayScore = request.AwayScore;
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, request.HomeScore, request.AwayScore, request.TournamentId);
+        }
 
+        /// <summary>
+        /// Deletes a completed match's result and reopens the match (status back to Scheduled,
+        /// scores and winner cleared). Used when a result was entered by mistake / on the wrong
+        /// match. Reuses the same downstream-lock guards and revert primitives as the edit path
+        /// in <see cref="UpdateMatchResult"/>, so the bracket / standings stay consistent.
+        /// Caller must be a match participant or a tournament manager (platform admin / hub owner /
+        /// hub admin).
+        /// </summary>
+        public async Task RevertMatchResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) throw new BusinessRuleException("Match not found");
+
+            if (match.Status != MatchStatus.Completed)
+                throw new BusinessRuleException("This match has no result to delete.");
+
+            // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
+            // real reported result — nothing to delete.
+            if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
+                throw new BusinessRuleException("This match has no result to delete.");
+
+            MatchEntity? nextMatch = null;
+            if (match.NextMatchId.HasValue)
+            {
+                nextMatch = match.NextMatch
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+            }
+
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+            {
+                loserBracketMatch = match.NextMatchLoserBracket
+                    ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+            }
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new BusinessRuleException("Tournament not found");
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
+
+            // Trust boundary matches UpdateMatchResult: the controller [Authorize] plus the
+            // mobile client (which only surfaces delete via the CanRevert flag — i.e. to match
+            // participants and tournament managers) gate who can act, so the non-approval path
+            // intentionally does not re-check match participation here. In approval mode a
+            // confirmed result is locked to managers, mirroring how UpdateMatchResult refuses a
+            // participant edit of a confirmed result.
+            if (!isPrivileged && approvalCtx.RequireResultApproval)
+                throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to delete it.");
+
+            // Downstream lock — identical to the revert guard in UpdateMatchResult: a result can't
+            // be deleted once the next round / third-place / loser-bracket match has progressed.
+            // The downstream match must be reverted first.
+            if (match.TeamMatchId.HasValue)
+            {
+                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                if (parentTeamMatch.NextTeamMatchId.HasValue)
+                {
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                        throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                }
+
+                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                {
+                    // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
+                    var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                    if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
+                        throw new BusinessRuleException("This match is locked because the match its loser feeds into has already progressed. You must revert that match first.");
+                }
+            }
+            else
+            {
+                if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+                {
+                    throw new BusinessRuleException("This match is locked because the next round has already progressed. You must revert the downstream match first.");
+                }
+
+                if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+                {
+                    bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
+                    var label = isThirdPlace ? "third-place match" : "loser bracket match";
+                    throw new BusinessRuleException($"This match is locked because the {label} has already progressed. You must revert the downstream {label} first.");
+                }
+            }
+
+            // 1. Revert downstream advancement / stats, reusing the same primitives as the edit
+            //    path. Solo league/group/Swiss stats are derived from the Match table, so they are
+            //    re-synced below once this match drops out of "Completed" (mirrors how
+            //    FinalizeMatchResult re-derives them).
+            bool reSyncSoloStats = false;
+            if (match.TournamentStage?.Type == StageType.League
+                || match.TournamentStage?.Type == StageType.GroupStage
+                || match.TournamentStage?.Type == StageType.Swiss)
+            {
+                if (match.TeamMatchId.HasValue)
+                    await RevertTeamLeagueMatchStats(match);
+                else
+                    reSyncSoloStats = true;
+            }
+            else if (IsElimination(match.TournamentStage?.Type))
+            {
+                if (match.TeamMatchId.HasValue)
+                    await RevertTeamMatchResult(match);
+                else
+                    await RevertEliminationResult(match, nextMatch, loserBracketMatch);
+            }
+
+            // 2. Clear the result and reopen the match. Solo matches return to Scheduled — they
+            //    keep their opponents and scheduled time and can be re-reported. Team sub-matches
+            //    return to Pending instead, the only non-completed state the team flow uses, so the
+            //    team-match detail screen shows them as "awaiting result" again (and re-aggregates
+            //    the parent team match on the next report).
+            match.Status = match.TeamMatchId.HasValue ? MatchStatus.Pending : MatchStatus.Scheduled;
+            match.HomeUserScore = null;
+            match.AwayUserScore = null;
+            match.WinnerParticipantId = null;
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+
+            if (reSyncSoloStats)
+            {
+                // Serialised per tournament, same as the apply path — the resync reads every other
+                // completed match in scope, so it must not race a concurrent finalise.
+                await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+                try
+                {
+                    await ResyncSoloLeagueStatistics(match);
+
+                    // League and Swiss publish a tournament winner once every match is played;
+                    // deleting a result means the competition is no longer fully played, so roll
+                    // the published winner / Completed status back. (A group stage only seeds the
+                    // knockout — it never completes the tournament — so there is nothing to undo.)
+                    if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.Swiss)
+                    {
+                        var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                        if (tournament.Status == TournamentStatus.Completed)
+                        {
+                            tournament.Status = TournamentStatus.InProgress;
+                            tournament.WinnerUserId = null;
+                            tournament.WinnerTeamId = null;
+                            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        }
+                    }
+
+                    await this.SaveAsync();
+                }
+                finally
+                {
+                    await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+                }
+            }
+            else
+            {
+                await this.SaveAsync();
+            }
+
+            // 3. Invalidate caches (mirrors FinalizeMatchResult).
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+            if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+            if (match.HomeUserId.HasValue) affectedUserIds.Add(match.HomeUserId.Value);
+            if (match.AwayUserId.HasValue) affectedUserIds.Add(match.AwayUserId.Value);
+
+            if (match.HomeParticipant?.Team?.Members != null)
+                foreach (var m in match.HomeParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            if (match.AwayParticipant?.Team?.Members != null)
+                foreach (var m in match.AwayParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            foreach (var userId in affectedUserIds)
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+        }
+
+        /// <summary>
+        /// Approves the pending proposal stored on the match: commits the proposed scores,
+        /// clears proposal fields, advances the bracket. Caller must be the opposing participant
+        /// or an admin / hub owner.
+        /// </summary>
+        public async Task ApproveProposedResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) throw new BusinessRuleException("Match not found");
+
+            if (match.ProposedByUserId == null || match.ProposedHomeScore == null || match.ProposedAwayScore == null)
+                throw new BusinessRuleException("No pending result to approve for this match.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException("This match is already completed.");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
+
+            if (!isPrivileged)
+            {
+                if (!IsMatchParticipant(match, currentUser.UserId))
+                    throw new BusinessRuleException("You are not a participant of this match.");
+
+                // The proposer cannot also be the approver — the opponent (or a tournament manager) confirms.
+                if (match.ProposedByUserId == currentUser.UserId)
+                    throw new BusinessRuleException("Your opponent must approve the result you reported.");
+            }
+
+            MatchEntity? nextMatch = null;
+            if (match.NextMatchId.HasValue)
+                nextMatch = match.NextMatch ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchId.Value);
+
+            MatchEntity? loserBracketMatch = null;
+            if (match.NextMatchLoserBracketId.HasValue)
+                loserBracketMatch = match.NextMatchLoserBracket ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
+
+            int homeScore = match.ProposedHomeScore!.Value;
+            int awayScore = match.ProposedAwayScore!.Value;
+            var proposerId = match.ProposedByUserId!.Value;
+
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
+        }
+
+        /// <summary>
+        /// Rejects the pending proposal: clears proposal fields and notifies the proposer so they
+        /// can submit a corrected result. Match stays in its pre-proposal state.
+        /// </summary>
+        public async Task RejectProposedResult(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            if (match == null) throw new BusinessRuleException("Match not found");
+
+            if (match.ProposedByUserId == null)
+                throw new BusinessRuleException("No pending result to reject for this match.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException("This match is already completed.");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
+
+            if (!isPrivileged)
+            {
+                var fullMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+                if (fullMatch == null || !IsMatchParticipant(fullMatch, currentUser.UserId))
+                    throw new BusinessRuleException("You are not a participant of this match.");
+
+                if (match.ProposedByUserId == currentUser.UserId)
+                    throw new BusinessRuleException("You can't reject your own proposal — submit a corrected result instead.");
+            }
+
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+
+            // Proposal cleared → the opponent's "result to confirm" badge drops. Refresh both
+            // sides (participants weren't loaded above, so fetch them just for the badge bump).
+            var participantsMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (participantsMatch != null) await BumpMatchBadgesAsync(participantsMatch);
+        }
+
+        /// <summary>
+        /// Admin/owner action for an elimination match that was never played because BOTH sides
+        /// failed to show: the match is closed with no winner (both eliminated) and the opponent
+        /// coming from the sibling matchup advances unopposed — a walkover into the next round.
+        /// Works whether or not the sibling has been decided yet: if it has, the present opponent is
+        /// advanced now; if not, the walkover is applied automatically once that sibling completes
+        /// (the settle hook on the advance path fires then). Caller must be able to manage the
+        /// tournament. Solo elimination only — team matches are rejected.
+        /// </summary>
+        public async Task ApplyDoubleWalkover(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId)
+                ?? throw new BusinessRuleException("Match not found");
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can apply a double walkover.");
+
+            if (match.TeamMatchId.HasValue)
+                throw new BusinessRuleException("Double walkover isn't available for team matches.");
+
+            if (!IsElimination(match.TournamentStage?.Type))
+                throw new BusinessRuleException("Double walkover is only available in elimination brackets.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException("This match is already completed.");
+
+            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
+                throw new BusinessRuleException("Both players must be set before a double walkover.");
+
+            // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
+            if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
+                throw new BusinessRuleException("This match has no next round, so a walkover can't advance anyone.");
+
+            // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
+            // check-then-act over many rows and must not race a concurrent result report.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                // Close the match with no winner. A Completed elimination match with no
+                // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
+                // SourceProducesWinner) — both players are out, nothing advances from here.
+                match.Status = MatchStatus.Completed;
+                match.WinnerParticipantId = null;
+                match.HomeUserScore = null;
+                match.AwayUserScore = null;
+                match.ProposedHomeScore = null;
+                match.ProposedAwayScore = null;
+                match.ProposedByUserId = null;
+                match.ScheduledStartTime ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                // Now that the void is committed, advance the surviving opponent(s) through every
+                // match the void forces (winner and loser edges, cascading across rounds / stages).
+                await SettleForcedWalkovers(match.TournamentId);
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
+
+            // Cache / badge invalidation — mirrors FinalizeMatchResult.
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+            if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+
+            foreach (var userId in affectedUserIds)
+            {
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+                await this.badgeService.PushAsync(userId);
+            }
+
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+        }
+
+        /// <summary>
+        /// Settles every elimination match whose outcome is now forced by a "dead feeder" — a
+        /// Completed-with-no-winner match (a double walkover, or a void left by an upstream one).
+        /// A match is forced when its empty slot(s) have no live feeder left to fill them:
+        /// <list type="bullet">
+        /// <item>one participant present, no live feeder for the other slot → that participant wins by
+        /// walkover and is advanced (via the shared terminal / Grand-Final logic);</item>
+        /// <item>no participant, no live feeder → the match is itself void.</item>
+        /// </list>
+        /// Runs as a fixpoint over freshly-committed state: each settle is saved before the next scan,
+        /// so the cascade (winner edges, loser-bracket drops, voids — across rounds and stages) reads a
+        /// consistent bracket and never relies on the repository's no-tracking snapshots being in sync.
+        /// Idempotent: a tournament with no dead feeders settles nothing. Caller holds the advancement lock.
+        /// </summary>
+        private async Task SettleForcedWalkovers(Guid tournamentId)
+        {
+            // Bounded by the match count; each productive pass marks one more match Completed. Each
+            // pass reloads committed state, so the change tracker is cleared first (and after every
+            // save) to drop the caller's / the previous pass's instances and avoid identity collisions.
+            for (int guard = 0; guard < 1000; guard++)
+            {
+                this.AppUnitOfWork.MatchRepository.DetachAll();
+                var all = await this.AppUnitOfWork.MatchRepository.GetAllByTournamentId(tournamentId);
+                if (!await SettleOneForcedWalkover(all)) break;
+            }
+        }
+
+        // Finds and settles a single forced match, saving the change. Returns false when none remain.
+        private async Task<bool> SettleOneForcedWalkover(List<MatchEntity> all)
+        {
+            foreach (var n in all)
+            {
+                // Team sub-matches advance through the TeamMatch flow, not these Next* links.
+                if (n.Status == MatchStatus.Completed || n.TeamMatchId.HasValue) continue;
+
+                int filled = (n.HomeParticipantId.HasValue ? 1 : 0) + (n.AwayParticipantId.HasValue ? 1 : 0);
+                if (filled == 2) continue;                  // a real match still to be played
+                if (LiveFeederCount(n, all) > 0) continue;  // an opponent can still arrive — wait
+
+                if (filled == 0)
+                {
+                    // No one is coming from either side → the match is void; mark it and let the next
+                    // pass propagate the emptiness onward.
+                    n.Status = MatchStatus.Completed;
+                    n.WinnerParticipantId = null;
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(n, this.UserContextReader);
+                    await this.SaveAsync();
+                    return true;
+                }
+
+                // Exactly one participant and no opponent will ever arrive → walkover.
+                Guid winnerId = n.HomeParticipantId ?? n.AwayParticipantId!.Value;
+                Guid? winnerUserId = await ResolveParticipantUserId(winnerId);
+
+                n.WinnerParticipantId = winnerId;
+                n.Status = MatchStatus.Completed;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(n, this.UserContextReader);
+
+                // Advance through the shared path (next-slot placement, Grand Final, tournament
+                // completion). A walkover has no loser, so nothing drops to the loser bracket; the next
+                // pass picks up any match that this one's missing loser now leaves forced.
+                MatchEntity? nNext = n.NextMatchId.HasValue
+                    ? all.FirstOrDefault(m => m.Id == n.NextMatchId.Value)
+                    : null;
+                await AdvanceWinnerToNextMatch(n, winnerId, winnerUserId, nNext);
+                await this.SaveAsync();
+                return true;
+            }
+
+            return false;
+        }
+
+        // Count of feeders that will still deliver a participant into <paramref name="n"/>: any
+        // not-yet-Completed match pointing here on its winner edge (NextMatchId) or loser edge
+        // (NextMatchLoserBracketId). Completed feeders have already deposited (or are dead ends and
+        // never will), so they don't count.
+        private static int LiveFeederCount(MatchEntity n, List<MatchEntity> all)
+            => all.Count(f => f.Id != n.Id
+                && f.Status != MatchStatus.Completed
+                && (f.NextMatchId == n.Id || f.NextMatchLoserBracketId == n.Id));
+
+        private async Task FinalizeMatchResult(
+            MatchEntity match,
+            MatchEntity? nextMatch,
+            MatchEntity? loserBracketMatch,
+            int homeScore,
+            int awayScore,
+            Guid tournamentId)
+        {
             match.HomeUserScore = homeScore;
             match.AwayUserScore = awayScore;
             match.Status = MatchStatus.Completed;
+
+            // Result entered straight through the bracket without ever scheduling — stamp the
+            // entry time so the match doesn't show without a date. A real scheduled time is kept.
+            match.ScheduledStartTime ??= DateTime.UtcNow;
+
+            // Clear any proposal — the result is now official.
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedByUserId = null;
 
             // 3. Determine Winner
             Guid? winnerParticipientId = null;
@@ -784,56 +2248,98 @@ namespace GameHubz.Logic.Services
 
             match.WinnerParticipantId = winnerParticipientId;
 
+            Guid? loserParticipantId = null;
+            if (winnerParticipientId.HasValue)
+            {
+                loserParticipantId = winnerParticipientId.Value == match.HomeParticipantId
+                    ? match.AwayParticipantId
+                    : match.HomeParticipantId;
+            }
+
             // 4. Update match entity
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
 
-            // 5. Apply Rules & Advance
-            if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
+            // 5. Apply Rules & Advance — serialised per tournament. Round-completion checks and
+            // stage advancement (next Swiss round, play-in → knockout, groups → knockout) are
+            // check-then-act over many rows; without the lock, the last two results of a round
+            // landing concurrently could each see "round complete, nothing generated yet" and
+            // both generate. The result save happens inside the lock so the check below always
+            // sees every previously-finalised match.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
+            try
             {
-                if (match.TeamMatchId.HasValue)
+                if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage
+                    || match.TournamentStage?.Type == StageType.Swiss)
                 {
-                    // Team sub-match: defer participant stats to team-match completion in ProcessTeamMatchResult
-                    await this.SaveAsync();
-                    await ProcessTeamMatchResult(match);
-                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
-                }
-                else
-                {
-                    await UpdateLeagueStatistics(match.HomeParticipant, match.AwayParticipant, homeScore, awayScore);
-                    await this.SaveAsync();
-
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.HomeParticipant);
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(match.AwayParticipant);
-
-                    if (match.TournamentStage?.Type == StageType.GroupStage)
+                    if (match.TeamMatchId.HasValue)
                     {
-                        await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
+                        // Team sub-match: defer participant stats to team-match completion in ProcessTeamMatchResult
+                        await this.SaveAsync();
+                        await ProcessTeamMatchResult(match);
                         await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
                     }
-                    if (match.TournamentStage?.Type == StageType.League)
+                    else
                     {
-                        await CheckAndCompleteLeague(match.TournamentId);
-                        await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                        // Single source of truth: derive participant stats from the Match table.
+                        // Replaces the increment/revert pattern, which drifted under concurrent updates
+                        // or any path that applied/reverted inconsistently. Idempotent by construction.
+                        await ResyncSoloLeagueStatistics(match);
+                        await this.SaveAsync();
+
+                        if (match.TournamentStage?.Type == StageType.GroupStage)
+                        {
+                            await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
+                            await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                        }
+                        if (match.TournamentStage?.Type == StageType.League)
+                        {
+                            await CheckAndCompleteLeague(match.TournamentId);
+                            await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                        }
+                        if (match.TournamentStage?.Type == StageType.Swiss)
+                        {
+                            // Swiss rounds don't pre-exist, so there is no CheckAndUnlockNextRound here —
+                            // the next round is paired and opened by the advance itself.
+                            await CheckAndAdvanceSwissStage(match);
+                        }
+                    }
+                }
+                else if (IsElimination(match.TournamentStage?.Type))
+                {
+                    if (match.TeamMatchId.HasValue)
+                    {
+                        // Persist the sub-match result before reading team match state
+                        await this.SaveAsync();
+                        await ProcessTeamMatchResult(match);
+                    }
+                    else
+                    {
+                        // Solo elimination
+                        if (winnerParticipientId == null)
+                            throw new Exception("Draws not allowed in elimination matches. Someone must win!");
+
+                        await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
+
+                        if (loserBracketMatch != null && loserParticipantId.HasValue)
+                            await AdvanceLoserToThirdPlace(match, loserParticipantId.Value, loserBracketMatch);
+
+                        await this.SaveAsync();
+
+                        // Swiss play-in: once the round is fully played, draw the knockout bracket
+                        // from the direct berths + play-in winners.
+                        if (match.TournamentStage?.Type == StageType.PlayIn)
+                            await CheckAndAdvancePlayInStage(match);
+
+                        // If this result placed a participant opposite a slot whose feeder was earlier
+                        // double-walkover'd, that participant now advances by walkover. No-op unless a
+                        // dead feeder exists. Runs last, on committed state (it clears the change tracker).
+                        await SettleForcedWalkovers(match.TournamentId);
                     }
                 }
             }
-            else if (IsElimination(match.TournamentStage?.Type))
+            finally
             {
-                if (match.TeamMatchId.HasValue)
-                {
-                    // Persist the sub-match result before reading team match state
-                    await this.SaveAsync();
-                    await ProcessTeamMatchResult(match);
-                }
-                else
-                {
-                    // Solo elimination
-                    if (winnerParticipientId == null)
-                        throw new Exception("Draws not allowed in elimination matches. Someone must win!");
-
-                    await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
-                    await this.SaveAsync();
-                }
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(tournamentId);
             }
 
             // Clear Cache
@@ -852,8 +2358,140 @@ namespace GameHubz.Logic.Services
             foreach (var userId in affectedUserIds)
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
-            await cacheService.RemoveAsync($"bracket:{request.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{request.TournamentId}");
+            // Result is now official → any "result to confirm" badge on these participants
+            // clears, and the schedule badge may change. Refresh both sides live.
+            foreach (var userId in affectedUserIds)
+                await this.badgeService.PushAsync(userId);
+
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+        }
+
+        private async Task SaveProposal(MatchEntity match, int homeScore, int awayScore, TokenUserInfo currentUser)
+        {
+            match.ProposedHomeScore = homeScore;
+            match.ProposedAwayScore = awayScore;
+            match.ProposedByUserId = currentUser.UserId;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+
+            // The opponent now has a result waiting for them — bump their badge and push.
+            await NotifyResultProposedAsync(match, currentUser);
+        }
+
+        // Notifies the participant who did NOT propose the result that one is awaiting their
+        // confirmation. Badge bump first (works even without a push token), then a fire-and-forget
+        // push with already-resolved data so the background send never touches this DbContext.
+        private async Task NotifyResultProposedAsync(MatchEntity match, TokenUserInfo proposer)
+        {
+            var homeUserId = match.HomeUserId ?? match.HomeParticipant?.UserId;
+            var awayUserId = match.AwayUserId ?? match.AwayParticipant?.UserId;
+
+            Guid? opponentUserId =
+                homeUserId == proposer.UserId ? awayUserId :
+                awayUserId == proposer.UserId ? homeUserId : null;
+
+            if (opponentUserId == null) return;
+
+            await this.badgeService.PushAsync(opponentUserId.Value);
+
+            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
+
+            var token = opponent.PushToken!;
+            var matchId = match.Id!.Value;
+            var proposerName = proposer.Username;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await notificationService.SendToOneAsync(
+                        token,
+                        "Result to confirm",
+                        $"{proposerName} reported a result. Tap to confirm or dispute.",
+                        new { matchId = matchId.ToString(), type = "resultProposed" });
+                }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        // Refreshes both sides' badges after a proposal is confirmed or rejected (the opponent's
+        // "results to confirm" count drops). Team sub-matches carry the player ids on the columns.
+        private async Task BumpMatchBadgesAsync(MatchEntity match)
+        {
+            var homeUserId = match.HomeUserId ?? match.HomeParticipant?.UserId;
+            var awayUserId = match.AwayUserId ?? match.AwayParticipant?.UserId;
+            if (homeUserId.HasValue) await this.badgeService.PushAsync(homeUserId.Value);
+            if (awayUserId.HasValue) await this.badgeService.PushAsync(awayUserId.Value);
+        }
+
+        // Fire-and-forget "you won" push to the champion (solo) or every member of the winning
+        // team. Tokens are resolved here in the request scope and handed to the background send.
+        private async Task NotifyTournamentWinnerAsync(TournamentEntity tournament)
+        {
+            try
+            {
+                List<Guid> winnerUserIds;
+
+                if (tournament.WinnerUserId.HasValue && tournament.WinnerUserId.Value != Guid.Empty)
+                {
+                    winnerUserIds = new List<Guid> { tournament.WinnerUserId.Value };
+                }
+                else if (tournament.WinnerTeamId.HasValue)
+                {
+                    var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(tournament.WinnerTeamId.Value);
+                    winnerUserIds = team?.Members
+                        .Where(m => m.UserId.HasValue)
+                        .Select(m => m.UserId!.Value)
+                        .ToList() ?? new List<Guid>();
+                }
+                else
+                {
+                    return;
+                }
+
+                if (winnerUserIds.Count == 0) return;
+
+                var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(winnerUserIds);
+                if (pushTokens.Count == 0) return;
+
+                var tournamentId = tournament.Id!.Value;
+                var title = tournament.Name;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await notificationService.SendToManyAsync(
+                            pushTokens,
+                            title,
+                            "Congratulations — you won the tournament! 🏆",
+                            new { tournamentId, type = "tournamentWon" });
+                    }
+                    catch { /* fire-and-forget */ }
+                });
+            }
+            catch { /* never let a win-notification failure break tournament completion */ }
+        }
+
+        private static bool IsMatchParticipant(MatchEntity match, Guid userId)
+        {
+            // Team sub-matches carry the player ids on the match itself; solo matches use the participants.
+            if (match.TeamMatchId.HasValue)
+                return match.HomeUserId == userId || match.AwayUserId == userId;
+
+            if (match.HomeParticipant?.UserId == userId || match.AwayParticipant?.UserId == userId)
+                return true;
+
+            // Team-tournament finals/group matches with a captain-led team can have the team members
+            // registered against the participant via the Team relationship.
+            if (match.HomeParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
+            if (match.AwayParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
+
+            return false;
         }
 
         public async Task<bool> GetCanRevert(Guid matchId)
@@ -865,12 +2503,46 @@ namespace GameHubz.Logic.Services
             if (match.Status != MatchStatus.Completed)
                 return false;
 
+            // Byes (Swiss) and other one-sided completions have no opponent — nothing to revert.
+            if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
+                return false;
+
             bool isParticipant = match.TeamMatchId.HasValue
                 ? match.HomeUserId == currentUser.UserId || match.AwayUserId == currentUser.UserId
                 : match.HomeParticipant?.UserId == currentUser.UserId || match.AwayParticipant?.UserId == currentUser.UserId;
 
             if (!isParticipant)
                 return false;
+
+            // In approval-required tournaments, confirmed results are locked to participants.
+            // Only admin / hub owner can revert (the structure endpoint's CanRevert is the
+            // authoritative source for the UI; this is the matching guard for direct callers).
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+            if (approvalCtx?.RequireResultApproval == true)
+                return false;
+
+            if (match.TeamMatchId.HasValue)
+            {
+                // Team sub-matches don't carry the Next* links; the downstream links live on the parent
+                // team match (next round + third-place play-off). Mirror the lock from UpdateMatchResult.
+                var parentTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(match.TeamMatchId.Value);
+
+                if (parentTeamMatch.NextTeamMatchId.HasValue)
+                {
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
+                    if (nextTeamMatch.Status != TeamMatchStatus.Pending)
+                        return false;
+                }
+
+                if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
+                {
+                    var thirdPlaceTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
+                    if (thirdPlaceTeamMatch.Status != TeamMatchStatus.Pending)
+                        return false;
+                }
+
+                return true;
+            }
 
             if (!match.NextMatchId.HasValue)
                 return true;
@@ -890,6 +2562,12 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<LeagueStandingDto>> GetLeagueStandings(Guid tournamentId)
         {
+            // Cache key intentionally mirrors the bracket: any write path that invalidates
+            // `bracket:{tournamentId}` also invalidates `league_standings:{tournamentId}`.
+            string cacheKey = $"league_standings:{tournamentId}";
+            var cached = await cacheService.GetAsync<List<LeagueStandingDto>>(cacheKey);
+            if (cached != null) return cached;
+
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             if (tournament == null) throw new Exception("Tournament not found");
 
@@ -914,6 +2592,8 @@ namespace GameHubz.Logic.Services
 
             for (int i = 0; i < standings!.Count; i++) standings[i].Position = i + 1;
 
+            await cacheService.SetAsync(cacheKey, standings, TimeSpan.FromMinutes(5));
+
             return standings;
         }
 
@@ -921,33 +2601,88 @@ namespace GameHubz.Logic.Services
 
         #region 5. Private Helpers (Core Logic)
 
-        private async Task UpdateLeagueStatistics(TournamentParticipantEntity? homePart, TournamentParticipantEntity? awayPart, int homeScore, int awayScore)
+        // Single source of truth for solo group / league stats: derives Wins/Draws/Losses/GF/GA/Points
+        // from the Match table. Idempotent — running it any number of times converges on the same
+        // result — so it is immune to drift from concurrent UpdateMatchResult / ApproveProposedResult
+        // calls, double-applied increments, or any other inconsistent revert/apply path.
+        //
+        // Cost per call (scoped to a single group, or to the whole league):
+        //   1 DB read — completed matches in scope, projected to a tiny no-tracking row (excludes
+        //               the current match: we apply its in-memory state instead so we don't need
+        //               an intermediate SaveAsync to make the new score visible to the query).
+        //   1 DB read — participants in scope (tracked, since we update them).
+        //   1 DB write — batched in the caller's SaveAsync alongside the match update.
+        private async Task ResyncSoloLeagueStatistics(MatchEntity match)
         {
-            homePart.GoalsFor += homeScore; homePart.GoalsAgainst += awayScore;
-            awayPart.GoalsFor += awayScore; awayPart.GoalsAgainst += homeScore;
+            if (!match.TournamentStageId.HasValue) return;
 
-            if (homeScore > awayScore) { homePart.Wins++; homePart.Points += 3; awayPart.Losses++; }
-            else if (awayScore > homeScore) { awayPart.Wins++; awayPart.Points += 3; homePart.Losses++; }
-            else { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
+            var otherMatchStats = await this.AppUnitOfWork.MatchRepository.GetCompletedSoloMatchStatsForGroup(
+                match.TournamentStageId.Value,
+                match.TournamentGroupId,
+                excludeMatchId: match.Id);
 
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+            var participants = match.TournamentGroupId.HasValue
+                ? await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(match.TournamentGroupId.Value)
+                : await this.AppUnitOfWork.TournamentParticipantRepository.GetForLeagueResync(match.TournamentId);
+
+            if (participants.Count == 0) return;
+
+            var byId = participants.Where(p => p.Id.HasValue).ToDictionary(p => p.Id!.Value, p => p);
+
+            foreach (var p in participants)
+            {
+                p.Points = 0; p.Wins = 0; p.Draws = 0; p.Losses = 0;
+                p.GoalsFor = 0; p.GoalsAgainst = 0;
+            }
+
+            foreach (var m in otherMatchStats)
+                ApplyMatchStats(byId, m.HomeParticipantId, m.AwayParticipantId, m.HomeScore, m.AwayScore, m.WinnerParticipantId);
+
+            // Fold in the current match using its in-memory state — fresher than the DB.
+            if (match.Status == MatchStatus.Completed
+                && match.TeamMatchId == null
+                && match.HomeParticipantId.HasValue
+                && match.AwayParticipantId.HasValue)
+            {
+                ApplyMatchStats(
+                    byId,
+                    match.HomeParticipantId.Value,
+                    match.AwayParticipantId.Value,
+                    match.HomeUserScore ?? 0,
+                    match.AwayUserScore ?? 0,
+                    match.WinnerParticipantId);
+            }
+
+            foreach (var p in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
         }
 
-        private async Task RevertLeagueStatistics(MatchEntity match)
+        private static void ApplyMatchStats(
+            Dictionary<Guid, TournamentParticipantEntity> byId,
+            Guid homeId,
+            Guid? awayId,
+            int homeScore,
+            int awayScore,
+            Guid? winnerId)
         {
-            var homePart = match.HomeParticipant ?? await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.HomeParticipantId!.Value);
-            var awayPart = match.AwayParticipant ?? await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(match.AwayParticipantId!.Value);
+            if (!byId.TryGetValue(homeId, out var home)) return;
 
-            homePart.GoalsFor -= match.HomeUserScore ?? 0; homePart.GoalsAgainst -= match.AwayUserScore ?? 0;
-            awayPart.GoalsFor -= match.AwayUserScore ?? 0; awayPart.GoalsAgainst -= match.HomeUserScore ?? 0;
+            // Swiss bye: no opponent — the sitting player banks a free win, no goals involved.
+            // Mirror of the eager bye credit in BuildSwissRoundMatches — keep the two in sync.
+            if (!awayId.HasValue)
+            {
+                if (winnerId == home.Id) { home.Wins++; home.Points += 3; }
+                return;
+            }
 
-            if (match.WinnerParticipantId == homePart.Id) { homePart.Wins--; homePart.Points -= 3; awayPart.Losses--; }
-            else if (match.WinnerParticipantId == awayPart.Id) { awayPart.Wins--; awayPart.Points -= 3; homePart.Losses--; }
-            else { homePart.Draws--; homePart.Points -= 1; awayPart.Draws--; awayPart.Points -= 1; }
+            if (!byId.TryGetValue(awayId.Value, out var away)) return;
 
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+            home.GoalsFor += homeScore; home.GoalsAgainst += awayScore;
+            away.GoalsFor += awayScore; away.GoalsAgainst += homeScore;
+
+            if (winnerId == home.Id) { home.Wins++; home.Points += 3; away.Losses++; }
+            else if (winnerId == away.Id) { away.Wins++; away.Points += 3; home.Losses++; }
+            else { home.Draws++; home.Points += 1; away.Draws++; away.Points += 1; }
         }
 
         private async Task RevertTeamLeagueMatchStats(MatchEntity subMatch)
@@ -985,6 +2720,7 @@ namespace GameHubz.Logic.Services
             teamMatch.WinnerTeamParticipantId = null;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            bool revertedTournament = false;
             if (subMatch.TournamentStage?.Type == StageType.League)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
@@ -994,20 +2730,54 @@ namespace GameHubz.Logic.Services
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
+                    revertedTournament = true;
                 }
             }
 
             await this.SaveAsync();
 
+            // Detach AFTER SaveAsync. Detaching a Modified entry BEFORE save drops the change
+            // (the previous tournament DetachEntity above silently lost the InProgress revert),
+            // and leaving teamMatch tracked after save crashes the downstream
+            // ProcessTeamMatchResult -> ProcessTeamMatchResultInner reload+UpdateEntity at the
+            // "another instance with the same key is already tracked" check.
             await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
             await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+            if (revertedTournament)
+                await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
         }
 
-        private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch)
+        private async Task RevertEliminationResult(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch)
         {
+            // DE Grand Final with a reset child: reverting the GF removes the reset final entirely
+            // (it only exists because the LB champion won this match). The caller's downstream lock
+            // already refuses this when the reset has progressed, so here the reset is still Pending.
+            if (match.Stage == MatchStage.GrandFinal && nextMatch != null && nextMatch.Stage == MatchStage.GrandFinalReset)
+            {
+                await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(nextMatch);
+                match.NextMatchId = null;
+                match.NextMatchHomeAwaySlot = null;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+
+                // The reset being Pending means the tournament is still in progress, so there is
+                // normally nothing to roll back — but cover the edge where it was completed anyway.
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                if (tournament.Status == TournamentStatus.Completed)
+                {
+                    tournament.Status = TournamentStatus.InProgress;
+                    tournament.WinnerUserId = null;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                    await this.SaveAsync();
+                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
+                }
+                return;
+            }
+
             if (nextMatch == null)
             {
+                // Reverting either terminal match (the final or the third-place play-off) means the
+                // tournament is no longer fully played, so roll back a previously-published winner/status.
                 if (match.WinnerParticipantId.HasValue)
                 {
                     var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
@@ -1016,6 +2786,11 @@ namespace GameHubz.Logic.Services
                         tournament.Status = TournamentStatus.InProgress;
                         tournament.WinnerUserId = null;
                         await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        // Save+detach NOW. The previous detach-without-save dropped the Modified
+                        // state before the caller's SaveAsync ran, silently losing the revert.
+                        // The detach is still required so AdvanceWinnerToNextMatch's terminal branch
+                        // can reload the tournament without a tracking-key conflict.
+                        await this.SaveAsync();
                         await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
                     }
                 }
@@ -1048,6 +2823,41 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
                 }
             }
+
+            // Reverting a semi-final must also pull its loser back out of the third-place play-off.
+            if (loserBracketMatch != null && match.WinnerParticipantId.HasValue)
+            {
+                Guid? loserId = match.WinnerParticipantId.Value == match.HomeParticipantId
+                    ? match.AwayParticipantId
+                    : match.HomeParticipantId;
+
+                if (loserId.HasValue)
+                {
+                    bool loserChanged = false;
+                    if (loserBracketMatch.HomeParticipantId == loserId)
+                    {
+                        loserBracketMatch.HomeParticipantId = null;
+                        loserChanged = true;
+                    }
+                    else if (loserBracketMatch.AwayParticipantId == loserId)
+                    {
+                        loserBracketMatch.AwayParticipantId = null;
+                        loserChanged = true;
+                    }
+
+                    if (loserChanged)
+                    {
+                        if (loserBracketMatch.Status == MatchStatus.Completed)
+                        {
+                            loserBracketMatch.Status = MatchStatus.Pending;
+                            loserBracketMatch.HomeUserScore = 0;
+                            loserBracketMatch.AwayUserScore = 0;
+                            loserBracketMatch.WinnerParticipantId = null;
+                        }
+                        await this.AppUnitOfWork.MatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
+                    }
+                }
+            }
         }
 
         private async Task RevertTeamMatchResult(MatchEntity subMatch)
@@ -1064,14 +2874,31 @@ namespace GameHubz.Logic.Services
             teamMatch.Status = TeamMatchStatus.Pending;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
-            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+            // DE Grand Final with a reset child: reverting the GF deletes the reset final entirely
+            // (it exists only because the LB champion won). The caller's downstream lock already
+            // refuses this once the reset has progressed, so here the reset is still Pending.
+            if (teamMatch.IsGrandFinal && teamMatch.NextTeamMatchId.HasValue)
+            {
+                var resetMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
+                if (resetMatch != null && resetMatch.IsGrandFinalReset)
+                {
+                    foreach (var sm in resetMatch.SubMatches)
+                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+                    await this.AppUnitOfWork.TeamMatchRepository.HardDeleteEntity(resetMatch);
 
-            if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+                    teamMatch.NextTeamMatchId = null;
+                    teamMatch.NextTeamMatchHomeAwaySlot = null;
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
+                }
+            }
+            else if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
             {
                 var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
                 if (nextTeamMatch != null)
                 {
-                    bool isHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                    bool isHomeSlot = teamMatch.NextTeamMatchHomeAwaySlot.HasValue
+                        ? teamMatch.NextTeamMatchHomeAwaySlot.Value == 0
+                        : (teamMatch.MatchOrder % 2) == 0;
                     if (isHomeSlot)
                         nextTeamMatch.HomeTeamParticipantId = null;
                     else
@@ -1091,7 +2918,44 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
                 }
             }
-            else if (!teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+
+            // Reverting a match must also pull its loser back out of the drop-in target —
+            // the third-place play-off (single-elim) or the Losers Bracket match (double-elim).
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue && oldWinner.HasValue)
+            {
+                var loserId = oldWinner.Value == teamMatch.HomeTeamParticipantId
+                    ? teamMatch.AwayTeamParticipantId
+                    : teamMatch.HomeTeamParticipantId;
+
+                var loserBracketMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchLoserBracketId.Value);
+                if (loserBracketMatch != null && loserId.HasValue)
+                {
+                    bool loserIsHomeSlot = teamMatch.NextTeamMatchLoserBracketHomeAwaySlot.HasValue
+                        ? teamMatch.NextTeamMatchLoserBracketHomeAwaySlot.Value == 0
+                        : (teamMatch.MatchOrder % 2) == 0;
+                    if (loserIsHomeSlot)
+                        loserBracketMatch.HomeTeamParticipantId = null;
+                    else
+                        loserBracketMatch.AwayTeamParticipantId = null;
+
+                    foreach (var sm in loserBracketMatch.SubMatches)
+                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+
+                    if (loserBracketMatch.Status == TeamMatchStatus.Completed)
+                    {
+                        loserBracketMatch.WinnerTeamParticipantId = null;
+                        loserBracketMatch.Status = TeamMatchStatus.Pending;
+                    }
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
+                }
+            }
+
+            // Reverting any completed elimination result means the tournament is no longer fully played,
+            // so roll back a previously-published winner/Completed status (covers final, third-place and
+            // semi-final cascades alike).
+            bool revertedTournament = false;
+            if (oldWinner.HasValue)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
                 if (tournament.Status == TournamentStatus.Completed)
@@ -1100,18 +2964,57 @@ namespace GameHubz.Logic.Services
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                    await this.AppUnitOfWork.TournamentRepository.DetachEntity(tournament);
+                    revertedTournament = true;
                 }
             }
 
             await this.SaveAsync();
+
+            // Detach AFTER SaveAsync. The previous in-place DetachEntity calls (teamMatch above,
+            // tournament here) ran BEFORE this save and dropped their Modified state — so
+            // teamMatch.Status=Pending and tournament.Status=InProgress were silently never
+            // written. Leaving nextTeamMatch / thirdPlaceMatch tracked through the function
+            // return ALSO crashes the downstream ProcessTeamMatchResultInner reload+UpdateEntity
+            // at "another instance with the same key is already tracked".
+            await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
+            if (teamMatch.NextTeamMatchId.HasValue && oldWinner.HasValue)
+                await this.AppUnitOfWork.TeamMatchRepository.DetachById(teamMatch.NextTeamMatchId.Value);
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue && oldWinner.HasValue)
+                await this.AppUnitOfWork.TeamMatchRepository.DetachById(teamMatch.NextTeamMatchLoserBracketId.Value);
+            if (revertedTournament)
+                await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
         }
 
         private async Task AdvanceWinnerToNextMatch(MatchEntity match, Guid winnerId, Guid? winnerUserId, MatchEntity? nextMatch)
         {
-            if (nextMatch != null)
+            // Grand Final handling comes first: the GF never feeds a normal next match, and a stale
+            // nextMatch reference can survive a revert that deleted the reset final — ignore it here.
+            if (match.Stage == MatchStage.GrandFinal)
             {
-                bool isHomeSlot = (match.MatchOrder % 2) == 0;
+                // Home = WB champion (entered undefeated); away = LB champion (one loss). If the WB
+                // champion wins, the title is decided. If the LB champion wins, both now hold one
+                // loss → a single reset Grand Final is created and played to decide the title.
+                bool lbChampionWon = match.WinnerParticipantId.HasValue
+                    && match.WinnerParticipantId == match.AwayParticipantId;
+
+                if (lbChampionWon)
+                    await CreateGrandFinalReset(match);
+                else
+                    await CompleteSoloTournament(match.TournamentId, winnerUserId);
+            }
+            else if (match.Stage == MatchStage.GrandFinalReset)
+            {
+                // Reset final: its winner is the champion.
+                await CompleteSoloTournament(match.TournamentId, winnerUserId);
+            }
+            else if (nextMatch != null)
+            {
+                // DE pre-computes the destination slot to handle LB drop-ins (WB-loser → away,
+                // LB-winner → home) where the legacy MatchOrder%2 pairing doesn't hold. Single
+                // elimination leaves the override null and falls through to MatchOrder%2.
+                bool isHomeSlot = match.NextMatchHomeAwaySlot.HasValue
+                    ? match.NextMatchHomeAwaySlot.Value == 0
+                    : (match.MatchOrder % 2) == 0;
 
                 if (isHomeSlot)
                     nextMatch.HomeParticipantId = winnerId;
@@ -1122,14 +3025,97 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                // Single-elim terminal: the championship final or the third-place play-off. With a
+                // third-place play-off the tournament is finished only once BOTH are played, and the
+                // champion is always the winner of the final (never the third-place match).
+                var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(match.TournamentStageId!.Value);
+                var finalMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
+                var thirdPlaceMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.ThirdPlace);
 
-                tournament.WinnerUserId = winnerUserId;
-                tournament.Status = TournamentStatus.Completed;
-                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                // The in-flight match isn't saved as Completed yet, so treat it as done via the Id shortcut.
+                bool finalDone = finalMatch != null && (finalMatch.Id == match.Id || finalMatch.Status == MatchStatus.Completed);
+                bool thirdPlaceDone = thirdPlaceMatch == null || thirdPlaceMatch.Id == match.Id || thirdPlaceMatch.Status == MatchStatus.Completed;
 
-                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                if (finalDone && thirdPlaceDone)
+                {
+                    var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                    bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+
+                    tournament.WinnerUserId = finalMatch!.Id == match.Id
+                        ? winnerUserId
+                        : await ResolveParticipantUserId(finalMatch.WinnerParticipantId);
+                    tournament.Status = TournamentStatus.Completed;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+                    if (!wasCompleted)
+                    {
+                        await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                        await NotifyTournamentWinnerAsync(tournament);
+                    }
+                }
             }
+        }
+
+        private async Task CompleteSoloTournament(Guid tournamentId, Guid? winnerUserId)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+            bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+            tournament.WinnerUserId = winnerUserId;
+            tournament.Status = TournamentStatus.Completed;
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            if (!wasCompleted)
+            {
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
+        }
+
+        // Lazily creates the reset Grand Final when the Losers Bracket champion wins the first one.
+        // Idempotent (a re-finalize that didn't first revert is a no-op). Links GF1.NextMatchId →
+        // reset so the existing downstream-lock + revert machinery treats the reset as the round
+        // that progressed past the Grand Final.
+        private async Task CreateGrandFinalReset(MatchEntity grandFinal)
+        {
+            if (grandFinal.NextMatchId.HasValue) return;
+
+            var reset = CreateMatch(
+                grandFinal.TournamentId,
+                grandFinal.TournamentStageId!.Value,
+                (grandFinal.RoundNumber ?? 1) + 1,
+                MatchStage.GrandFinalReset,
+                0,
+                DateTime.UtcNow);
+            reset.HomeParticipantId = grandFinal.HomeParticipantId; // WB champion
+            reset.AwayParticipantId = grandFinal.AwayParticipantId; // LB champion
+            await this.AppUnitOfWork.MatchRepository.AddEntity(reset, this.UserContextReader);
+
+            grandFinal.NextMatchId = reset.Id;
+            grandFinal.NextMatchHomeAwaySlot = 0;
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(grandFinal, this.UserContextReader);
+        }
+
+        private async Task<Guid?> ResolveParticipantUserId(Guid? participantId)
+        {
+            if (!participantId.HasValue) return null;
+            var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(participantId.Value);
+            return participant.UserId;
+        }
+
+        private async Task AdvanceLoserToThirdPlace(MatchEntity match, Guid loserId, MatchEntity thirdPlaceMatch)
+        {
+            // Default (single-elim 3rd-place): semi-final order 0 loser → home, order 1 loser → away.
+            // DE overrides this via NextMatchLoserBracketHomeAwaySlot — the WB loser always takes
+            // the away slot of its target LB match (the home slot is reserved for the LB winner).
+            bool isHomeSlot = match.NextMatchLoserBracketHomeAwaySlot.HasValue
+                ? match.NextMatchLoserBracketHomeAwaySlot.Value == 0
+                : (match.MatchOrder % 2) == 0;
+
+            if (isHomeSlot)
+                thirdPlaceMatch.HomeParticipantId = loserId;
+            else
+                thirdPlaceMatch.AwayParticipantId = loserId;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(thirdPlaceMatch, this.UserContextReader);
         }
 
         private async Task CheckAndCompleteLeague(Guid tournamentId)
@@ -1150,6 +3136,11 @@ namespace GameHubz.Logic.Services
                     return;
             }
 
+            // The 5-minute standings cache may predate the result that just finished the league
+            // (the bracket-wide invalidation in FinalizeMatchResult only runs after this method),
+            // so drop it first — the winner must come from fresh data.
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+
             var tournamentStandings = await this.GetLeagueStandings(tournamentId);
             var winnerStanding = tournamentStandings.FirstOrDefault();
 
@@ -1166,10 +3157,376 @@ namespace GameHubz.Logic.Services
                 tournament.WinnerUserId = winnerStanding?.UserId ?? Guid.Empty;
             }
 
+            // Re-edits of an already-completed tournament refresh the winner but must not
+            // emit a second "tournament completed" activity / notification.
+            bool wasCompleted = tournament.Status == TournamentStatus.Completed;
             tournament.Status = TournamentStatus.Completed;
 
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+            if (!wasCompleted)
+            {
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
+        }
+
+        /// <summary>
+        /// Swiss advance, called after every completed Swiss match (stats already resynced and
+        /// saved): once the current round fully completes, either pairs the next round from the
+        /// fresh standings or — after the configured number of rounds — completes the tournament
+        /// with the standings leader as winner. Re-edits of older rounds are a no-op (the later
+        /// round already exists), matching how league edits behave.
+        /// </summary>
+        private async Task CheckAndAdvanceSwissStage(MatchEntity completedMatch)
+        {
+            Guid tournamentId = completedMatch.TournamentId;
+            Guid stageId = completedMatch.TournamentStageId!.Value;
+            int completedRound = completedMatch.RoundNumber ?? 1;
+
+            var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
+
+            var currentRound = stageMatches.Where(m => (m.RoundNumber ?? 1) == completedRound).ToList();
+            if (currentRound.Count == 0 || !currentRound.All(m => m.Status == MatchStatus.Completed))
+                return;
+
+            // Re-editing an old result must not pair a new round — later rounds already exist.
+            // (Also narrows the race window when the round's last two results land concurrently.)
+            if (stageMatches.Any(m => (m.RoundNumber ?? 1) > completedRound))
+                return;
+
+            var participants = completedMatch.TournamentGroupId.HasValue
+                ? await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(completedMatch.TournamentGroupId.Value)
+                : await this.AppUnitOfWork.TournamentParticipantRepository.GetForLeagueResync(tournamentId);
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+            int totalRounds = GetSwissTotalRounds(participants.Count, tournament.SwissRoundsCount);
+
+            // Buchholz from the freshly-resynced participant Points and the full match list of
+            // this stage. Shared by the final-round branch (winner / post-stage seeding) and the
+            // next-round pairing branch below.
+            var opponentPointsSum = ComputeSwissOpponentPointsSum(participants, stageMatches);
+
+            if (completedRound >= totalRounds)
+            {
+                var (knockoutSize, directBerths) = GetSwissKnockoutConfig(tournament);
+                if (knockoutSize.HasValue)
+                    await AdvanceSwissToPostStage(tournament, participants, knockoutSize.Value, directBerths!.Value, opponentPointsSum, stageMatches);
+                else
+                    await CompleteSwissTournament(tournament, participants, opponentPointsSum, stageMatches);
+                return;
+            }
+
+            // Opponents already faced and byes already granted, derived from the match table.
+            var playedPairs = new HashSet<(Guid, Guid)>();
+            var byeCounts = new Dictionary<Guid, int>();
+            foreach (var m in stageMatches)
+            {
+                if (m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue)
+                    playedPairs.Add((m.HomeParticipantId.Value, m.AwayParticipantId.Value));
+                else if (m.HomeParticipantId.HasValue)
+                    byeCounts[m.HomeParticipantId.Value] = byeCounts.GetValueOrDefault(m.HomeParticipantId.Value) + 1;
+            }
+
+            var ordered = OrderForSwissStandings(participants, opponentPointsSum, stageMatches);
+
+            var roundDuration = CalculateRoundDuration(tournament.RoundDurationMinutes);
+            var (nextRoundMatches, byeParticipant) = BuildSwissRoundMatches(
+                tournamentId,
+                stageId,
+                completedMatch.TournamentGroupId,
+                completedRound + 1,
+                ordered,
+                playedPairs,
+                byeCounts,
+                roundDuration);
+
+            foreach (var m in nextRoundMatches)
+                await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
+
+            if (byeParticipant != null)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(byeParticipant, this.UserContextReader);
+
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// Swiss rounds are done and a knockout is configured: freezes the final standings into
+        /// Seed (1..n) and seeds the next stage — either the play-in round (ranks D+1 .. D+2K
+        /// paired best-vs-worst) or, with no play-in, the knockout bracket itself (1 vs N,
+        /// 2 vs N-1, …). Idempotent: once the post stage has matches, later Swiss edits only
+        /// affect the displayed table — same semantics as group-stage edits after the draw.
+        /// </summary>
+        private async Task AdvanceSwissToPostStage(
+            TournamentEntity tournament,
+            List<TournamentParticipantEntity> participants,
+            int knockoutSize,
+            int directBerths,
+            Dictionary<Guid, int> opponentPointsSum,
+            IEnumerable<MatchEntity> matches)
+        {
+            Guid tournamentId = tournament.Id!.Value;
+            bool hasPlayIn = directBerths < knockoutSize;
+
+            var postStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
+            if (postStage == null) return;
+            if (hasPlayIn)
+            {
+                if (postStage.Type != StageType.PlayIn) return;
+            }
+            else if (postStage.Type != StageType.SingleEliminationBracket
+                     && postStage.Type != StageType.DoubleEliminationWinnersBracket)
+            {
+                // Direct-to-knockout: single-elim or the Winners-Bracket stage of a double-elim knockout.
+                return;
+            }
+
+            if (await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(postStage.Id!.Value)) return;
+
+            // Freeze the qualification rank into Seed — it drives the play-in pairs and the
+            // bracket slots, and the UI shows it next to every player.
+            var ordered = OrderForSwissStandings(participants, opponentPointsSum, matches);
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                if (ordered[i].Seed != i + 1)
+                {
+                    ordered[i].Seed = i + 1;
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(ordered[i], this.UserContextReader);
+                }
+            }
+
+            if (hasPlayIn)
+            {
+                int playInPairs = knockoutSize - directBerths;
+                var pool = ordered.Skip(directBerths).Take(playInPairs * 2).ToList();
+
+                // Guarded at bracket creation, but participants are the source of truth here.
+                if (pool.Count < playInPairs * 2)
+                    throw new Exception($"Play-in needs {playInPairs * 2} players below rank {directBerths}, found {pool.Count}.");
+
+                DateTime openAt = DateTime.UtcNow;
+                TimeSpan? duration = CalculateRoundDuration(tournament.RoundDurationMinutes);
+                DateTime? deadline = duration.HasValue ? openAt + duration.Value : null;
+
+                for (int i = 0; i < playInPairs; i++)
+                {
+                    var m = CreateMatch(tournamentId, postStage.Id!.Value, 1, MatchStage.PlayIn, i);
+                    m.HomeParticipantId = pool[i].Id;
+                    m.AwayParticipantId = pool[pool.Count - 1 - i].Id;
+                    m.RoundOpenAt = openAt;
+                    m.RoundDeadline = deadline;
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
+                }
+            }
+            else
+            {
+                await GenerateSwissKnockoutMatches(tournament, postStage, ordered.Take(knockoutSize).ToList(), playInMatches: null);
+            }
+
+            await this.SaveAsync();
+        }
+
+        /// <summary>
+        /// All play-in matches are done: the direct berths (standings 1..D) and the play-in
+        /// winners (ordered by their own standings rank) form the knockout field, bracketed
+        /// 1 vs N, 2 vs N-1, … Idempotent via the empty-knockout check.
+        /// </summary>
+        private async Task CheckAndAdvancePlayInStage(MatchEntity completedMatch)
+        {
+            Guid tournamentId = completedMatch.TournamentId;
+            Guid playInStageId = completedMatch.TournamentStageId!.Value;
+
+            var playInMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(playInStageId);
+            if (playInMatches.Count == 0 || playInMatches.Any(m => m.Status != MatchStatus.Completed)) return;
+
+            var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+            if (knockoutStage == null) return;
+            if (knockoutStage.Type != StageType.SingleEliminationBracket
+                && knockoutStage.Type != StageType.DoubleEliminationWinnersBracket) return;
+            if (await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value)) return;
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+            var (knockoutSize, directBerths) = GetSwissKnockoutConfig(tournament);
+            if (!knockoutSize.HasValue) return;
+
+            // All participants (they live in the Swiss group); Seed holds the frozen
+            // final-standings rank assigned by AdvanceSwissToPostStage.
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetEntitiesByTournamentId(tournamentId);
+            var bySeed = participants.OrderBy(p => p.Seed ?? int.MaxValue).ToList();
+
+            var winnerIds = playInMatches
+                .Where(m => m.WinnerParticipantId.HasValue)
+                .Select(m => m.WinnerParticipantId!.Value)
+                .ToHashSet();
+
+            var qualifiers = bySeed.Take(directBerths!.Value)
+                .Concat(bySeed.Where(p => p.Id.HasValue && winnerIds.Contains(p.Id.Value)))
+                .ToList();
+
+            if (qualifiers.Count != knockoutSize.Value)
+                throw new Exception($"Play-in produced {qualifiers.Count} qualifiers, expected {knockoutSize.Value}.");
+
+            await GenerateSwissKnockoutMatches(tournament, knockoutStage, qualifiers, playInMatches);
+            await this.SaveAsync();
+        }
+
+        // qualifiers[0] is the top seed. Standard bracket spread (1 vs N, 2 vs N-1, …), then each
+        // play-in match gets its NextMatchId pointed at the R1 match its winner landed in, so the
+        // ordinary revert / re-advance machinery covers play-in edits with no special-casing.
+        private async Task GenerateSwissKnockoutMatches(
+            TournamentEntity tournament,
+            TournamentStageEntity knockoutStage,
+            List<TournamentParticipantEntity> qualifiersInSeedOrder,
+            List<MatchEntity>? playInMatches)
+        {
+            var seedOrder = GetStandardSeedOrder(qualifiersInSeedOrder.Count);
+            var slots = seedOrder
+                .Select(s => (TournamentParticipantEntity?)qualifiersInSeedOrder[s - 1])
+                .ToList();
+
+            // The knockout style is encoded in the stage created up-front: a Winners-Bracket stage
+            // means the organizer chose double-elimination, with a Losers-Bracket stage right after it.
+            bool useDouble = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
+
+            List<MatchEntity> matches;
+            if (useDouble)
+            {
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository
+                    .GetByOrder(tournament.Id!.Value, knockoutStage.Order + 1);
+                if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
+
+                matches = GenerateDoubleEliminationMatches(
+                    tournament.Id!.Value, knockoutStage.Id!.Value, lbStage.Id!.Value, slots);
+            }
+            else
+            {
+                matches = GenerateEliminationMatches(
+                    tournament.Id!.Value, knockoutStage.Id!.Value, slots, tournament.HasThirdPlaceMatch);
+            }
+
+            foreach (var m in matches)
+                await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
+
+            if (playInMatches == null) return;
+
+            // Play-in winners feed round 1 of the (winners) bracket. Restrict to the knockout stage
+            // so LB round-1 matches (also RoundNumber 1, different stage) are never picked up.
+            var firstRound = matches
+                .Where(m => m.RoundNumber == 1 && m.TournamentStageId == knockoutStage.Id!.Value)
+                .OrderBy(m => m.MatchOrder)
+                .ToList();
+
+            foreach (var playInMatch in playInMatches)
+            {
+                if (!playInMatch.WinnerParticipantId.HasValue) continue;
+
+                for (int slot = 0; slot < slots.Count; slot++)
+                {
+                    if (slots[slot]?.Id != playInMatch.WinnerParticipantId) continue;
+
+                    playInMatch.NextMatchId = firstRound[slot / 2].Id;
+                    playInMatch.NextMatchHomeAwaySlot = slot % 2;
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(playInMatch, this.UserContextReader);
+                    break;
+                }
+            }
+        }
+
+        // Winner comes straight from the freshly-resynced participant entities — deliberately
+        // not GetLeagueStandings, whose 5-minute cache may predate the final result.
+        private async Task CompleteSwissTournament(
+            TournamentEntity tournament,
+            List<TournamentParticipantEntity> participants,
+            Dictionary<Guid, int> opponentPointsSum,
+            IEnumerable<MatchEntity> matches)
+        {
+            var winner = OrderForSwissStandings(participants, opponentPointsSum, matches).FirstOrDefault();
+            if (winner == null) return;
+
+            // Re-edits of the final round refresh the winner but must not emit a second
+            // "tournament completed" activity.
+            bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+
+            tournament.WinnerUserId = winner.UserId;
+            tournament.Status = TournamentStatus.Completed;
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            await this.SaveAsync();
+
+            if (!wasCompleted)
+            {
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
+        }
+
+        // Standings order shared by Swiss pairing and winner selection. Tiebreaker chain:
+        //   points → Buchholz (sum of opponents' points) → goal difference → head-to-head → goals for → random seed.
+        // Buchholz is the standard Swiss-tournament tiebreaker — rewards facing tougher schedules.
+        // Head-to-head (applied among rows tied on points+Buchholz+GD) is threaded in so the actual
+        // qualification/winner order matches the displayed standings table — see BuildGroupStandings.
+        // Byes contribute 0 (no opponent). `opponentPointsSum`/`matches` may be null for legacy callers
+        // that don't have the stage's data at hand (those fall back to the shorter chain).
+        private static List<TournamentParticipantEntity> OrderForSwissStandings(
+            List<TournamentParticipantEntity> participants,
+            Dictionary<Guid, int>? opponentPointsSum = null,
+            IEnumerable<MatchEntity>? matches = null)
+        {
+            var ordered = participants
+                .OrderByDescending(p => p.Points)
+                .ThenByDescending(p => opponentPointsSum != null && p.Id.HasValue
+                    ? opponentPointsSum.GetValueOrDefault(p.Id.Value)
+                    : 0)
+                .ThenByDescending(p => p.GoalsFor - p.GoalsAgainst)
+                .ThenByDescending(p => p.GoalsFor)
+                .ThenBy(p => p.Seed ?? 999)
+                .ToList();
+
+            // Head-to-head among players tied on points+Buchholz+GD — mirrors the displayed table.
+            // Rows still tied after H2H keep their inbound order, so goals-for → seed remain the
+            // final word (matching BuildGroupStandings, which falls back to goals-for → name).
+            if (matches != null)
+            {
+                ResolveHeadToHeadInTiedChunks(
+                    ordered,
+                    p => p.Id!.Value,
+                    p => (p.Points,
+                          opponentPointsSum != null && p.Id.HasValue ? opponentPointsSum.GetValueOrDefault(p.Id.Value) : 0,
+                          p.GoalsFor - p.GoalsAgainst),
+                    matches);
+            }
+
+            return ordered;
+        }
+
+        // Buchholz score for every participant: sum of Points of every opponent actually played
+        // (one contribution per completed match, so a forced rematch counts twice — standard
+        // Buchholz). Byes (no away side) and still-pending matches contribute nothing: counting
+        // a freshly-paired but unplayed opponent would bump everyone's OPP the moment a round is
+        // drawn. In the advance path all stage matches are completed, so the filter is a no-op
+        // there — it only corrects the mid-round standings display. O(matches + participants).
+        private static Dictionary<Guid, int> ComputeSwissOpponentPointsSum(
+            List<TournamentParticipantEntity> participants,
+            IEnumerable<MatchEntity> matches)
+        {
+            var pointsById = participants
+                .Where(p => p.Id.HasValue)
+                .ToDictionary(p => p.Id!.Value, p => p.Points);
+
+            var result = new Dictionary<Guid, int>(participants.Count);
+            foreach (var p in participants)
+                if (p.Id.HasValue) result[p.Id.Value] = 0;
+
+            foreach (var m in matches)
+            {
+                if (m.Status != MatchStatus.Completed) continue;
+                if (!m.HomeParticipantId.HasValue || !m.AwayParticipantId.HasValue) continue;
+                var home = m.HomeParticipantId.Value;
+                var away = m.AwayParticipantId.Value;
+                if (pointsById.TryGetValue(away, out int awayPoints) && result.ContainsKey(home))
+                    result[home] += awayPoints;
+                if (pointsById.TryGetValue(home, out int homePoints) && result.ContainsKey(away))
+                    result[away] += homePoints;
+            }
+            return result;
         }
 
         private async Task ProcessTeamMatchResult(MatchEntity completedSubMatch)
@@ -1299,6 +3656,7 @@ namespace GameHubz.Logic.Services
                     await CheckAndCompleteLeague(teamMatch.TournamentId);
 
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
@@ -1311,6 +3669,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
                 await this.SaveAsync();
                 await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
@@ -1321,12 +3680,43 @@ namespace GameHubz.Logic.Services
             teamMatch.Status = TeamMatchStatus.Completed;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            // Route the loser into its drop-in target: the third-place play-off (single-elim) or
+            // the Losers Bracket match (double-elim). The slot override pins the DE destination
+            // (a WB loser always lands in the away slot); single-elim leaves it null → MatchOrder%2.
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue)
+            {
+                var loserTeamParticipantId = winnerTeamParticipantId == teamMatch.HomeTeamParticipantId
+                    ? teamMatch.AwayTeamParticipantId
+                    : teamMatch.HomeTeamParticipantId;
+
+                if (loserTeamParticipantId.HasValue)
+                {
+                    var loserBracketMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchLoserBracketId.Value);
+
+                    bool loserIsHomeSlot = teamMatch.NextTeamMatchLoserBracketHomeAwaySlot.HasValue
+                        ? teamMatch.NextTeamMatchLoserBracketHomeAwaySlot.Value == 0
+                        : (teamMatch.MatchOrder % 2) == 0;
+                    if (loserIsHomeSlot)
+                        loserBracketMatch.HomeTeamParticipantId = loserTeamParticipantId;
+                    else
+                        loserBracketMatch.AwayTeamParticipantId = loserTeamParticipantId;
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
+
+                    // Once both sides are in, create the drop-in target's sub-matches.
+                    if (loserBracketMatch.HomeTeamParticipantId.HasValue && loserBracketMatch.AwayTeamParticipantId.HasValue)
+                        await CreateSubMatchesForTeamMatch(loserBracketMatch);
+                }
+            }
+
             // Advance or complete
             if (teamMatch.NextTeamMatchId.HasValue)
             {
                 var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchId.Value);
 
-                bool isHomeSlot = (teamMatch.MatchOrder % 2) == 0;
+                bool isHomeSlot = teamMatch.NextTeamMatchHomeAwaySlot.HasValue
+                    ? teamMatch.NextTeamMatchHomeAwaySlot.Value == 0
+                    : (teamMatch.MatchOrder % 2) == 0;
                 if (isHomeSlot)
                     nextTeamMatch.HomeTeamParticipantId = winnerTeamParticipantId;
                 else
@@ -1340,26 +3730,112 @@ namespace GameHubz.Logic.Services
                     await CreateSubMatchesForTeamMatch(nextTeamMatch);
                 }
             }
+            else if (teamMatch.IsGrandFinal)
+            {
+                // DE Grand Final. Home = WB champion (undefeated); away = LB champion (one loss). If
+                // the LB champion wins, both now hold one loss → a single reset final decides the title.
+                bool lbChampionWon = winnerTeamParticipantId == teamMatch.AwayTeamParticipantId;
+                if (lbChampionWon)
+                    await CreateTeamGrandFinalReset(teamMatch);
+                else
+                    await CompleteTeamTournament(tournament, winnerTeamParticipantId);
+            }
+            else if (teamMatch.IsGrandFinalReset)
+            {
+                // Reset final: its winner is the champion.
+                await CompleteTeamTournament(tournament, winnerTeamParticipantId);
+            }
             else
             {
-                // Tournament is over
-                var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(winnerTeamParticipantId!.Value);
+                // Terminal team match: the championship final or the third-place play-off. With a third-place
+                // play-off the tournament is finished only once BOTH are played, and the champion is always
+                // the winner of the final (never the third-place match).
+                var stageMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(teamMatch.TournamentStageId!.Value);
+                var finalTeamMatch = stageMatches.FirstOrDefault(tm => !tm.NextTeamMatchId.HasValue && !tm.IsThirdPlace);
+                var thirdPlaceTeamMatch = stageMatches.FirstOrDefault(tm => tm.IsThirdPlace);
 
-                if (winnerParticipant.TeamId.HasValue)
+                // The in-flight match isn't saved as Completed yet, so treat it as done via the Id shortcut.
+                bool finalDone = finalTeamMatch != null && (finalTeamMatch.Id == teamMatch.Id || finalTeamMatch.Status == TeamMatchStatus.Completed);
+                bool thirdPlaceDone = thirdPlaceTeamMatch == null || thirdPlaceTeamMatch.Id == teamMatch.Id || thirdPlaceTeamMatch.Status == TeamMatchStatus.Completed;
+
+                if (finalDone && thirdPlaceDone)
                 {
-                    tournament.WinnerTeamId = winnerParticipant.TeamId;
-                }
+                    var championParticipantId = finalTeamMatch!.Id == teamMatch.Id
+                        ? winnerTeamParticipantId
+                        : finalTeamMatch.WinnerTeamParticipantId;
+                    var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(championParticipantId!.Value);
 
-                tournament.Status = TournamentStatus.Completed;
-                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                    if (winnerParticipant.TeamId.HasValue)
+                    {
+                        tournament.WinnerTeamId = winnerParticipant.TeamId;
+                    }
+
+                    bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+                    tournament.Status = TournamentStatus.Completed;
+                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                    if (!wasCompleted)
+                    {
+                        await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                        await NotifyTournamentWinnerAsync(tournament);
+                    }
+                }
             }
 
             await this.SaveAsync();
 
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+        }
+
+        private async Task CompleteTeamTournament(TournamentEntity tournament, Guid? championParticipantId)
+        {
+            if (championParticipantId.HasValue)
+            {
+                var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(championParticipantId.Value);
+                if (winnerParticipant.TeamId.HasValue)
+                    tournament.WinnerTeamId = winnerParticipant.TeamId;
+            }
+
+            bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+            tournament.Status = TournamentStatus.Completed;
+            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            if (!wasCompleted)
+            {
+                await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                await NotifyTournamentWinnerAsync(tournament);
+            }
+        }
+
+        // Team mirror of CreateGrandFinalReset: lazily creates the reset Grand Final when the LB
+        // champion wins the first one. Idempotent. Links GF1.NextTeamMatchId → reset so the existing
+        // downstream-lock + revert machinery treats the reset as the round past the Grand Final, then
+        // builds the reset's sub-matches (both finalists are already known).
+        private async Task CreateTeamGrandFinalReset(TeamMatchEntity grandFinal)
+        {
+            if (grandFinal.NextTeamMatchId.HasValue) return;
+
+            var reset = new TeamMatchEntity
+            {
+                Id = Guid.NewGuid(),
+                TournamentId = grandFinal.TournamentId,
+                TournamentStageId = grandFinal.TournamentStageId,
+                HomeTeamParticipantId = grandFinal.HomeTeamParticipantId, // WB champion
+                AwayTeamParticipantId = grandFinal.AwayTeamParticipantId, // LB champion
+                RoundNumber = (grandFinal.RoundNumber ?? 1) + 1,
+                MatchOrder = 0,
+                Status = TeamMatchStatus.Pending,
+                IsUpperBracket = true,
+                IsGrandFinalReset = true
+            };
+            await this.AppUnitOfWork.TeamMatchRepository.AddEntity(reset, this.UserContextReader);
+
+            grandFinal.NextTeamMatchId = reset.Id;
+            grandFinal.NextTeamMatchHomeAwaySlot = 0;
+            await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(grandFinal, this.UserContextReader);
+
+            await CreateSubMatchesForTeamMatch(reset);
         }
 
         private async Task CreateSubMatchesForTeamMatch(TeamMatchEntity teamMatch, int? teamSizeOverride = null)
@@ -1413,8 +3889,12 @@ namespace GameHubz.Logic.Services
             if (!allGroupMatches.All(m => m.Status == MatchStatus.Completed)) return;
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
+            if (knockoutStage == null) return;
 
-            if (knockoutStage == null || knockoutStage.Type != StageType.SingleEliminationBracket) return;
+            // A Winners-Bracket stage at the knockout slot means the organizer chose double-elim
+            // (solo only — the team path always creates a single-elim knockout stage).
+            bool useDoubleKnockout = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
+            if (!useDoubleKnockout && knockoutStage.Type != StageType.SingleEliminationBracket) return;
 
             bool hasMatches = await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value);
             if (hasMatches) return;
@@ -1437,13 +3917,25 @@ namespace GameHubz.Logic.Services
 
             foreach (var group in groupStage.TournamentGroups.OrderBy(g => g.Name))
             {
-                var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(group.Id!.Value);
+                var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdWithNames(group.Id!.Value);
 
                 var sorted = groupParticipants
                     .OrderByDescending(p => p.Points)
                     .ThenByDescending(p => p.GoalsFor - p.GoalsAgainst)
                     .ThenByDescending(p => p.GoalsFor)
+                    .ThenBy(p => p.Team?.TeamName ?? p.User?.Username ?? p.UserId!.Value.ToString(), StringComparer.OrdinalIgnoreCase)
                     .ToList();
+
+                // H2H between rows tied on (Points, GD): mini-table from solo matches played
+                // strictly between the tied participants. Decides knockout qualification when
+                // GD alone can't separate them, so alphabetical fallback no longer picks the
+                // slot. Team groups are skipped inside the helper.
+                var thisGroupMatches = allGroupMatches.Where(m => m.TournamentGroupId == group.Id).ToList();
+                ResolveHeadToHeadInTiedChunks(
+                    sorted,
+                    p => p.Id!.Value,
+                    p => (p.Points, 0, p.GoalsFor - p.GoalsAgainst),
+                    thisGroupMatches);
 
                 for (int rank = 0; rank < Math.Min(qualifiersPerGroup, sorted.Count); rank++)
                 {
@@ -1596,7 +4088,11 @@ namespace GameHubz.Logic.Services
                 var participantId = q.participant.Id!.Value;
                 if (seedMap.TryGetValue(participantId, out int newSeed))
                 {
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(q.participant);
+                    // ResyncSoloLeagueStatistics ran earlier in this request and left
+                    // the participants of the just-completed group tracked. DetachEntity
+                    // by reference detaches the no-tracking copy, not the live tracked
+                    // instance — so we have to clear by Id before attaching `fresh`.
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachById(participantId);
                     var fresh = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(participantId);
                     fresh.Seed = newSeed;
                     await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(fresh, this.UserContextReader);
@@ -1619,7 +4115,25 @@ namespace GameHubz.Logic.Services
                 var bracketSlots = bracketSeeded.Cast<TournamentParticipantEntity?>().ToList();
                 while (bracketSlots.Count < playerCount) bracketSlots.Add(null);
 
-                var teamMatches = GenerateEliminationTeamMatches(tournamentId, knockoutStage.Id!.Value, bracketSlots);
+                List<TeamMatchEntity> teamMatches;
+                if (useDoubleKnockout)
+                {
+                    // Double-elim knockout: fill the WB + LB team stages created up-front (LB sits at
+                    // the order right after the WB). Qualifier count is a validated power of two, so
+                    // there are no byes to collapse here.
+                    var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+                    if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
+
+                    teamMatches = GenerateTeamDoubleEliminationMatches(
+                        tournamentId, knockoutStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+                }
+                else
+                {
+                    teamMatches = GenerateEliminationTeamMatches(tournamentId, knockoutStage.Id!.Value, bracketSlots);
+
+                    if (tournament.HasThirdPlaceMatch)
+                        BuildThirdPlaceTeamMatchIfApplicable(teamMatches, (int)Math.Log2(playerCount), bracketSeeded.Count, tournamentId, knockoutStage.Id);
+                }
 
                 foreach (var tm in teamMatches)
                     await this.AppUnitOfWork.TeamMatchRepository.AddEntity(tm, this.UserContextReader);
@@ -1636,9 +4150,24 @@ namespace GameHubz.Logic.Services
                         await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
                 }
             }
+            else if (useDoubleKnockout)
+            {
+                // Solo double-elimination knockout: fill the Winners + Losers bracket stages that
+                // were created up-front (LB sits at the order right after the WB). The qualifier
+                // count is a validated power of two, so there are no byes to collapse here.
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+                if (lbStage == null || lbStage.Type != StageType.DoubleEliminationLosersBracket) return;
+
+                var bracketSlots = bracketSeeded.Cast<TournamentParticipantEntity?>().ToList();
+                var matches = GenerateDoubleEliminationMatches(
+                    tournamentId, knockoutStage.Id!.Value, lbStage.Id!.Value, bracketSlots);
+
+                foreach (var m in matches)
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
+            }
             else
             {
-                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded);
+                var matches = GenerateEliminationMatches(tournamentId, knockoutStage.Id!.Value, bracketSeeded, tournament.HasThirdPlaceMatch);
 
                 foreach (var m in matches)
                 {
@@ -1650,7 +4179,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity?> participants)
+        private List<MatchEntity> GenerateEliminationMatches(Guid tournamentId, Guid stageId, List<TournamentParticipantEntity?> participants, bool includeThirdPlace = false)
         {
             int playerCount = participants.Count;
             int totalRounds = (int)Math.Log2(playerCount);
@@ -1683,6 +4212,24 @@ namespace GameHubz.Logic.Services
             }
 
             AutoAdvanceByes(allMatches);
+
+            if (includeThirdPlace)
+            {
+                // A meaningful third-place play-off needs two semi-finals that each produce a real loser.
+                // With fewer than 4 actual participants a semi-final would be a bye (no loser), so skip it.
+                int realCount = participants.Count(p => p != null);
+                var semiFinals = allMatches.Where(m => m.Stage == MatchStage.SemiFinal).ToList();
+                var final = allMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
+
+                if (realCount >= 4 && semiFinals.Count == 2 && final != null)
+                {
+                    // Shares the final's round, ordered after it; semi-final losers feed in via the loser-bracket link.
+                    var thirdPlace = CreateMatch(tournamentId, stageId, final.RoundNumber!.Value, MatchStage.ThirdPlace, 1);
+                    foreach (var sf in semiFinals)
+                        sf.NextMatchLoserBracketId = thirdPlace.Id;
+                    allMatches.Add(thirdPlace);
+                }
+            }
 
             return allMatches;
         }
@@ -2006,23 +4553,58 @@ namespace GameHubz.Logic.Services
         }
 
         private static MatchStage GetMatchStage(int totalPlayers, int roundNumber)
+            => StageFromRoundsFromEnd((int)Math.Log2(totalPlayers) - roundNumber + 1);
+
+        // Creates the optional third-place TeamMatch and links both semi-finals' loser pointer into it.
+        // Shared between pure single-elimination and groups-then-knockout team paths to keep generation logic in one place.
+        // Returns null when the play-off is not applicable (too few real teams, or no two semi-finals).
+        private static TeamMatchEntity? BuildThirdPlaceTeamMatchIfApplicable(
+            List<TeamMatchEntity> allTeamMatches,
+            int totalRounds,
+            int realParticipantCount,
+            Guid tournamentId,
+            Guid? stageId)
         {
-            int totalRounds = (int)Math.Log2(totalPlayers);
-            int roundsFromEnd = totalRounds - roundNumber + 1;
-            return roundsFromEnd switch
+            // A meaningful third-place play-off needs two semi-finals that each produce a real loser (no bye).
+            if (realParticipantCount < 4 || totalRounds < 2) return null;
+
+            var semiFinals = allTeamMatches.Where(tm => tm.RoundNumber == totalRounds - 1).ToList();
+            var final = allTeamMatches.FirstOrDefault(tm => tm.RoundNumber == totalRounds);
+
+            if (semiFinals.Count != 2 || final == null) return null;
+
+            var thirdPlace = new TeamMatchEntity
             {
-                1 => MatchStage.Final,
-                2 => MatchStage.SemiFinal,
-                3 => MatchStage.QuarterFinal,
-                4 => MatchStage.RoundOf16,
-                5 => MatchStage.RoundOf32,
-                6 => MatchStage.RoundOf64,
-                7 => MatchStage.RoundOf128,
-                8 => MatchStage.RoundOf256,
-                9 => MatchStage.RoundOf512,
-                _ => MatchStage.RoundOf1024
+                Id = Guid.NewGuid(),
+                TournamentId = tournamentId,
+                TournamentStageId = stageId,
+                RoundNumber = totalRounds,
+                MatchOrder = 1,
+                Status = TeamMatchStatus.Pending,
+                IsThirdPlace = true
             };
+            foreach (var sf in semiFinals)
+                sf.NextTeamMatchLoserBracketId = thirdPlace.Id;
+
+            allTeamMatches.Add(thirdPlace);
+            return thirdPlace;
         }
+
+        // Shared between solo (stage stored on MatchEntity at generation) and team (derived at DTO mapping,
+        // since TeamMatchEntity has no Stage column). Keeps the mapping in one place.
+        private static MatchStage StageFromRoundsFromEnd(int roundsFromEnd) => roundsFromEnd switch
+        {
+            1 => MatchStage.Final,
+            2 => MatchStage.SemiFinal,
+            3 => MatchStage.QuarterFinal,
+            4 => MatchStage.RoundOf16,
+            5 => MatchStage.RoundOf32,
+            6 => MatchStage.RoundOf64,
+            7 => MatchStage.RoundOf128,
+            8 => MatchStage.RoundOf256,
+            9 => MatchStage.RoundOf512,
+            _ => MatchStage.RoundOf1024
+        };
 
         private static bool IsPowerOfTwo(int n) => n > 0 && (n & (n - 1)) == 0;
 
@@ -2150,7 +4732,10 @@ namespace GameHubz.Logic.Services
         }
 
         private bool IsElimination(StageType? type)
-            => type == StageType.SingleEliminationBracket || type == StageType.DoubleEliminationWinnersBracket;
+            => type == StageType.SingleEliminationBracket
+            || type == StageType.DoubleEliminationWinnersBracket
+            || type == StageType.DoubleEliminationLosersBracket
+            || type == StageType.PlayIn;
 
         private string GetGroupName(int index)
         {
@@ -2158,10 +4743,33 @@ namespace GameHubz.Logic.Services
             return index < l.Length ? l[index].ToString() : (index + 1).ToString();
         }
 
-        private List<BracketRoundDto> MapTeamBracketRounds(List<TeamMatchEntity>? teamMatches)
+        private List<BracketRoundDto> MapTeamBracketRounds(List<TeamMatchEntity>? teamMatches, bool dropCollapsedByes = false)
         {
             var rounds = new List<BracketRoundDto>();
             if (teamMatches == null || !teamMatches.Any()) return rounds;
+
+            if (dropCollapsedByes)
+            {
+                // A collapsed LB bye is a Completed team match with no participants and no winner —
+                // the DE LB cascade flips its status when both upstream feeders turned out to be byes.
+                // Strip them so the LB tab shows only matches that actually get played.
+                teamMatches = teamMatches
+                    .Where(m => !(m.Status == TeamMatchStatus.Completed
+                                  && !m.HomeTeamParticipantId.HasValue
+                                  && !m.AwayTeamParticipantId.HasValue
+                                  && !m.WinnerTeamParticipantId.HasValue))
+                    .ToList();
+
+                if (teamMatches.Count == 0) return rounds;
+            }
+
+            // Exclude the Grand Final (one round past the WB final) so WB rounds keep their
+            // Final/Semi/... labels — the GF is mapped explicitly via IsGrandFinal. The third-place
+            // play-off shares the final's RoundNumber, so Max over the rest gives the true tree depth.
+            int totalRounds = teamMatches.Where(m => !m.IsGrandFinal && !m.IsGrandFinalReset)
+                                         .Select(m => m.RoundNumber ?? 1)
+                                         .DefaultIfEmpty(1)
+                                         .Max();
 
             var grouped = teamMatches.GroupBy(m => m.RoundNumber ?? 1).OrderBy(g => g.Key);
 
@@ -2173,23 +4781,31 @@ namespace GameHubz.Logic.Services
                     RoundDeadline = grp.SelectMany(m => m.SubMatches).Max(sm => sm.RoundDeadline),
                     Name = $"Round {grp.Key}",
                     Matches = grp.OrderBy(m => m.MatchOrder)
-                                 .Select(tm => MapTeamMatchToDto(tm))
+                                 .Select(tm => MapTeamMatchToDto(tm, totalRounds))
                                  .ToList()
                 });
             }
             return rounds;
         }
 
-        private MatchStructureDto MapTeamMatchToDto(TeamMatchEntity tm)
+        private MatchStructureDto MapTeamMatchToDto(TeamMatchEntity tm, int totalRounds)
         {
+            int round = tm.RoundNumber ?? 1;
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
-                Round = tm.RoundNumber ?? 1,
+                Round = round,
                 Order = tm.MatchOrder ?? 0,
+                Stage = tm.IsGrandFinalReset ? MatchStage.GrandFinalReset
+                    : tm.IsGrandFinal ? MatchStage.GrandFinal
+                    : !tm.IsUpperBracket ? MatchStage.LosersBracket
+                    : tm.IsThirdPlace ? MatchStage.ThirdPlace
+                    : StageFromRoundsFromEnd(totalRounds - round + 1),
                 Status = MapTeamMatchStatus(tm.Status),
                 TeamMatchId = tm.Id,
+                IsUpperBracket = tm.IsUpperBracket,
                 NextTeamMatchId = tm.NextTeamMatchId,
+                NextTeamMatchLoserBracketId = tm.NextTeamMatchLoserBracketId,
                 Evidences = [],
                 Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
                 {
@@ -2217,10 +4833,26 @@ namespace GameHubz.Logic.Services
                 _ => MatchStatus.Pending
             };
 
-        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged)
+        private List<BracketRoundDto> MapBracketRounds(List<MatchEntity>? matches, Guid currentUserId, bool isPrivileged, bool dropCollapsedByes = false)
         {
             var rounds = new List<BracketRoundDto>();
             if (matches == null || !matches.Any()) return rounds;
+
+            if (dropCollapsedByes)
+            {
+                // A collapsed bye is a Completed match with no participants and no winner —
+                // the DE LB cascade flips its status when both upstream feeders turned out to
+                // be byes. We strip them here so the LB tab shows only matches that actually
+                // get played; the cascade has already re-routed the routing for what remains.
+                matches = matches
+                    .Where(m => !(m.Status == MatchStatus.Completed
+                                  && !m.HomeParticipantId.HasValue
+                                  && !m.AwayParticipantId.HasValue
+                                  && !m.WinnerParticipantId.HasValue))
+                    .ToList();
+
+                if (matches.Count == 0) return rounds;
+            }
 
             var matchById = matches
                 .Where(m => m.Id.HasValue)
@@ -2284,7 +4916,14 @@ namespace GameHubz.Logic.Services
                 };
 
                 var participants = participantsByGroup.TryGetValue(group.Id!.Value, out var p) ? p : new List<TournamentParticipantEntity>();
-                dto.Standings = BuildGroupStandings(participants);
+
+                // Swiss standings: rank with Buchholz (sum-of-opponents'-points) as the primary
+                // tiebreaker, then expose it on each row so the UI can render it next to the table.
+                Dictionary<Guid, int>? opponentPointsSum = stage.Type == StageType.Swiss
+                    ? ComputeSwissOpponentPointsSum(participants, groupMatches)
+                    : null;
+
+                dto.Standings = BuildGroupStandings(participants, groupMatches, opponentPointsSum);
                 groupDtos.Add(dto);
             }
             return groupDtos;
@@ -2293,7 +4932,9 @@ namespace GameHubz.Logic.Services
         private MatchStructureDto MapMatchToDto(MatchEntity m, Guid currentUserId, bool isPrivileged, Dictionary<Guid, MatchEntity> matchById)
         {
             bool canRevert = false;
-            if (m.Status == MatchStatus.Completed)
+            // Byes (one-sided completions) are excluded — there is no result to revert.
+            if (m.Status == MatchStatus.Completed
+                && (m.TeamMatchId.HasValue || (m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue)))
             {
                 bool isParticipant = m.TeamMatchId.HasValue
                     ? m.HomeUserId == currentUserId || m.AwayUserId == currentUserId
@@ -2302,7 +4943,16 @@ namespace GameHubz.Logic.Services
                 bool isNextMatchPending = !m.NextMatchId.HasValue ||
                     (matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch) && nextMatch.Status == MatchStatus.Pending);
 
-                canRevert = isNextMatchPending && (isPrivileged || isParticipant);
+                // Loser-side downstream lock — third-place play-off for single-elim, LB drop
+                // for DE. Mirrors the server-side guard in UpdateMatchResult so the UI doesn't
+                // offer a revert that will be rejected. Loser-bracket targets may live in a
+                // different stage (LB stage for DE), so a missing entry in this stage's map
+                // means the lookup just couldn't see it — treat as pending (cross-stage).
+                bool isLoserBracketPending = !m.NextMatchLoserBracketId.HasValue
+                    || !matchById.TryGetValue(m.NextMatchLoserBracketId.Value, out var lbMatch)
+                    || lbMatch.Status == MatchStatus.Pending;
+
+                canRevert = isNextMatchPending && isLoserBracketPending && (isPrivileged || isParticipant);
             }
 
             return new MatchStructureDto
@@ -2310,14 +4960,20 @@ namespace GameHubz.Logic.Services
                 Id = m.Id!.Value,
                 Round = m.RoundNumber ?? 1,
                 Order = m.MatchOrder ?? 0,
+                Stage = m.Stage,
                 Status = m.Status,
                 StartTime = m.ScheduledStartTime,
                 RoundDeadline = m.RoundDeadline,
                 NextMatchId = m.NextMatchId,
+                NextMatchLoserBracketId = m.NextMatchLoserBracketId,
+                IsUpperBracket = m.IsUpperBracket,
                 IsRoundLocked = m.RoundOpenAt.HasValue && m.RoundOpenAt.Value > DateTime.UtcNow,
                 MatchOpensAt = m.RoundOpenAt,
                 CanRevert = canRevert,
                 Evidences = m.MatchEvidences?.Select(x => x.Url!).ToList() ?? [],
+                ProposedHomeScore = m.ProposedHomeScore,
+                ProposedAwayScore = m.ProposedAwayScore,
+                ProposedByUserId = m.ProposedByUserId,
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,
@@ -2363,16 +5019,56 @@ namespace GameHubz.Logic.Services
                     continue;
                 }
 
+                // A completed match missing a side is a bye (Swiss free win or an elimination
+                // walkover) — there is no result to revert.
+                if (match.Home == null || match.Away == null)
+                {
+                    match.CanRevert = false;
+                    continue;
+                }
+
                 bool isParticipant = match.Home?.UserId == currentUserId || match.Away?.UserId == currentUserId;
 
-                bool isNextMatchPending = match.NextMatchId == null ||
-                    (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                bool downstreamPending;
+                if (match.TeamMatchId.HasValue)
+                {
+                    // Team matches link forward via NextTeamMatchId (next round) and
+                    // NextTeamMatchLoserBracketId (third-place play-off) instead of NextMatchId.
+                    bool nextPending = match.NextTeamMatchId == null ||
+                        (matchById.TryGetValue(match.NextTeamMatchId.Value, out var nextTm) && nextTm.Status == MatchStatus.Pending);
+                    bool thirdPlacePending = match.NextTeamMatchLoserBracketId == null ||
+                        (matchById.TryGetValue(match.NextTeamMatchLoserBracketId.Value, out var thirdTm) && thirdTm.Status == MatchStatus.Pending);
+                    downstreamPending = nextPending && thirdPlacePending;
+                }
+                else
+                {
+                    bool nextPending = match.NextMatchId == null ||
+                        (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                    // Loser-side downstream — third-place play-off (single-elim) or LB drop (DE).
+                    // A miss in matchById means the target is in another stage we couldn't see
+                    // from this match's vantage; treat as pending and let the server enforce.
+                    bool loserDownstreamPending = match.NextMatchLoserBracketId == null
+                        || !matchById.TryGetValue(match.NextMatchLoserBracketId.Value, out var lbM)
+                        || lbM.Status == MatchStatus.Pending;
+                    downstreamPending = nextPending && loserDownstreamPending;
+                }
 
-                match.CanRevert = isNextMatchPending && (isPrivileged || isParticipant);
+                // In approval-required tournaments, only privileged users (admin / hub owner / hub admin)
+                // can revert a confirmed result. Participants must contact an admin to dispute it,
+                // otherwise the approval gate could be bypassed via the edit flow.
+                bool participantCanRevert = isParticipant && !structure.RequireResultApproval;
+                match.CanRevert = downstreamPending && (isPrivileged || participantCanRevert);
             }
         }
 
-        private static List<LeagueStandingDto> BuildGroupStandings(List<TournamentParticipantEntity> participants)
+        // Pass `opponentPointsSum` (Buchholz) for Swiss; the chain becomes
+        // points → Buchholz → GD → H2H → GF → name. Non-Swiss callers pass null, falling
+        // back to (points → GD → H2H → GF → name) — Buchholz is not meaningful in
+        // round-robin groups where everyone faces everyone.
+        private static List<LeagueStandingDto> BuildGroupStandings(
+            List<TournamentParticipantEntity> participants,
+            IEnumerable<MatchEntity> matches,
+            Dictionary<Guid, int>? opponentPointsSum = null)
         {
             var standings = participants.Select(p => new LeagueStandingDto
             {
@@ -2386,15 +5082,111 @@ namespace GameHubz.Logic.Services
                 GoalsFor = p.GoalsFor,
                 GoalsAgainst = p.GoalsAgainst,
                 GoalDifference = p.GoalsFor - p.GoalsAgainst,
-                MatchesPlayed = p.Wins + p.Draws + p.Losses
+                MatchesPlayed = p.Wins + p.Draws + p.Losses,
+                OpponentPointsSum = opponentPointsSum != null && p.Id.HasValue
+                    ? opponentPointsSum.GetValueOrDefault(p.Id.Value)
+                    : (int?)null
             })
             .OrderByDescending(s => s.Points)
+            .ThenByDescending(s => s.OpponentPointsSum ?? 0)
             .ThenByDescending(s => s.GoalDifference)
             .ThenByDescending(s => s.GoalsFor)
+            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+            ResolveHeadToHeadInTiedChunks(
+                standings,
+                s => s.ParticipantId,
+                s => (s.Points, s.OpponentPointsSum ?? 0, s.GoalDifference),
+                matches);
 
             for (int i = 0; i < standings.Count; i++) standings[i].Position = i + 1;
             return standings;
+        }
+
+        // Head-to-head tiebreaker applied within chunks of rows tied on (Points, OPS, GD).
+        // For each tied subset, builds a mini-table from matches played *between* exactly
+        // those participants and re-orders by (h2h points → h2h GD → h2h GF). Rows still
+        // tied after the mini-table preserve their inbound order, so the outer chain's
+        // remaining tiebreakers (GF → name) keep acting as the final word.
+        // Team-tournament sub-matches are excluded: aggregating sub-match scores does not
+        // map cleanly onto a team-vs-team h2h verdict, so team groups continue to use the
+        // pre-H2H chain.
+        private static void ResolveHeadToHeadInTiedChunks<T>(
+            List<T> ordered,
+            Func<T, Guid> participantIdOf,
+            Func<T, (int Points, int Ops, int Gd)> tieKeyOf,
+            IEnumerable<MatchEntity> matches)
+        {
+            if (ordered.Count < 2) return;
+
+            var soloMatches = matches
+                .Where(m => !m.TeamMatchId.HasValue
+                    && m.Status == MatchStatus.Completed
+                    && m.HomeParticipantId.HasValue
+                    && m.AwayParticipantId.HasValue
+                    && m.HomeUserScore.HasValue
+                    && m.AwayUserScore.HasValue)
+                .ToList();
+
+            if (soloMatches.Count == 0) return;
+
+            int i = 0;
+            while (i < ordered.Count)
+            {
+                var key = tieKeyOf(ordered[i]);
+                int j = i + 1;
+                while (j < ordered.Count && tieKeyOf(ordered[j]).Equals(key)) j++;
+
+                int chunkSize = j - i;
+                if (chunkSize > 1)
+                {
+                    var tiedIds = new HashSet<Guid>();
+                    for (int k = i; k < j; k++) tiedIds.Add(participantIdOf(ordered[k]));
+
+                    var h2hPts = new Dictionary<Guid, int>(chunkSize);
+                    var h2hGd = new Dictionary<Guid, int>(chunkSize);
+                    var h2hGf = new Dictionary<Guid, int>(chunkSize);
+                    foreach (var id in tiedIds) { h2hPts[id] = 0; h2hGd[id] = 0; h2hGf[id] = 0; }
+
+                    foreach (var m in soloMatches)
+                    {
+                        var home = m.HomeParticipantId!.Value;
+                        var away = m.AwayParticipantId!.Value;
+                        if (!tiedIds.Contains(home) || !tiedIds.Contains(away)) continue;
+
+                        int hs = m.HomeUserScore!.Value;
+                        int aw = m.AwayUserScore!.Value;
+
+                        h2hGf[home] += hs; h2hGf[away] += aw;
+                        h2hGd[home] += hs - aw; h2hGd[away] += aw - hs;
+
+                        if (hs > aw) h2hPts[home] += 3;
+                        else if (hs < aw) h2hPts[away] += 3;
+                        else { h2hPts[home] += 1; h2hPts[away] += 1; }
+                    }
+
+                    // Stable sort: rows tied on all three h2h criteria keep incoming order
+                    // so the outer GF → name fallback applies as last resort.
+                    var withIdx = new (T Item, int Idx)[chunkSize];
+                    for (int k = 0; k < chunkSize; k++) withIdx[k] = (ordered[i + k], k);
+                    Array.Sort(withIdx, (a, b) =>
+                    {
+                        var ida = participantIdOf(a.Item);
+                        var idb = participantIdOf(b.Item);
+                        int cmp = h2hPts[idb].CompareTo(h2hPts[ida]);
+                        if (cmp != 0) return cmp;
+                        cmp = h2hGd[idb].CompareTo(h2hGd[ida]);
+                        if (cmp != 0) return cmp;
+                        cmp = h2hGf[idb].CompareTo(h2hGf[ida]);
+                        if (cmp != 0) return cmp;
+                        return a.Idx.CompareTo(b.Idx);
+                    });
+                    for (int k = 0; k < chunkSize; k++) ordered[i + k] = withIdx[k].Item;
+                }
+
+                i = j;
+            }
         }
 
         private void SendNotification(TournamentEntity tournament, Guid tournamentId)

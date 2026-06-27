@@ -15,6 +15,11 @@ namespace GameHubz.DataModels.Domain
         public int? AwayUserScore { get; set; }
         public DateTime? ScheduledStartTime { get; set; }
         public DateTime? RoundDeadline { get; set; }
+
+        // How far the round-deadline reminder waves have progressed for this match, set by the
+        // background sweep: 0 = none, 1 = early (24h) reminder sent, 2 = last-call sent (done).
+        public int RoundReminderStage { get; set; }
+
         public MatchStatus Status { get; set; }
         public Guid? WinnerParticipantId { get; set; }
         public TournamentEntity? Tournament { get; set; }
@@ -67,5 +72,25 @@ namespace GameHubz.DataModels.Domain
         public UserEntity? HomeUser { get; set; }
         public Guid? AwayUserId { get; set; }
         public UserEntity? AwayUser { get; set; }
+
+        // Pending proposal state for tournaments with result approval enabled.
+        // Non-null ProposedByUserId marks an active proposal awaiting opponent / admin approval.
+        public int? ProposedHomeScore { get; set; }
+        public int? ProposedAwayScore { get; set; }
+        public Guid? ProposedByUserId { get; set; }
+
+        // Admin-help escalation: a participant can flag the match so hub admins / the hub owner
+        // get notified and can step into the match chat. Resolving clears all three fields.
+        public bool AdminHelpRequested { get; set; }
+        public Guid? AdminHelpRequestedByUserId { get; set; }
+        public DateTime? AdminHelpRequestedOn { get; set; }
+
+        // Explicit destination slot overrides. Default (null) preserves the legacy MatchOrder%2
+        // pairing used by single-elimination. Double-elimination sets these because LB drop-in
+        // edges don't follow the bracket-pair convention (e.g. a WB loser entering an LB match
+        // must always take the away slot, regardless of its source MatchOrder).
+        // 0 = home slot, 1 = away slot.
+        public int? NextMatchHomeAwaySlot { get; set; }
+        public int? NextMatchLoserBracketHomeAwaySlot { get; set; }
     }
 }

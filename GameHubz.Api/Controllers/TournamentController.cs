@@ -45,10 +45,53 @@ namespace GameHubz.Api.Controllers
             return Ok(structure);
         }
 
+        [HttpGet("{tournamentId}/structure/v2")]
+        public async Task<IActionResult> GetTournamentStructureV2(Guid tournamentId)
+        {
+            var structure = await this.bracketService.GetTournamentStructureV2(tournamentId);
+
+            return Ok(structure);
+        }
+
         [HttpPost("matchResult")]
         public async Task<IActionResult> UpdateMatchResult([FromBody] MatchResultDto request)
         {
             await this.bracketService.UpdateMatchResult(request);
+
+            return Ok();
+        }
+
+        [HttpPost("matchResult/approve")]
+        public async Task<IActionResult> ApproveMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.ApproveProposedResult(request.MatchId);
+
+            return Ok();
+        }
+
+        [HttpPost("matchResult/reject")]
+        public async Task<IActionResult> RejectMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.RejectProposedResult(request.MatchId);
+
+            return Ok();
+        }
+
+        [HttpPost("matchResult/revert")]
+        public async Task<IActionResult> RevertMatchResult([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.RevertMatchResult(request.MatchId);
+
+            return Ok();
+        }
+
+        // Admin/owner-only: both sides no-showed an elimination match, so it is closed with no winner
+        // and the opponent from the sibling matchup advances by walkover. Authorization is enforced
+        // inside the service (CanManageTournamentAsync).
+        [HttpPost("matchResult/doubleWalkover")]
+        public async Task<IActionResult> ApplyDoubleWalkover([FromBody] MatchResultDecisionRequest request)
+        {
+            await this.bracketService.ApplyDoubleWalkover(request.MatchId);
 
             return Ok();
         }
@@ -93,6 +136,14 @@ namespace GameHubz.Api.Controllers
             return Ok(data);
         }
 
+        [HttpGet("{id}/overview/v2")]
+        public async Task<IActionResult> GetOverviewV2([FromRoute] Guid id)
+        {
+            var data = await this.Service.GetOverviewV2(id);
+
+            return Ok(data);
+        }
+
         [HttpGet("{id}/user/{userId}/registred")]
         public async Task<IActionResult> CheckIsUserRegistred(Guid id, Guid userId)
         {
@@ -104,7 +155,7 @@ namespace GameHubz.Api.Controllers
         [HttpPut("{id}/roundSchedule")]
         public async Task<IActionResult> SetRoundDeadline([FromRoute] Guid id, [FromBody] SetRoundDeadlineRequest request)
         {
-            await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline, request.RoundStart);
+            await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline, request.RoundStart, request.StageId);
 
             return Ok();
         }
@@ -156,6 +207,7 @@ namespace GameHubz.Api.Controllers
             return Ok(team);
         }
 
+        [AllowAnonymous]
         [HttpGet("{id}/export/pdf")]
         public async Task<IActionResult> ExportBracketPdf(Guid id)
         {

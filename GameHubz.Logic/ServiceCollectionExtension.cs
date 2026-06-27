@@ -70,6 +70,7 @@ namespace GameHubz.Logic
             //***********************************************
 
             services.AddTransient<UserHubService>();
+            services.AddTransient<TournamentAuthorizationService>();
             services.AddTransient<TournamentService>();
             services.AddTransient<BracketService>();
             services.AddTransient<TournamentRegistrationService>();
@@ -89,10 +90,28 @@ namespace GameHubz.Logic
 
             services.AddTransient<TournamentTeamService>();
             services.AddTransient<TeamMatchService>();
+            services.AddTransient<UserHubRequestService>();
+            services.AddTransient<HubVerificationService>();
 
             services.AddTransient<TournamentExportService>();
 
             services.AddTransient<INotificationService, NotificationService>();
+
+            // ─── Match streaming: per-platform VOD resolvers (app-credential API, no per-user OAuth) ───
+            // Concrete registrations so they can be injected directly (e.g. YouTubeStreamClient for
+            // channel-id resolution at stream start); the IStreamPlatformClient enumeration drives the
+            // VOD resolver.
+            services.AddTransient<TwitchStreamClient>();
+            services.AddTransient<YouTubeStreamClient>();
+            services.AddTransient<KickStreamClient>();
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<TwitchStreamClient>());
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<YouTubeStreamClient>());
+            services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<KickStreamClient>());
+            services.AddTransient<StreamVodResolver>();
+
+            services.AddTransient<FriendService>();
+            services.AddTransient<DirectChatService>();
+            services.AddTransient<BadgeService>();
 
             services.AddSingleton<TranslationService>();
 
@@ -133,6 +152,14 @@ namespace GameHubz.Logic
             services.AddTransient<IValidator<HubSocialEntity>, HubSocialValidator>();
 
             services.AddTransient<IValidator<MatchChatEntity>, MatchChatValidator>();
+
+            services.AddTransient<IValidator<UserHubRequestEntity>, UserHubRequestValidator>();
+
+            services.AddTransient<IValidator<FriendshipEntity>, FriendshipValidator>();
+            services.AddTransient<IValidator<FriendRequestEntity>, FriendRequestValidator>();
+            services.AddTransient<IValidator<DirectChatEntity>, DirectChatValidator>();
+            services.AddTransient<IValidator<DirectMessageEntity>, DirectMessageValidator>();
+            services.AddTransient<IValidator<UserBlockEntity>, UserBlockValidator>();
 
             // DO NOT DELETE - Generated Validator Tag
         }

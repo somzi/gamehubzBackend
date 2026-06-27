@@ -10,9 +10,9 @@ namespace GameHubz.Logic.Interfaces
 
         Task<int> GetByHubCount(Guid hubId, TournamentStatus status);
 
-        Task<List<TournamentOverview>> GetByHubsPaged(Guid userId, List<Guid> hubIds, TournamentUserStatus status, RegionType region, int page, int pageSize);
+        Task<List<TournamentOverview>> GetByHubsPaged(Guid userId, List<Guid> hubIds, List<Guid> exclusiveHubIds, TournamentUserStatus status, RegionType region, string? userCountry, int page, int pageSize);
 
-        Task<int> GetCountByHubs(Guid userId, List<Guid> hubIds, RegionType region, TournamentUserStatus filter);
+        Task<int> GetCountByHubs(Guid userId, List<Guid> hubIds, List<Guid> exclusiveHubIds, RegionType region, string? userCountry, TournamentUserStatus filter);
 
         Task<TournamentEntity> GetWithPendingRegistration(Guid id);
 
@@ -27,5 +27,17 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentEntity> GetWithHubById(Guid tournamentId);
 
         Task<Guid?> GetHubOwnerUserId(Guid tournamentId);
+
+        Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId);
+
+        Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId);
+
+        Task<bool> TryClaimBracketGeneration(Guid tournamentId);
+
+        Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus);
+
+        Task AcquireAdvancementLock(Guid tournamentId);
+
+        Task ReleaseAdvancementLock(Guid tournamentId);
     }
 }
