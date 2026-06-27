@@ -43,14 +43,19 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
-        public async Task QualifiersNotPowerOfTwo_Throws()
+        public async Task QualifiersNotPowerOfTwo_IsAllowed_PadsBracketWithByes()
         {
             var harness = new BracketTestHarness();
             var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
 
-            // 2 groups x 3 qualifiers = 6, not a power of two.
+            // 2 groups x 3 qualifiers = 6 — not a power of two. The knockout is padded up to a bracket
+            // of 8 with two byes once the groups finish, so generation must succeed (no longer rejected).
             Assert.That(async () => await harness.Service.GenerateGroupStageWithKnockout(tournamentId, 2, 3),
-                Throws.Exception);
+                Throws.Nothing);
+
+            var stageTypes = harness.Stages(tournamentId).Select(s => s.Type).ToList();
+            Assert.That(stageTypes, Does.Contain(StageType.GroupStage));
+            Assert.That(stageTypes, Does.Contain(StageType.SingleEliminationBracket));
         }
 
         [Test]
