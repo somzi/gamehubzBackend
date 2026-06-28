@@ -2385,10 +2385,14 @@ namespace GameHubz.Logic.Services
                 return null;
             }
 
-            if (nextMatch != null && nextMatch.Status != MatchStatus.Pending)
+            // Scheduled = both players agreed on a time but the match hasn't actually been played
+            // (no Live/Completed/NoShow yet), so reverting is still safe. The downstream advancement
+            // step clears the participant from the next match and resets it to Pending so the new
+            // matchup can be re-scheduled.
+            if (nextMatch != null && !IsDownstreamUnplayed(nextMatch.Status))
                 return $"This match is locked because the next round has already progressed. {verb} the downstream match first.";
 
-            if (loserBracketMatch != null && loserBracketMatch.Status != MatchStatus.Pending)
+            if (loserBracketMatch != null && !IsDownstreamUnplayed(loserBracketMatch.Status))
             {
                 // Single-elim → third-place play-off. DE → the Losers Bracket match that received this
                 // WB match's loser. Same lock applies in both cases.
@@ -2399,6 +2403,11 @@ namespace GameHubz.Logic.Services
 
             return null;
         }
+
+        // Downstream is "unplayed" (and therefore safe to reopen) when its status is Pending or
+        // Scheduled — i.e. it hasn't reached Live / Completed / NoShow yet.
+        private static bool IsDownstreamUnplayed(MatchStatus status)
+            => status == MatchStatus.Pending || status == MatchStatus.Scheduled;
 
         // True when re-scoring a completed solo elimination match keeps the same winning side, so the
         // bracket below it is unaffected and the edit can be applied in place. A draw is never
@@ -3409,6 +3418,14 @@ namespace GameHubz.Logic.Services
                         nextMatch.AwayUserScore = 0;
                         nextMatch.WinnerParticipantId = null;
                     }
+                    else if (nextMatch.Status == MatchStatus.Scheduled)
+                    {
+                        // Both players had agreed on a time; pulling one of them out invalidates that
+                        // schedule, so the slot returns to Pending and any agreed-on time is dropped.
+                        // Players can re-agree once the upstream re-finalises and the slot is filled.
+                        nextMatch.Status = MatchStatus.Pending;
+                        nextMatch.ScheduledStartTime = null;
+                    }
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
                 }
             }
@@ -3442,6 +3459,13 @@ namespace GameHubz.Logic.Services
                             loserBracketMatch.HomeUserScore = 0;
                             loserBracketMatch.AwayUserScore = 0;
                             loserBracketMatch.WinnerParticipantId = null;
+                        }
+                        else if (loserBracketMatch.Status == MatchStatus.Scheduled)
+                        {
+                            // Same logic as the winner side above: agreed time is no longer valid once
+                            // a participant is pulled out, so reset to Pending.
+                            loserBracketMatch.Status = MatchStatus.Pending;
+                            loserBracketMatch.ScheduledStartTime = null;
                         }
                         await this.AppUnitOfWork.MatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
                     }
@@ -5559,8 +5583,11 @@ namespace GameHubz.Logic.Services
                     ? m.HomeUserId == currentUserId || m.AwayUserId == currentUserId
                     : m.HomeParticipant?.UserId == currentUserId || m.AwayParticipant?.UserId == currentUserId;
 
+                // "Pending" here is the broader sense — anything not yet Live/Completed/NoShow,
+                // which covers both Pending (no participants assigned) and Scheduled (participants
+                // agreed on a time but haven't played). See IsDownstreamUnplayed / the server gate.
                 bool isNextMatchPending = !m.NextMatchId.HasValue ||
-                    (matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch) && nextMatch.Status == MatchStatus.Pending);
+                    (matchById.TryGetValue(m.NextMatchId.Value, out var nextMatch) && IsDownstreamUnplayed(nextMatch.Status));
 
                 // Loser-side downstream lock — third-place play-off for single-elim, LB drop
                 // for DE. Mirrors the server-side guard in UpdateMatchResult so the UI doesn't
@@ -5569,7 +5596,7 @@ namespace GameHubz.Logic.Services
                 // means the lookup just couldn't see it — treat as pending (cross-stage).
                 bool isLoserBracketPending = !m.NextMatchLoserBracketId.HasValue
                     || !matchById.TryGetValue(m.NextMatchLoserBracketId.Value, out var lbMatch)
-                    || lbMatch.Status == MatchStatus.Pending;
+                    || IsDownstreamUnplayed(lbMatch.Status);
 
                 canRevert = isNextMatchPending && isLoserBracketPending && (isPrivileged || isParticipant);
             }
@@ -5677,14 +5704,17 @@ namespace GameHubz.Logic.Services
                 }
                 else
                 {
+                    // Downstream counts as "unplayed" while Pending or Scheduled — Scheduled just
+                    // means players agreed on a time, not that the match was actually played, so the
+                    // server (GetDownstreamLockReasonAsync) treats it the same and we mirror that here.
                     bool nextPending = match.NextMatchId == null ||
-                        (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && nextM.Status == MatchStatus.Pending);
+                        (matchById.TryGetValue(match.NextMatchId.Value, out var nextM) && IsDownstreamUnplayed(nextM.Status));
                     // Loser-side downstream — third-place play-off (single-elim) or LB drop (DE).
                     // A miss in matchById means the target is in another stage we couldn't see
                     // from this match's vantage; treat as pending and let the server enforce.
                     bool loserDownstreamPending = match.NextMatchLoserBracketId == null
                         || !matchById.TryGetValue(match.NextMatchLoserBracketId.Value, out var lbM)
-                        || lbM.Status == MatchStatus.Pending;
+                        || IsDownstreamUnplayed(lbM.Status);
                     downstreamPending = nextPending && loserDownstreamPending;
                 }
 
