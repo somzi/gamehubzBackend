@@ -195,7 +195,9 @@ namespace GameHubz.Logic.Services
                     Evidences = sm.Evidences,
                     ProposedHomeScore = sm.ProposedHomeScore,
                     ProposedAwayScore = sm.ProposedAwayScore,
-                    ProposedByUserId = sm.ProposedByUserId
+                    ProposedByUserId = sm.ProposedByUserId,
+                    AdminHelpRequested = sm.AdminHelpRequested,
+                    AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId
                 };
             }).ToList();
 

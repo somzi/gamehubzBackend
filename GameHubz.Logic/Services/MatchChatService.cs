@@ -10,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly IHubContext<MatchChatHub> hubContext;
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public MatchChatService(
             IUnitOfWorkFactory factory,
@@ -21,7 +22,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             IHubContext<MatchChatHub> hubContext,
             INotificationService notificationService,
-            BadgeService badgeService) : base(
+            BadgeService badgeService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -33,6 +35,7 @@ namespace GameHubz.Logic.Services
             this.hubContext = hubContext;
             this.notificationService = notificationService;
             this.badgeService = badgeService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<ChatMessageDto> SendMessage(Guid matchId, string content)
@@ -42,8 +45,11 @@ namespace GameHubz.Logic.Services
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
             if (match == null) throw new BusinessRuleException("Match not found");
 
-            // F33: only a participant of this match may post to its chat.
-            if (!IsMatchParticipant(match, user.UserId))
+            // F33: only a participant of this match — or a tournament manager moderating it (hub
+            // owner / hub admin / platform admin) — may post to its chat. Managers step in via the
+            // admin-help escalation to talk the players through a dispute.
+            if (!IsMatchParticipant(match, user.UserId)
+                && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
 
             // Completed matches keep their chat history visible but read-only.

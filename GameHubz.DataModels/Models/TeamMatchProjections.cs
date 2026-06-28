@@ -46,6 +46,8 @@ namespace GameHubz.DataModels.Models
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }
+        public bool AdminHelpRequested { get; set; }
+        public Guid? AdminHelpRequestedByUserId { get; set; }
     }
 
     public class TieBreakProjection
