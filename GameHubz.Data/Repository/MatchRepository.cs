@@ -397,6 +397,7 @@ namespace GameHubz.Data.Repository
                 .Select(x => new MatchAdminHelpItemDto
                 {
                     MatchId = x.Id!.Value,
+                    TeamMatchId = x.TeamMatchId,
                     RoundNumber = x.RoundNumber,
                     Status = x.Status,
                     ScheduledStartTime = x.ScheduledStartTime,

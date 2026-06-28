@@ -284,6 +284,9 @@ namespace GameHubz.Logic.Services
                 new
                 {
                     matchId = match.Id!.Value.ToString(),
+                    // Carried for team-tournament sub-matches so the mobile deep link can route
+                    // to the team-match modal (the solo modal renders empty for a sub-match id).
+                    teamMatchId = match.TeamMatchId?.ToString(),
                     tournamentId = match.TournamentId.ToString(),
                     type = "adminHelp"
                 });
