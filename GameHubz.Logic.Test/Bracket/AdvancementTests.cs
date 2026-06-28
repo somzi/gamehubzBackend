@@ -195,6 +195,45 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(home.Position, Is.LessThan(away.Position), "winner ranks above loser");
         }
 
+        [Test]
+        public async Task GroupStageWithByes_SixQualifiers_DrawsBracketOfEightWithTwoByesAndCompletes()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+
+            // 2 groups of 4, top 3 advance -> 6 qualifiers. Not a power of two, so the knockout is
+            // padded to a bracket of 8 with the two best seeds on a bye.
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 3);
+
+            // Play out every match as its round opens (group rounds unlock progressively, then the
+            // knockout is drawn and played). Respecting RoundOpenAt avoids "round is not open yet".
+            for (int guard = 0; guard < 300; guard++)
+            {
+                var playable = harness.Matches(tournamentId)
+                    .FirstOrDefault(m => m.Status != MatchStatus.Completed
+                        && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
+                        && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
+                if (playable == null) break;
+
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = playable.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+                });
+            }
+
+            var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
+            var firstRound = harness.Matches(tournamentId)
+                .Where(m => m.TournamentStageId == knockoutStage.Id && m.RoundNumber == 1)
+                .ToList();
+
+            Assert.That(firstRound.Count, Is.EqualTo(4), "bracket of 8 has four first-round slots");
+            var byes = firstRound.Count(m => m.HomeParticipantId.HasValue ^ m.AwayParticipantId.HasValue);
+            Assert.That(byes, Is.EqualTo(2), "6 qualifiers in a bracket of 8 -> exactly 2 byes");
+
+            var tournament = harness.Tournament(tournamentId);
+            Assert.That(tournament.Status, Is.EqualTo(TournamentStatus.Completed), "tournament played to a champion");
+        }
+
         /// <summary>
         /// Reports a 2-1 home win on every playable solo match (Pending with both participants), round
         /// after round, until the bracket is fully played. Each report uses a fresh service/context.

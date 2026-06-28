@@ -1,5 +1,6 @@
 ﻿using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
+using GameHubz.Logic.Exceptions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using System.Text.RegularExpressions;
@@ -48,6 +49,16 @@ namespace GameHubz.Logic.Services
 
             if (uploadResult.Error != null)
             {
+                // A 4xx from Cloudinary means the file itself was rejected (not a real image,
+                // unsupported/corrupt format) — that's a user error, so surface it as a 400
+                // BusinessRuleException: friendly message, no ErrorLog noise. Anything else
+                // (auth, rate-limit, 5xx, infra) is a genuine fault worth logging as a 500.
+                int cloudinaryStatus = (int)uploadResult.StatusCode;
+                if (cloudinaryStatus >= 400 && cloudinaryStatus < 500)
+                {
+                    throw new BusinessRuleException("The uploaded file could not be processed. Please make sure it is a valid image.");
+                }
+
                 throw new Exception($"Cloudinary upload failed: {uploadResult.Error.Message}");
             }
 
