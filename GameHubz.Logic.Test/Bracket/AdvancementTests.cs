@@ -272,6 +272,89 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(redrawnCount, Is.EqualTo(drawnCount), "bracket redrawn with the same number of fixtures");
         }
 
+        [Test]
+        public async Task SwapBracketParticipants_ExchangesTwoFirstRoundSlots()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 2);
+
+            var groupStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.GroupStage);
+
+            // Play out ONLY the group stage so the knockout auto-draws but stays unplayed.
+            for (int guard = 0; guard < 300; guard++)
+            {
+                var playable = harness.Matches(tournamentId)
+                    .FirstOrDefault(m => m.TournamentStageId == groupStage.Id
+                        && m.Status != MatchStatus.Completed
+                        && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
+                        && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
+                if (playable == null) break;
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = playable.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+                });
+            }
+
+            var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
+            var firstRound = harness.Matches(tournamentId)
+                .Where(m => m.TournamentStageId == knockoutStage.Id && m.RoundNumber == 1)
+                .OrderBy(m => m.MatchOrder).ToList();
+            Assert.That(firstRound.Count, Is.EqualTo(2), "bracket of 4 has two first-round matches");
+
+            var a = firstRound[0].HomeParticipantId!.Value;
+            var b = firstRound[1].HomeParticipantId!.Value;
+
+            await harness.NewService().SwapBracketParticipants(tournamentId, a, b);
+
+            var after = harness.Matches(tournamentId)
+                .Where(m => m.TournamentStageId == knockoutStage.Id && m.RoundNumber == 1)
+                .OrderBy(m => m.MatchOrder).ToList();
+            Assert.That(after[0].HomeParticipantId, Is.EqualTo(b), "B took A's slot");
+            Assert.That(after[1].HomeParticipantId, Is.EqualTo(a), "A took B's slot");
+        }
+
+        [Test]
+        public async Task SwapBracketParticipants_CanSwapAByeTeamViaRegenerate()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            // 6 qualifiers -> bracket of 8 with two byes on the top seeds.
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 3);
+
+            var groupStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.GroupStage);
+            for (int guard = 0; guard < 300; guard++)
+            {
+                var playable = harness.Matches(tournamentId)
+                    .FirstOrDefault(m => m.TournamentStageId == groupStage.Id
+                        && m.Status != MatchStatus.Completed
+                        && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
+                        && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
+                if (playable == null) break;
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = playable.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+                });
+            }
+
+            var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
+            System.Func<System.Collections.Generic.List<GameHubz.DataModels.Domain.MatchEntity>> r1 = () => harness.Matches(tournamentId)
+                .Where(m => m.TournamentStageId == knockoutStage.Id && m.RoundNumber == 1).ToList();
+
+            var byeMatch = r1().First(m => m.HomeParticipantId.HasValue ^ m.AwayParticipantId.HasValue);
+            var byeId = (byeMatch.HomeParticipantId ?? byeMatch.AwayParticipantId)!.Value;
+            var realId = r1().First(m => m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue).HomeParticipantId!.Value;
+
+            await harness.NewService().SwapBracketParticipants(tournamentId, byeId, realId);
+
+            var byeIdsAfter = r1()
+                .Where(m => m.HomeParticipantId.HasValue ^ m.AwayParticipantId.HasValue)
+                .Select(m => (m.HomeParticipantId ?? m.AwayParticipantId)!.Value)
+                .ToHashSet();
+            Assert.That(byeIdsAfter, Does.Contain(realId), "the formerly-playing team now holds the bye");
+            Assert.That(byeIdsAfter, Does.Not.Contain(byeId), "the formerly-bye team now plays a first-round match");
+        }
+
         /// <summary>
         /// Reports a 2-1 home win on every playable solo match (Pending with both participants), round
         /// after round, until the bracket is fully played. Each report uses a fresh service/context.
