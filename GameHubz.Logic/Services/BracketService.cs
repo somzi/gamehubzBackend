@@ -5527,10 +5527,14 @@ namespace GameHubz.Logic.Services
 
                 // For team tournaments show one card per team match (Team vs Team). TeamMatchEntity
                 // has no group column, so a match belongs to this group when its participants do.
+                // Skip matches that touch an orphan participant (TeamId & UserId both null) — those
+                // are leftover placeholder slots that would render as "Unknown vs X" otherwise.
                 var groupMatchDtos = isTeamGroup
                     ? stage.TeamMatches!
                         .Where(tm => tm.HomeTeamParticipant != null
-                            && tm.HomeTeamParticipant.TournamentGroupId == group.Id)
+                            && tm.HomeTeamParticipant.TournamentGroupId == group.Id
+                            && !IsOrphanParticipant(tm.HomeTeamParticipant)
+                            && (tm.AwayTeamParticipant == null || !IsOrphanParticipant(tm.AwayTeamParticipant)))
                         .OrderBy(tm => tm.RoundNumber)
                         .ThenBy(tm => tm.MatchOrder)
                         .Select(MapGroupTeamMatchToDto)
@@ -5726,6 +5730,12 @@ namespace GameHubz.Logic.Services
             }
         }
 
+        // A TournamentParticipant row with neither a team nor a user attached — orphan placeholder
+        // left over from team-tournament setups where the team was deleted or the slot was never
+        // assigned. Filtered out of standings & matches so it doesn't render as "Unknown" / GUID.
+        private static bool IsOrphanParticipant(TournamentParticipantEntity p)
+            => p.TeamId == null && p.UserId == null;
+
         // Pass `opponentPointsSum` (Buchholz) for Swiss; the chain becomes
         // points → Buchholz → GD → H2H → GF → name. Non-Swiss callers pass null, falling
         // back to (points → GD → H2H → GF → name) — Buchholz is not meaningful in
@@ -5735,31 +5745,33 @@ namespace GameHubz.Logic.Services
             IReadOnlyList<H2HGame> h2hGames,
             Dictionary<Guid, int>? opponentPointsSum = null)
         {
-            var standings = participants.Select(p => new LeagueStandingDto
-            {
-                ParticipantId = p.Id ?? Guid.Empty,
-                // Team participants have no UserId — fall back to empty so standings don't crash.
-                // The client treats an empty UserId as "not a player" and disables the row tap.
-                UserId = p.UserId ?? Guid.Empty,
-                Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId?.ToString() ?? "",
-                Points = p.Points,
-                Wins = p.Wins,
-                Draws = p.Draws,
-                Losses = p.Losses,
-                GoalsFor = p.GoalsFor,
-                GoalsAgainst = p.GoalsAgainst,
-                GoalDifference = p.GoalsFor - p.GoalsAgainst,
-                MatchesPlayed = p.Wins + p.Draws + p.Losses,
-                OpponentPointsSum = opponentPointsSum != null && p.Id.HasValue
-                    ? opponentPointsSum.GetValueOrDefault(p.Id.Value)
-                    : (int?)null
-            })
-            .OrderByDescending(s => s.Points)
-            .ThenByDescending(s => s.OpponentPointsSum ?? 0)
-            .ThenByDescending(s => s.GoalDifference)
-            .ThenByDescending(s => s.GoalsFor)
-            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            var standings = participants
+                .Where(p => !IsOrphanParticipant(p))
+                .Select(p => new LeagueStandingDto
+                {
+                    ParticipantId = p.Id ?? Guid.Empty,
+                    // Team participants have no UserId — fall back to empty so standings don't crash.
+                    // The client treats an empty UserId as "not a player" and disables the row tap.
+                    UserId = p.UserId ?? Guid.Empty,
+                    Name = p.Team?.TeamName ?? p.User?.Username ?? p.UserId?.ToString() ?? "",
+                    Points = p.Points,
+                    Wins = p.Wins,
+                    Draws = p.Draws,
+                    Losses = p.Losses,
+                    GoalsFor = p.GoalsFor,
+                    GoalsAgainst = p.GoalsAgainst,
+                    GoalDifference = p.GoalsFor - p.GoalsAgainst,
+                    MatchesPlayed = p.Wins + p.Draws + p.Losses,
+                    OpponentPointsSum = opponentPointsSum != null && p.Id.HasValue
+                        ? opponentPointsSum.GetValueOrDefault(p.Id.Value)
+                        : (int?)null
+                })
+                .OrderByDescending(s => s.Points)
+                .ThenByDescending(s => s.OpponentPointsSum ?? 0)
+                .ThenByDescending(s => s.GoalDifference)
+                .ThenByDescending(s => s.GoalsFor)
+                .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             ResolveHeadToHeadInTiedChunks(
                 standings,
