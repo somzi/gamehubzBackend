@@ -195,7 +195,9 @@ namespace GameHubz.Logic.Services
 
         public async Task FollowHub(HubFollowRequest request)
         {
-            var userId = request.UserId ?? (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId;
+            // F107: always follow on behalf of the authenticated caller. A client-supplied UserId must
+            // never be trusted here, otherwise any user could create hub memberships for other users.
+            var userId = (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId;
 
             var entity = new UserHubEntity
             {
@@ -318,7 +320,12 @@ namespace GameHubz.Logic.Services
 
         public async Task UpdateInfo(UserUpdateInfoRequest request)
         {
-            var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(request.UserId);
+            // F103: a user may only edit their own profile. Derive the id from the authenticated token
+            // and ignore any client-supplied UserId, otherwise any user could rename/modify any other
+            // user's profile by passing the victim's id in the body.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(caller.UserId);
 
             user.Nickname = request.Nickname;
             user.Username = request.Username;
@@ -341,7 +348,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
 
-            await cacheService.RemoveAsync($"user_profile:{request.UserId}");
+            await cacheService.RemoveAsync($"user_profile:{caller.UserId}");
         }
 
         /// <summary>

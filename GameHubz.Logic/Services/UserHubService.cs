@@ -55,13 +55,23 @@ namespace GameHubz.Logic.Services
 
         public async Task Unfollow(Guid userId, Guid hubId)
         {
-            var userHub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
+            // F48: a user may only unfollow on their own behalf. Ignore any client-supplied userId
+            // (the route took it from the query string) and use the authenticated caller's id, so one
+            // user can't forcibly remove another user's hub membership.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var userHub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(caller.UserId, hubId);
+
+            if (userHub == null)
+            {
+                return;
+            }
 
             await this.AppUnitOfWork.UserHubRepository.HardDeleteEntity(userHub);
 
             await this.SaveAsync();
 
-            await this.InvalidateHubCaches(userId, hubId);
+            await this.InvalidateHubCaches(caller.UserId, hubId);
         }
 
         public async Task<UserHubDto> AddMember(Guid hubId, Guid userId, HubRole role)
@@ -230,19 +240,37 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeSave(UserHubEntity entity, UserHubPost inputDto, bool isNew)
         {
-            if (isNew && inputDto.HubId.HasValue && inputDto.UserId.HasValue)
+            // F47: this generic endpoint backs "follow a hub". Without these guards any user could POST
+            // a membership for an arbitrary userId and/or with HubRole = Admin/Owner/Exclusive and
+            // self-escalate on any public hub. So a membership created here always belongs to the caller
+            // and is always a regular member; elevated roles are granted only via AddMember (owner-gated).
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (!isNew && inputDto.Id.HasValue)
+            {
+                var existing = await this.AppUnitOfWork.UserHubRepository.GetById(inputDto.Id.Value);
+                if (existing == null || existing.UserId != caller.UserId)
+                {
+                    throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+                }
+            }
+
+            entity.UserId = caller.UserId;
+            entity.HubRole = HubRole.HubMember;
+
+            if (isNew && inputDto.HubId.HasValue)
             {
                 var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(inputDto.HubId.Value);
 
-                var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(inputDto.UserId.Value, inputDto.HubId.Value);
+                var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(caller.UserId, inputDto.HubId.Value);
                 if (isBanned)
                     throw new Exception("You are banned from this hub.");
 
-                if (!hub.IsPublic && hub.UserId != inputDto.UserId)
+                if (!hub.IsPublic && hub.UserId != caller.UserId)
                     throw new Exception("This hub is private. You need to request to join.");
             }
 
-            await this.InvalidateHubCaches(inputDto.UserId, inputDto.HubId);
+            await this.InvalidateHubCaches(caller.UserId, inputDto.HubId);
         }
 
         protected override IRepository<UserHubEntity> GetRepository()

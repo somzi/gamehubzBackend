@@ -1,4 +1,5 @@
 using GameHubz.Logic.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -13,16 +14,16 @@ namespace GameHubz.Logic.Services
 
         private readonly IHttpClientFactory httpClientFactory;
         private readonly ILogger<NotificationService> logger;
-        private readonly IUnitOfWorkFactory unitOfWorkFactory;
+        private readonly IServiceScopeFactory serviceScopeFactory;
 
         public NotificationService(
             IHttpClientFactory httpClientFactory,
             ILogger<NotificationService> logger,
-            IUnitOfWorkFactory unitOfWorkFactory)
+            IServiceScopeFactory serviceScopeFactory)
         {
             this.httpClientFactory = httpClientFactory;
             this.logger = logger;
-            this.unitOfWorkFactory = unitOfWorkFactory;
+            this.serviceScopeFactory = serviceScopeFactory;
         }
 
         public async Task SendToOneAsync(string pushToken, string title, string body, object? data = null)
@@ -93,7 +94,13 @@ namespace GameHubz.Logic.Services
                 if (result?.Data == null)
                     return;
 
-                using var uow = this.unitOfWorkFactory.CreateAppUnitOfWork();
+                // F72: stale-token cleanup must run on its OWN DbContext, never the request-scoped one.
+                // NotificationService is invoked fire-and-forget after the request scope is gone, and a
+                // `using` over the shared UnitOfWork previously disposed the request's context mid-flight.
+                // A dedicated DI scope gives us a fresh context that we own and dispose here.
+                using var scope = this.serviceScopeFactory.CreateScope();
+                var scopedUnitOfWorkFactory = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>();
+                using var uow = scopedUnitOfWorkFactory.CreateAppUnitOfWork();
 
                 for (int i = 0; i < result.Data.Count; i++)
                 {

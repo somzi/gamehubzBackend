@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.Common.Consts;
 using Microsoft.Extensions.Logging;
 
 namespace GameHubz.Logic.Services
@@ -136,6 +137,8 @@ namespace GameHubz.Logic.Services
                 throw new EntityNotFoundException(assetId, typeof(AssetEntity).ToString(), this.LocalizationService);
             }
 
+            await this.EnsureCallerOwnsAssetOrAdmin(asset);
+
             asset = this.mapper.Map(assetUpdate, asset, typeof(AssetUpdate), typeof(AssetEntity)) as AssetEntity;
 
             await this.AppUnitOfWork.AssetRepository.UpdateEntity(asset!, this.UserContextReader);
@@ -152,9 +155,24 @@ namespace GameHubz.Logic.Services
                 throw new EntityNotFoundException(id, typeof(AssetEntity).ToString(), this.LocalizationService);
             }
 
+            await this.EnsureCallerOwnsAssetOrAdmin(asset);
+
             await this.AppUnitOfWork.AssetRepository.SoftDeleteEntity(asset, this.UserContextReader);
 
             await this.SaveAsync();
+        }
+
+        // F58: assets are loaded by route id with no ownership check, so any user could overwrite or
+        // delete another user's asset by enumerating GUIDs. Only the uploader (CreatedBy) or an Admin
+        // may mutate an asset.
+        private async Task EnsureCallerOwnsAssetOrAdmin(AssetEntity asset)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (asset.CreatedBy != caller.UserId && caller.RoleEnum != UserRoleEnum.Admin)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
         }
     }
 }

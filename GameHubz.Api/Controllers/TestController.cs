@@ -1,6 +1,8 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using GameHubz.Common.Consts;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.Utility;
 
@@ -15,24 +17,34 @@ namespace GameHubz.Api.Controllers
         private readonly EmailService emailService;
         private readonly DateTimeProvider dateTimeProvider;
         private readonly ILogger<TestController> logger;
+        private readonly AppAuthorizationService appAuthorizationService;
 
         public TestController(
             IConfiguration configuration,
             BlobService blobService,
             EmailService emailService,
             DateTimeProvider dateTimeProvider,
-            ILogger<TestController> logger)
+            ILogger<TestController> logger,
+            AppAuthorizationService appAuthorizationService)
         {
             this.configuration = configuration;
             this.blobService = blobService;
             this.emailService = emailService;
             this.dateTimeProvider = dateTimeProvider;
             this.logger = logger;
+            this.appAuthorizationService = appAuthorizationService;
         }
 
+        // F108: this diagnostic runs a DB probe, an Azure-storage write, AND sends an email, then dumps
+        // raw exception details (stack traces, connection info) into the HTML response. It was reachable
+        // anonymously — anyone could trigger mail sends and harvest internal state. Restrict to Admin.
+        // (health/version below stay anonymous so uptime monitors keep working.)
+        [Authorize]
         [HttpGet("")]
         public async Task<ContentResult> Index()
         {
+            await this.appAuthorizationService.CheckAuthorization([UserRoleEnum.Admin]);
+
             List<TestResult> results = new()
             {
                 await RunTest("Database connection test", this.TestDatabaseConnection),

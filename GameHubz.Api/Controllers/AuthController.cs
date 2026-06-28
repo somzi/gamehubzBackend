@@ -141,17 +141,20 @@ namespace GameHubz.Api.Controllers
         //    return Ok(this.localizationService["Password.ForgotPassword"]);
         //}
 
+        // SECURITY (F1/F7): the reset code is delivered ONLY by email — it is never returned in the
+        // response (returning it allowed full account takeover by anyone who knew a victim's email),
+        // and the endpoint always reports success so it can't be used to enumerate registered emails.
+        // This now behaves identically to v2; old clients that pre-filled the code from the response
+        // body will simply require the user to type the code from the email.
         [HttpPost("forgotPassword")]
         public async Task<IActionResult> ForgotPassword([FromBody] string email)
         {
-            var otpCode = await this.passwordManagementService.SendEmailWithForgotPasswordToken(email);
+            await this.passwordManagementService.SendForgotPasswordOtp(email);
 
-            return Ok(otpCode);
+            return Ok();
         }
 
-        // v2: the reset code is sent only by email and is never returned in the response, and the
-        // endpoint always reports success so it can't be used to probe which emails are registered.
-        // The legacy route above is kept byte-identical for app versions already in the wild.
+        // v2: identical secure behaviour, kept as a distinct route for clients that target it explicitly.
         [HttpPost("v2/forgotPassword")]
         public async Task<IActionResult> ForgotPasswordV2([FromBody] string email)
         {

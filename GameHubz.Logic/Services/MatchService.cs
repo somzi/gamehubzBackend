@@ -105,7 +105,13 @@ namespace GameHubz.Logic.Services
                 (match.AwayParticipant.UserId == userId ||
                  match.AwayParticipant.Team?.Members.Any(m => m.UserId == userId) == true);
 
-            //if (!isHome && !isAway) throw new Exception("User is not a participant in this match");
+            // F25: only a participant may set availability. Without this guard a non-participant
+            // (isHome=false, isAway=false) silently fell into the else branch below and overwrote the
+            // away side's slots on someone else's match.
+            if (!isHome && !isAway)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
 
             // 2. Save Slots — normalize to UTC so Intersect() uses consistent DateTimeKind
             var normalizedSlots = selectedSlots
@@ -139,7 +145,7 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
-            SendNotification(matchId, user, match, isHome);
+            await NotifyOpponentOfAvailabilityAsync(matchId, user, match, isHome);
 
             // 4. Return DTO for UI
             return new MatchAvailabilityDto
@@ -152,58 +158,44 @@ namespace GameHubz.Logic.Services
             };
         }
 
-        private void SendNotification(Guid matchId, TokenUserInfo user, MatchEntity match, bool isHome)
+        // F109: the opponent's push token is resolved here (awaited, while the request-scoped DbContext
+        // is still alive) and only the push itself is fired-and-forgotten via FireAndForgetPush. The old
+        // version queried this.AppUnitOfWork inside Task.Run, which raced/failed against the disposed
+        // request-scoped context.
+        private async Task NotifyOpponentOfAvailabilityAsync(Guid matchId, TokenUserInfo user, MatchEntity match, bool isHome)
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    if (match.Status == MatchStatus.Scheduled)
-                    {
-                        var homeUserId = GetParticipantUserId(match, isHome: true);
-                        var awayUserId = GetParticipantUserId(match, isHome: false);
+            Guid? opponentUserId = isHome
+                ? GetParticipantUserId(match, isHome: false)
+                : GetParticipantUserId(match, isHome: true);
 
-                        Guid? opponentUserId = isHome
-                            ? GetParticipantUserId(match, isHome: false)
-                            : GetParticipantUserId(match, isHome: true);
+            if (opponentUserId == null) return;
 
-                        if (opponentUserId == null) return;
+            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
 
-                        var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            var (title, body) = match.Status == MatchStatus.Scheduled
+                ? ("Match Scheduled", $"Your match is confirmed vs {user.Username}")
+                : ("Match schedule", $"{user.Username} set their availability, add yours to confirm a time");
 
-                        if (opponent == null) return;
-
-                        string body = $"Your match is confirmed vs {user.Username}";
-
-                        if (opponent?.PushToken == null) return;
-
-                        await notificationService.SendToOneAsync(opponent.PushToken, "Match Scheduled", body, new { matchId = matchId.ToString() });
-                    }
-                    else
-                    {
-                        Guid? opponentUserId = isHome
-                            ? GetParticipantUserId(match, isHome: false)
-                            : GetParticipantUserId(match, isHome: true);
-                        if (opponentUserId == null) return;
-
-                        var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-                        if (opponent?.PushToken == null) return;
-
-                        await notificationService.SendToOneAsync(
-                            opponent.PushToken,
-                            "Match schedule",
-                            $"{user.Username} set their availability, add yours to confirm a time",
-                            new { matchId = matchId.ToString() });
-                    }
-                }
-                catch { /* fire-and-forget */ }
-            });
+            FireAndForgetPush(
+                new List<string> { opponent.PushToken! },
+                title,
+                body,
+                new { matchId = matchId.ToString() });
         }
 
         public async Task SetScheduled(Guid matchId)
         {
-            var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
             if (match == null) throw new BusinessRuleException("Match not found");
+
+            // F31: forcing a match to Scheduled is restricted to its participants or a tournament admin.
+            if (!IsMatchParticipant(match, user.UserId) && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
 
             match.ScheduledStartTime = DateTime.UtcNow;
             match.Status = MatchStatus.Scheduled;
@@ -214,6 +206,18 @@ namespace GameHubz.Logic.Services
 
         public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
         {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // F26: only a match participant or a tournament admin may attach evidence — otherwise any
+            // user could pollute an arbitrary match's evidence gallery / burn storage.
+            var matchForAuth = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (matchForAuth == null) throw new BusinessRuleException("Match not found");
+
+            if (!IsMatchParticipant(matchForAuth, user.UserId) && !await this.tournamentAuth.CanManageTournamentAsync(matchForAuth.TournamentId, user))
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
+
             var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
             if (match == null) throw new Exception("Match not found");
 

@@ -64,6 +64,11 @@ namespace GameHubz.Logic.Services
 
         public async Task<HubVerificationRequestDto> RespondVerification(Guid hubId, bool approved)
         {
+            // F45: approving/rejecting a verification request flips Hub.IsVerified and must be a
+            // privileged staff action. Previously this was reachable anonymously, so anyone could
+            // self-verify any hub. Require a platform Admin (the review email is sent to staff).
+            await this.appAuthorizationService.CheckAuthorization([UserRoleEnum.Admin]);
+
             var request = await this.AppUnitOfWork.HubVerificationRequestRepository.GetPendingForHub(hubId)
                 ?? throw new Exception("No pending verification request found for this hub.");
 

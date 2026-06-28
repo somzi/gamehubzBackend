@@ -260,7 +260,7 @@ namespace GameHubz.Logic.Services
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
 
             // Notify all participants that the tournament is now live
-            SendNotification(tournament, tournamentId);
+            await SendNotification(tournament, tournamentId);
         }
 
         /// <summary>
@@ -5062,7 +5062,10 @@ namespace GameHubz.Logic.Services
                 bracketOrder = newOrder;
                 count *= 2;
             }
-            return bracketOrder.Select(i => sorted[i]).ToList();
+            // F12: when n isn't a power of two, bracketOrder grows to the next power of two and contains
+            // indices >= n. Those positions are byes — skip them instead of indexing sorted[i] out of
+            // range (the previous behaviour threw). Callers pad the remaining slots with byes.
+            return bracketOrder.Where(i => i < n).Select(i => sorted[i]).ToList();
         }
 
         private MatchEntity CreateMatch(Guid tournamentId, Guid stageId, int round, MatchStage stage, int order, DateTime? roundOpenAt = null)
@@ -5842,26 +5845,28 @@ namespace GameHubz.Logic.Services
             }
         }
 
-        private void SendNotification(TournamentEntity tournament, Guid tournamentId)
+        // F109: participant ids + push tokens are resolved here (awaited, while the request-scoped
+        // DbContext is alive); only the push send is fired-and-forgotten. The old version queried
+        // this.AppUnitOfWork inside Task.Run, racing against the disposed request-scoped context.
+        private async Task SendNotification(TournamentEntity tournament, Guid tournamentId)
         {
+            var userIds = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllUserIdsByTournamentId(tournamentId);
+            if (userIds.Count == 0) return;
+
+            var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(userIds);
+            if (pushTokens.Count == 0) return;
+
+            var title = tournament.Name;
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var userIds = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllUserIdsByTournamentId(tournamentId);
-
-                    if (userIds.Count == 0) return;
-
-                    var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(userIds);
-
-                    if (pushTokens.Count > 0)
-                    {
-                        await notificationService.SendToManyAsync(
-                            pushTokens,
-                            $"{tournament.Name}",
-                            $"Tournament is now live. Good luck!",
-                            new { tournamentId });
-                    }
+                    await notificationService.SendToManyAsync(
+                        pushTokens,
+                        $"{title}",
+                        $"Tournament is now live. Good luck!",
+                        new { tournamentId });
                 }
                 catch { /* fire-and-forget */ }
             });

@@ -26,5 +26,17 @@ namespace GameHubz.Data.Repository
                 .Where(x => x.Token == token)
                 .SingleOrDefault();
         }
+
+        public async Task HardDeleteAllByUserId(Guid userId)
+        {
+            var tokens = this.BaseDbSet()
+                .Where(x => x.UserId == userId)
+                .ToList();
+
+            foreach (var token in tokens)
+            {
+                await this.HardDeleteEntity(token);
+            }
+        }
     }
 }

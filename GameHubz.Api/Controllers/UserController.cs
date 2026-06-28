@@ -118,5 +118,17 @@ namespace GameHubz.Api.Controllers
                 UserRoleEnum.Admin
             ];
         }
+
+        // F101: the inherited generic POST /api/User maps a UserPost straight onto the row identified
+        // by its body Id (password + role included), with no ownership check. Restrict it to Admin so a
+        // regular user can't update another user's row / reset their password. Self-service updates go
+        // through the dedicated /update, /push-token and AuthController endpoints.
+        protected override UserRoleEnum[]? UserRolesSave()
+        {
+            return
+            [
+                UserRoleEnum.Admin
+            ];
+        }
     }
 }
