@@ -263,6 +263,133 @@ namespace GameHubz.Logic.Services
             SendNotification(tournament, tournamentId);
         }
 
+        /// <summary>
+        /// Tears the knockout bracket back down (admin only) so a group-stage result can be corrected
+        /// and the bracket re-drawn. The group stage itself is left untouched — only the knockout stage
+        /// (and, for double-elimination, its losers bracket) is cleared. Once empty, group results
+        /// become editable again and the bracket re-draws either automatically (when the corrected
+        /// group finishes) or on demand via <see cref="DrawKnockoutFromGroups"/>.
+        /// </summary>
+        public async Task ResetKnockoutStage(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can reset the bracket.");
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+
+            // Only a group stage feeding a knockout can be reset this way (order 1 = groups, 2 = knockout).
+            var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 1);
+            if (groupStage == null || groupStage.Type != StageType.GroupStage)
+                throw new BusinessRuleException("This tournament has no group stage, so there is no bracket to reset.");
+
+            var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
+            if (knockoutStage == null)
+                throw new BusinessRuleException("No knockout stage was found for this tournament.");
+
+            int removed = await TearDownKnockoutMatchesAsync(tournament, knockoutStage);
+            if (removed == 0)
+                throw new BusinessRuleException("The bracket has not been drawn yet, so there is nothing to reset.");
+
+            // The knockout may have already crowned a champion — roll the tournament back to in-progress.
+            if (tournament.Status == TournamentStatus.Completed)
+            {
+                tournament.Status = TournamentStatus.InProgress;
+                tournament.WinnerUserId = null;
+                tournament.WinnerTeamId = null;
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+            }
+
+            await this.SaveAsync();
+            await InvalidateTournamentBracketCaches(tournamentId);
+        }
+
+        /// <summary>
+        /// Draws (or re-draws) the knockout bracket from the finished group standings on demand (admin
+        /// only). Used after <see cref="ResetKnockoutStage"/> to re-seed without changing any result, or
+        /// when the organiser wants to draw the bracket manually. No-op-safe: the underlying check
+        /// refuses to draw twice or before the groups are complete.
+        /// </summary>
+        public async Task DrawKnockoutFromGroups(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can draw the bracket.");
+
+            var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 1);
+            if (groupStage == null || groupStage.Type != StageType.GroupStage)
+                throw new BusinessRuleException("This tournament has no group stage to draw a bracket from.");
+
+            var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
+            if (knockoutStage != null && await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value))
+                throw new BusinessRuleException("The bracket is already drawn. Reset it first if you want to re-draw.");
+
+            // Serialised like the automatic draw: CheckAndAdvanceGroupStage is a check-then-act over
+            // many rows and must not race a concurrent result finalise.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
+            try
+            {
+                await CheckAndAdvanceGroupStage(tournamentId, groupStage.Id!.Value);
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(tournamentId);
+            }
+
+            await InvalidateTournamentBracketCaches(tournamentId);
+        }
+
+        // Hard-deletes every match in the knockout stage(s): the single-elim / WB stage plus, for
+        // double-elimination, the losers bracket that sits at the next order. Returns the number of
+        // fixtures removed so callers can tell an already-drawn bracket from an empty one.
+        private async Task<int> TearDownKnockoutMatchesAsync(TournamentEntity tournament, TournamentStageEntity knockoutStage)
+        {
+            var stageIds = new List<Guid> { knockoutStage.Id!.Value };
+
+            if (knockoutStage.Type == StageType.DoubleEliminationWinnersBracket)
+            {
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournament.Id!.Value, 3);
+                if (lbStage != null && lbStage.Type == StageType.DoubleEliminationLosersBracket)
+                    stageIds.Add(lbStage.Id!.Value);
+            }
+
+            int removed = 0;
+            foreach (var stageId in stageIds)
+            {
+                if (tournament.IsTeamTournament)
+                {
+                    var teamMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(stageId);
+                    foreach (var tm in teamMatches)
+                    {
+                        if (tm.SubMatches != null)
+                            foreach (var sm in tm.SubMatches)
+                                await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+                        await this.AppUnitOfWork.TeamMatchRepository.HardDeleteEntity(tm);
+                        removed++;
+                    }
+                }
+                else
+                {
+                    var matches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
+                    foreach (var m in matches)
+                    {
+                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(m);
+                        removed++;
+                    }
+                }
+            }
+            return removed;
+        }
+
+        private async Task InvalidateTournamentBracketCaches(Guid tournamentId)
+        {
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+        }
+
         private async Task GenerateBracketForFormat(TournamentEntity tournament, Guid tournamentId, TimeSpan? roundDuration)
         {
             switch (tournament.Format)

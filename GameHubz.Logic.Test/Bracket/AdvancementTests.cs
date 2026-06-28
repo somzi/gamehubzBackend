@@ -234,6 +234,44 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(tournament.Status, Is.EqualTo(TournamentStatus.Completed), "tournament played to a champion");
         }
 
+        [Test]
+        public async Task ResetKnockoutStage_TearsDownBracket_ThenRedrawsFromGroups()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 2);
+
+            // Play out the groups (and the auto-drawn knockout) end to end.
+            for (int guard = 0; guard < 300; guard++)
+            {
+                var playable = harness.Matches(tournamentId)
+                    .FirstOrDefault(m => m.Status != MatchStatus.Completed
+                        && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
+                        && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
+                if (playable == null) break;
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = playable.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+                });
+            }
+
+            var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
+            int drawnCount = harness.Matches(tournamentId).Count(m => m.TournamentStageId == knockoutStage.Id);
+            Assert.That(drawnCount, Is.GreaterThan(0), "bracket was drawn and played");
+
+            // Reset tears the knockout down and rolls the completed tournament back to in-progress.
+            await harness.NewService().ResetKnockoutStage(tournamentId);
+            Assert.That(harness.Matches(tournamentId).Any(m => m.TournamentStageId == knockoutStage.Id), Is.False,
+                "knockout matches cleared");
+            Assert.That(harness.Tournament(tournamentId).Status, Is.EqualTo(TournamentStatus.InProgress),
+                "champion rolled back");
+
+            // A manual draw rebuilds the same-shape bracket from the unchanged standings.
+            await harness.NewService().DrawKnockoutFromGroups(tournamentId);
+            int redrawnCount = harness.Matches(tournamentId).Count(m => m.TournamentStageId == knockoutStage.Id);
+            Assert.That(redrawnCount, Is.EqualTo(drawnCount), "bracket redrawn with the same number of fixtures");
+        }
+
         /// <summary>
         /// Reports a 2-1 home win on every playable solo match (Pending with both participants), round
         /// after round, until the bracket is fully played. Each report uses a fresh service/context.
