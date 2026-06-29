@@ -66,11 +66,17 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchChatRepository.AddEntity(entity, this.UserContextReader);
             await this.SaveAsync();
 
+            // Resolve the sender's display name + avatar so the live SignalR payload matches the
+            // history projection (which now carries UserAvatarUrl). Without this an admin chiming in
+            // arrives with no avatar and the client falls back to showing the opponent's.
+            var sender = await this.AppUnitOfWork.UserRepository.GetById(user.UserId);
+
             var dto = new ChatMessageDto
             {
                 Id = entity.Id!.Value,
                 UserId = user.UserId,
-                UserNickname = user.Username,
+                UserNickname = sender?.Nickname ?? user.Username,
+                UserAvatarUrl = sender?.AvatarUrl,
                 Content = content,
                 SentAt = entity.CreatedOn!.Value
             };
