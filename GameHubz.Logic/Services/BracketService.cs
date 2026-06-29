@@ -3501,7 +3501,15 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.MatchRepository.AddEntity(m, this.UserContextReader);
 
             if (byeParticipant != null)
+            {
+                // ResyncSoloLeagueStatistics ran earlier in this request and left every group
+                // participant tracked. byeParticipant is a no-tracking reload, so clear the live
+                // tracked instance by Id before attaching it — otherwise EF throws "another
+                // instance with the same key is already tracked" and the next round never pairs.
+                // (Same idiom as the group-stage seed-update path.)
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachById(byeParticipant.Id!.Value);
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(byeParticipant, this.UserContextReader);
+            }
 
             await this.SaveAsync();
         }
@@ -3547,6 +3555,11 @@ namespace GameHubz.Logic.Services
                 if (ordered[i].Seed != i + 1)
                 {
                     ordered[i].Seed = i + 1;
+                    // ResyncSoloLeagueStatistics left these participants tracked earlier in the
+                    // request; ordered[i] is a no-tracking reload, so detach the live instance by
+                    // Id before attaching it (else EF's identity-conflict check throws and the
+                    // post-Swiss stage never seeds). Same idiom as the group-stage seed update.
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachById(ordered[i].Id!.Value);
                     await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(ordered[i], this.UserContextReader);
                 }
             }
