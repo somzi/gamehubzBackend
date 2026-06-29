@@ -693,12 +693,19 @@ namespace GameHubz.Logic.Services
                 {
                     col.Spacing(12);
 
-                    // Each row of `columns` group cards is kept whole with ShowEntire so a card
-                    // never breaks mid-table across pages.
+                    // Multi-column rows hold small cards (≤12-player groups) that always fit a
+                    // single page, so keep each row whole with ShowEntire — a card never breaks
+                    // mid-table. A single-column row, however, can hold a large group or a whole
+                    // League table whose standings are taller than the fixed page height; forcing
+                    // ShowEntire there makes QuestPDF throw a DocumentLayoutException (the card can
+                    // never fit one page). For that case we let the standings table break across
+                    // pages instead — its header row repeats automatically on each page.
+                    bool keepRowsWhole = columns > 1;
                     for (int i = 0; i < groups.Count; i += columns)
                     {
                         var rowGroups = groups.Skip(i).Take(columns).ToList();
-                        col.Item().ShowEntire().Row(r =>
+                        var rowItem = keepRowsWhole ? col.Item().ShowEntire() : col.Item();
+                        rowItem.Row(r =>
                         {
                             r.Spacing(12);
                             foreach (var g in rowGroups)
