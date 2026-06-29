@@ -601,6 +601,24 @@ namespace GameHubz.Logic.Services
             if (groups.Count == 0) return;
 
             int qualifiersCount = structure.QualifiersPerGroup ?? 1;
+
+            // Single standings table — a Swiss stage, or a large single-group League — would be
+            // rendered by the grid path below as one card on the 1200pt page, stretching the name
+            // column to ~980pt (huge empty gap) and spilling a 60-player field across three pages.
+            // Render those as a packed multi-column leaderboard instead; Swiss additionally gets
+            // round-by-round result pages after the table.
+            bool singleStandings = groups.Count == 1
+                && (stage.Type == StageType.Swiss
+                    || (stage.Type == StageType.League && groups[0].Standings.Count > 12));
+
+            if (singleStandings)
+            {
+                CreateLeaderboardPages(doc, structure, stage, groups[0], structure.QualifiersPerGroup ?? 0);
+                if (stage.Type == StageType.Swiss)
+                    CreateRoundResultsPages(doc, structure, stage, groups[0]);
+                return;
+            }
+
             int maxSize = groups.Max(g => g.Standings.Count);
 
             // Fixed 3-column grid for the common case (≤6-player groups), 2 cols for
@@ -641,53 +659,8 @@ namespace GameHubz.Logic.Services
                 page.Margin(25);
                 page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
 
-                page.Header().Column(h =>
-                {
-                    // Top metadata strip: wordmark on the left, format + date in the middle,
-                    // status on the right. Small caps + letter spacing keeps it editorial.
-                    h.Item().PaddingBottom(8).Row(r =>
-                    {
-                        r.RelativeItem().AlignMiddle().Text("GAMEHUBZ")
-                            .FontSize(9).Bold().FontColor(CGroupName).LetterSpacing(0.08f);
-
-                        r.RelativeItem(2).AlignCenter().AlignMiddle().Text(t =>
-                        {
-                            t.Span(FormatTopMeta(structure))
-                                .FontSize(8).FontColor(CMuted).LetterSpacing(0.06f);
-                        });
-
-                        r.RelativeItem().AlignRight().AlignMiddle().Text(t =>
-                        {
-                            var (txt, col) = FormatStatusBadge(structure.Status);
-                            t.Span(txt).FontSize(8).Bold().FontColor(col).LetterSpacing(0.08f);
-                        });
-                    });
-
-                    h.Item().LineHorizontal(0.5f).LineColor(CCardBrd);
-
-                    // Title block: tiny uppercase section label above the big stage title,
-                    // with right-side context (group range) mirrored on the other end.
-                    h.Item().PaddingTop(14).PaddingBottom(14).Row(r =>
-                    {
-                        r.RelativeItem().Column(c =>
-                        {
-                            c.Item().Text("STANDINGS")
-                                .FontSize(8).Bold().FontColor(CMuted).LetterSpacing(0.12f);
-                            c.Item().PaddingTop(3).Text(stage.Name)
-                                .FontSize(22).Bold().FontColor(CGroupName);
-                        });
-
-                        r.RelativeItem().AlignRight().Column(c =>
-                        {
-                            c.Item().AlignRight().Text("GROUPS")
-                                .FontSize(8).Bold().FontColor(CMuted).LetterSpacing(0.12f);
-                            c.Item().PaddingTop(3).AlignRight().Text(FormatGroupRange(groups))
-                                .FontSize(13).Bold().FontColor(CGroupName);
-                        });
-                    });
-
-                    h.Item().LineHorizontal(0.5f).LineColor(CCardBrd);
-                });
+                page.Header().Column(h => ComposeHeader(
+                    h, structure, "STANDINGS", stage.Name, "GROUPS", FormatGroupRange(groups)));
 
                 page.Content().PaddingTop(12).Column(col =>
                 {
@@ -718,23 +691,7 @@ namespace GameHubz.Logic.Services
                     }
                 });
 
-                page.Footer()
-                    .BorderTop(1).BorderColor(Colors.Grey.Lighten2)
-                    .PaddingTop(5)
-                    .Row(row =>
-                    {
-                        row.RelativeItem()
-                            .Text($"Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  \u2022  GameHubz")
-                            .FontSize(7).FontColor(Colors.Grey.Medium);
-
-                        row.RelativeItem().AlignRight().Text(t =>
-                        {
-                            t.Span("Page ").FontSize(7).FontColor(Colors.Grey.Medium);
-                            t.CurrentPageNumber().FontSize(7).FontColor(Colors.Grey.Medium);
-                            t.Span(" of ").FontSize(7).FontColor(Colors.Grey.Medium);
-                            t.TotalPages().FontSize(7).FontColor(Colors.Grey.Medium);
-                        });
-                    });
+                page.Footer().Element(ComposeFooter);
             });
         }
 
@@ -759,6 +716,7 @@ namespace GameHubz.Logic.Services
                         {
                             c.ConstantColumn(16);   // #
                             c.RelativeColumn();     // Name (flexes — absorbs leftover width)
+                            c.ConstantColumn(18);   // P (matches played)
                             c.ConstantColumn(26);   // Pts
                             c.ConstantColumn(18);   // W
                             c.ConstantColumn(18);   // D
@@ -774,6 +732,7 @@ namespace GameHubz.Logic.Services
 
                             h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).PaddingHorizontal(2).Text("#").Style(hs);
                             h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).PaddingHorizontal(2).Text("PLAYER").Style(hs);
+                            h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).AlignCenter().Text("P").Style(hs);
                             h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).AlignCenter().Text("PTS").Style(hs);
                             h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).AlignCenter().Text("W").Style(hs);
                             h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).AlignCenter().Text("D").Style(hs);
@@ -804,6 +763,7 @@ namespace GameHubz.Logic.Services
                             table.Cell().Background(bg).PaddingVertical(5).PaddingHorizontal(2).Text(s.Position.ToString()).Style(rowPos);
                             table.Cell().Background(bg).PaddingVertical(5).PaddingHorizontal(2)
                                 .Text(s.Name).Style(nameStyle).ClampLines(1, "…");
+                            table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(s.MatchesPlayed.ToString()).Style(rowBase);
                             table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(s.Points.ToString()).Style(rowPts);
                             table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(s.Wins.ToString()).Style(rowBase);
                             table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(s.Draws.ToString()).Style(rowBase);
@@ -812,6 +772,365 @@ namespace GameHubz.Logic.Services
                             table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(rowBase);
                             table.Cell().Background(bg).PaddingVertical(5).AlignCenter().Text(gdText).Style(gdStyle);
                         }
+                    });
+                });
+        }
+
+        // ================================================================
+        //  STANDINGS LEADERBOARD (Swiss / large single-group League)
+        // ================================================================
+
+        // A Swiss stage (or a big single-group League) is one standings table. The group grid
+        // above would render it as a lone card on the 1200pt page — name column stretched, a
+        // sea of whitespace, three pages for ~60 players. Split it into balanced side-by-side
+        // columns that fill the width and pack many more rows per page.
+        private static void CreateLeaderboardPages(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            GroupDto group,
+            int qualifiersCount)
+        {
+            var standings = group.Standings;
+            int count = standings.Count;
+            if (count == 0) return;
+
+            // Buchholz (sum of opponents' points) is the Swiss tiebreaker the rows are already
+            // ordered by — surface it so an equal-points ordering doesn't look arbitrary.
+            bool showBuchholz = stage.Type == StageType.Swiss
+                && standings.Any(s => s.OpponentPointsSum.HasValue);
+
+            // Column count tuned to fill the wide page without leaving columns too short. Only a
+            // very small field stays single-column; anything larger spreads across the width.
+            int columns = count <= 8 ? 1 : count <= 24 ? 2 : 3;
+
+            // Conservative cap so a full three-column page still clears the fixed page height
+            // (~540pt of body ÷ ~18pt per row). Larger fields spill onto another page.
+            const int maxRowsPerColumn = 26;
+            int perPage = columns * maxRowsPerColumn;
+
+            for (int start = 0; start < count; start += perPage)
+            {
+                var pageItems = standings.Skip(start).Take(perPage).ToList();
+                RenderLeaderboardDocPage(doc, structure, stage, group, pageItems, columns, qualifiersCount, showBuchholz);
+            }
+        }
+
+        private static void RenderLeaderboardDocPage(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            GroupDto group,
+            List<LeagueStandingDto> pageItems,
+            int columns,
+            int qualifiersCount,
+            bool showBuchholz)
+        {
+            const float pageW = 1200;
+            const float pageH = 700;
+            const float subW = 372;
+            const float spacing = 16;
+
+            // Balance this page's rows across the columns (e.g. 66 → 22 / 22 / 22).
+            int perCol = (int)Math.Ceiling(pageItems.Count / (double)columns);
+            var chunks = new List<List<LeagueStandingDto>>();
+            for (int i = 0; i < pageItems.Count; i += perCol)
+                chunks.Add(pageItems.Skip(i).Take(perCol).ToList());
+
+            float totalW = columns * subW + (columns - 1) * spacing;
+
+            doc.Page(page =>
+            {
+                page.Size(pageW, pageH);
+                page.Margin(25);
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
+
+                page.Header().Column(h => ComposeHeader(
+                    h, structure, "STANDINGS", stage.Name, "PLAYERS", group.Standings.Count.ToString()));
+
+                // Fixed-width columns centred on the wide page so the block reads as intentional
+                // rather than left-justified with a trailing gap.
+                page.Content().PaddingTop(12).AlignCenter().Width(totalW).Row(r =>
+                {
+                    r.Spacing(spacing);
+                    foreach (var chunk in chunks)
+                        r.RelativeItem().Element(e => RenderLeaderboardChunk(e, chunk, qualifiersCount, showBuchholz));
+                    for (int j = chunks.Count; j < columns; j++)
+                        r.RelativeItem();
+                });
+
+                page.Footer().Element(ComposeFooter);
+            });
+        }
+
+        private static void RenderLeaderboardChunk(
+            IContainer container,
+            List<LeagueStandingDto> rows,
+            int qualifiersCount,
+            bool showBuchholz)
+        {
+            container.Table(table =>
+            {
+                table.ColumnsDefinition(c =>
+                {
+                    c.ConstantColumn(18);   // #
+                    c.RelativeColumn();     // Name
+                    c.ConstantColumn(20);   // P (matches played)
+                    c.ConstantColumn(26);   // Pts
+                    c.ConstantColumn(16);   // W
+                    c.ConstantColumn(16);   // D
+                    c.ConstantColumn(16);   // L
+                    c.ConstantColumn(22);   // GF
+                    c.ConstantColumn(22);   // GA
+                    c.ConstantColumn(26);   // GD
+                    if (showBuchholz)
+                        c.ConstantColumn(28); // BUC (Buchholz)
+                });
+
+                table.Header(h =>
+                {
+                    var hs = TextStyle.Default.FontSize(7).FontColor(CTblHdr).LetterSpacing(0.04f);
+
+                    void HeaderCell(string text, bool center = true)
+                    {
+                        var cell = h.Cell().BorderBottom(0.5f).BorderColor(CCardBrd).PaddingVertical(4).PaddingHorizontal(2);
+                        (center ? cell.AlignCenter() : cell).Text(text).Style(hs);
+                    }
+
+                    HeaderCell("#", false);
+                    HeaderCell("PLAYER", false);
+                    HeaderCell("P");
+                    HeaderCell("PTS");
+                    HeaderCell("W");
+                    HeaderCell("D");
+                    HeaderCell("L");
+                    HeaderCell("GF");
+                    HeaderCell("GA");
+                    HeaderCell("GD");
+                    if (showBuchholz) HeaderCell("BUC");
+                });
+
+                var rowBase = TextStyle.Default.FontSize(8.5f).FontColor(CRowTxt);
+                var rowPos = rowBase.FontColor(CRowMuted);
+                var rowPts = rowBase.Bold();
+                var rowBuc = rowBase.FontColor(CRowMuted);
+
+                foreach (var s in rows)
+                {
+                    bool isQualifier = qualifiersCount > 0 && s.Position <= qualifiersCount;
+                    string bg = isQualifier ? CQualifierBg : CCardBg;
+                    var nameStyle = isQualifier ? rowBase.Bold() : rowBase;
+
+                    string gdText = s.GoalDifference > 0 ? $"+{s.GoalDifference}" : s.GoalDifference.ToString();
+                    string gdColor = s.GoalDifference > 0 ? CGdPos : s.GoalDifference < 0 ? CGdNeg : CGdNeut;
+                    var gdStyle = rowBase.FontColor(gdColor).Bold();
+
+                    table.Cell().Background(bg).PaddingVertical(4).PaddingHorizontal(2).Text(s.Position.ToString()).Style(rowPos);
+                    table.Cell().Background(bg).PaddingVertical(4).PaddingHorizontal(2).Text(s.Name).Style(nameStyle).ClampLines(1, "…");
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.MatchesPlayed.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.Points.ToString()).Style(rowPts);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.Wins.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.Draws.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.Losses.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.GoalsFor.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(s.GoalsAgainst.ToString()).Style(rowBase);
+                    table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text(gdText).Style(gdStyle);
+                    if (showBuchholz)
+                        table.Cell().Background(bg).PaddingVertical(4).AlignCenter().Text((s.OpponentPointsSum ?? 0).ToString()).Style(rowBuc);
+                }
+            });
+        }
+
+        // ================================================================
+        //  SWISS ROUND-BY-ROUND RESULTS
+        // ================================================================
+
+        // The standings alone are thin for a Swiss export (there is no bracket diagram), so list
+        // every round's pairings and scores afterwards — the convention on Battlefy / Challonge.
+        private static void CreateRoundResultsPages(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            GroupDto group)
+        {
+            var rounds = group.Matches
+                .GroupBy(m => m.Round)
+                .OrderBy(g => g.Key)
+                .ToList();
+            if (rounds.Count == 0) return;
+
+            const float pageW = 1200;
+            const float pageH = 700;
+            const float chipW = 360;
+
+            doc.Page(page =>
+            {
+                page.Size(pageW, pageH);
+                page.Margin(25);
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
+
+                page.Header().Column(h => ComposeHeader(
+                    h, structure, "RESULTS", stage.Name, "ROUNDS", rounds.Count.ToString()));
+
+                page.Content().PaddingTop(12).Column(col =>
+                {
+                    col.Spacing(16);
+
+                    foreach (var round in rounds)
+                    {
+                        int total = round.Count();
+                        int played = round.Count(m => m.Status == MatchStatus.Completed);
+
+                        col.Item().Column(section =>
+                        {
+                            section.Item().PaddingBottom(6).Row(r =>
+                            {
+                                r.RelativeItem().Text($"ROUND {round.Key}")
+                                    .FontSize(10).Bold().FontColor(CGroupName).LetterSpacing(0.1f);
+                                r.RelativeItem().AlignRight().Text($"{played}/{total} played")
+                                    .FontSize(8).FontColor(CMuted);
+                            });
+
+                            // Chips flow left-to-right and wrap; three per row fill the page width.
+                            section.Item().Inlined(inl =>
+                            {
+                                inl.HorizontalSpacing(14);
+                                inl.VerticalSpacing(10);
+                                foreach (var m in round.OrderBy(m => m.Order))
+                                    inl.Item().Width(chipW).Element(e => RenderMatchChip(e, m, structure.IsTeamTournament));
+                            });
+                        });
+                    }
+                });
+
+                page.Footer().Element(ComposeFooter);
+            });
+        }
+
+        // Compact result card: home (right-aligned) · score / "vs" / "BYE" · away (left-aligned).
+        // The winner's name is dark + bold; the loser muted. An unplayed match shows "vs".
+        private static void RenderMatchChip(IContainer container, MatchStructureDto m, bool isTeam)
+        {
+            container = container
+                .Background(CCardBg)
+                .Border(0.75f).BorderColor(CCardBrd)
+                .PaddingVertical(6).PaddingHorizontal(8);
+
+            bool completed = m.Status == MatchStatus.Completed;
+
+            // A completed match missing a side is a Swiss bye — the sitting player banked a free win.
+            if (m.Home == null || m.Away == null)
+            {
+                var present = m.Home ?? m.Away;
+                string byeName = present == null ? "—" : (isTeam ? (present.TeamName ?? present.Username) : present.Username);
+                container.Row(r =>
+                {
+                    r.RelativeItem().AlignRight().Text(byeName)
+                        .FontSize(9).Bold().FontColor(CGroupName).ClampLines(1, "…");
+                    r.ConstantItem(58).AlignCenter().Text("BYE")
+                        .FontSize(8).Bold().FontColor(CMuted).LetterSpacing(0.08f);
+                    r.RelativeItem();
+                });
+                return;
+            }
+
+            string homeName = isTeam ? (m.Home.TeamName ?? m.Home.Username) : m.Home.Username;
+            string awayName = isTeam ? (m.Away.TeamName ?? m.Away.Username) : m.Away.Username;
+            bool homeWin = m.Home.IsWinner;
+            bool awayWin = m.Away.IsWinner;
+
+            var homeStyle = TextStyle.Default.FontSize(9).FontColor(homeWin ? CGroupName : CRowMuted);
+            if (homeWin) homeStyle = homeStyle.Bold();
+            var awayStyle = TextStyle.Default.FontSize(9).FontColor(awayWin ? CGroupName : CRowMuted);
+            if (awayWin) awayStyle = awayStyle.Bold();
+
+            string middle = completed ? $"{m.Home.Score ?? 0} – {m.Away.Score ?? 0}" : "vs";
+            var midStyle = completed
+                ? TextStyle.Default.FontSize(9).Bold().FontColor(CGroupName)
+                : TextStyle.Default.FontSize(8).FontColor(CMuted);
+
+            container.Row(r =>
+            {
+                r.RelativeItem().AlignRight().Text(homeName).Style(homeStyle).ClampLines(1, "…");
+                r.ConstantItem(58).AlignCenter().Text(middle).Style(midStyle);
+                r.RelativeItem().AlignLeft().Text(awayName).Style(awayStyle).ClampLines(1, "…");
+            });
+        }
+
+        // ================================================================
+        //  SHARED PAGE CHROME (QuestPDF header / footer)
+        // ================================================================
+
+        // Editorial header shared by every QuestPDF page: wordmark + tournament meta + status on
+        // top, then a section label, the big stage title, and a right-aligned label/value pair.
+        private static void ComposeHeader(
+            ColumnDescriptor h,
+            TournamentStructureDto structure,
+            string sectionLabel,
+            string title,
+            string rightLabel,
+            string rightValue)
+        {
+            h.Item().PaddingBottom(8).Row(r =>
+            {
+                r.RelativeItem().AlignMiddle().Text("GAMEHUBZ")
+                    .FontSize(9).Bold().FontColor(CGroupName).LetterSpacing(0.08f);
+
+                r.RelativeItem(2).AlignCenter().AlignMiddle().Text(t =>
+                {
+                    t.Span(FormatTopMeta(structure))
+                        .FontSize(8).FontColor(CMuted).LetterSpacing(0.06f);
+                });
+
+                r.RelativeItem().AlignRight().AlignMiddle().Text(t =>
+                {
+                    var (txt, col) = FormatStatusBadge(structure.Status);
+                    t.Span(txt).FontSize(8).Bold().FontColor(col).LetterSpacing(0.08f);
+                });
+            });
+
+            h.Item().LineHorizontal(0.5f).LineColor(CCardBrd);
+
+            h.Item().PaddingTop(14).PaddingBottom(14).Row(r =>
+            {
+                r.RelativeItem().Column(c =>
+                {
+                    c.Item().Text(sectionLabel)
+                        .FontSize(8).Bold().FontColor(CMuted).LetterSpacing(0.12f);
+                    c.Item().PaddingTop(3).Text(title)
+                        .FontSize(22).Bold().FontColor(CGroupName);
+                });
+
+                r.RelativeItem().AlignRight().Column(c =>
+                {
+                    c.Item().AlignRight().Text(rightLabel)
+                        .FontSize(8).Bold().FontColor(CMuted).LetterSpacing(0.12f);
+                    c.Item().PaddingTop(3).AlignRight().Text(rightValue)
+                        .FontSize(13).Bold().FontColor(CGroupName);
+                });
+            });
+
+            h.Item().LineHorizontal(0.5f).LineColor(CCardBrd);
+        }
+
+        // Footer shared by every QuestPDF page: generated-at stamp on the left, page x/y right.
+        private static void ComposeFooter(IContainer footer)
+        {
+            footer
+                .BorderTop(1).BorderColor(Colors.Grey.Lighten2)
+                .PaddingTop(5)
+                .Row(row =>
+                {
+                    row.RelativeItem()
+                        .Text($"Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  •  GameHubz")
+                        .FontSize(7).FontColor(Colors.Grey.Medium);
+
+                    row.RelativeItem().AlignRight().Text(t =>
+                    {
+                        t.Span("Page ").FontSize(7).FontColor(Colors.Grey.Medium);
+                        t.CurrentPageNumber().FontSize(7).FontColor(Colors.Grey.Medium);
+                        t.Span(" of ").FontSize(7).FontColor(Colors.Grey.Medium);
+                        t.TotalPages().FontSize(7).FontColor(Colors.Grey.Medium);
                     });
                 });
         }
