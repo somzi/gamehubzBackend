@@ -6,6 +6,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<DirectChatEntity?> GetByIdForUser(Guid chatId, Guid userId);
 
+        Task<DirectChatDto?> GetChatDtoForUser(Guid chatId, Guid userId);
+
         Task<List<DirectChatDto>> GetChatsForUser(Guid userId, string? search);
     }
 }

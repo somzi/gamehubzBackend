@@ -51,6 +51,17 @@ namespace GameHubz.Logic.Services
             return list;
         }
 
+        public async Task<DirectChatDto> GetChatById(Guid chatId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var dto = await this.AppUnitOfWork.DirectChatRepository.GetChatDtoForUser(chatId, user.UserId);
+            if (dto == null)
+                throw new Exception("Chat not found.");
+
+            return dto;
+        }
+
         public async Task<DirectChatDto> GetOrCreateChat(Guid otherUserId)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();

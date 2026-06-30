@@ -32,6 +32,28 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(x => x.Id == chatId && (x.UserAId == userId || x.UserBId == userId));
         }
 
+        // Single-chat projection for deep links / push notifications, where the client arrives
+        // with only a chatId and no header context. Mirrors GetChatsForUser so the DTO (incl.
+        // other user + unread count) is identical — but avoids fetching the user's whole list.
+        public Task<DirectChatDto?> GetChatDtoForUser(Guid chatId, Guid userId)
+        {
+            return this.BaseDbSet()
+                .Where(x => x.Id == chatId && (x.UserAId == userId || x.UserBId == userId))
+                .Select(x => new DirectChatDto
+                {
+                    Id = x.Id!.Value,
+                    OtherUserId = x.UserAId == userId ? x.UserBId : x.UserAId,
+                    OtherUsername = x.UserAId == userId ? x.UserB!.Username : x.UserA!.Username,
+                    OtherNickname = x.UserAId == userId ? x.UserB!.Nickname : x.UserA!.Nickname,
+                    OtherAvatarUrl = x.UserAId == userId ? x.UserB!.AvatarUrl : x.UserA!.AvatarUrl,
+                    LastMessage = x.LastMessage,
+                    LastMessageAt = x.LastMessageAt,
+                    LastMessageSenderId = x.LastMessageSenderId,
+                    UnreadCount = x.Messages!.Count(m => !m.IsRead && m.SenderId != userId)
+                })
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<List<DirectChatDto>> GetChatsForUser(Guid userId, string? search)
         {
             // Project to DTO with scalar conditionals so EF Core can translate.

@@ -153,9 +153,9 @@ namespace GameHubz.Logic.Services
                          match.AwayParticipant.Team?.Members.Any(m => m.UserId == userId) == true));
         }
 
-        public async Task<List<ChatMessageDto>> GetHistory(Guid matchId)
+        public async Task<List<ChatMessageDto>> GetHistory(Guid matchId, int? take = null, DateTime? before = null)
         {
-            return await this.AppUnitOfWork.MatchChatRepository.GetByMatchId(matchId);
+            return await this.AppUnitOfWork.MatchChatRepository.GetByMatchId(matchId, take, before);
         }
 
         /// <summary>
