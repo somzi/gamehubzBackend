@@ -4,6 +4,7 @@ using GameHubz.Common.Consts;
 using GameHubz.DataModels.Api;
 using GameHubz.DataModels.Catalog;
 using GameHubz.Logic.Crypto;
+using GameHubz.Logic.Exceptions;
 using GameHubz.Logic.Queuing.Queues;
 using Microsoft.Extensions.Configuration;
 using System.Net.Mail;
@@ -198,6 +199,25 @@ namespace GameHubz.Logic.Services
             // F107: always follow on behalf of the authenticated caller. A client-supplied UserId must
             // never be trusted here, otherwise any user could create hub memberships for other users.
             var userId = (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId;
+
+            // A banned user must not be able to rejoin by hitting Follow directly. RequestJoin already
+            // blocks banned users, but Follow bypassed the ban entirely — a banned member could just
+            // re-follow and be back in the hub. Mirror the RequestJoin check here.
+            var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(userId, request.HubId);
+            if (isBanned)
+            {
+                throw new BusinessRuleException("You are banned from this hub.");
+            }
+
+            // Idempotency guard: a repeated Follow (double-tap, or a stale UI still showing "Follow")
+            // must not insert a second UserHub row for the same user+hub. Duplicate active memberships
+            // crash the member list on the client (duplicate keys) and inflate member counts. The other
+            // membership paths (AddMember / RequestJoin / ApproveRequest) already guard the same way.
+            var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(userId, request.HubId);
+            if (alreadyFollowing)
+            {
+                return;
+            }
 
             var entity = new UserHubEntity
             {
