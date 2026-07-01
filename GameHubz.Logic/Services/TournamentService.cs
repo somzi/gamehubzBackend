@@ -194,6 +194,26 @@ namespace GameHubz.Logic.Services
             return data;
         }
 
+        /// <summary>
+        /// v3 of the overview endpoint. Same payload as v2 plus <see cref="TournamentOverview.HasUserRegistered"/>
+        /// so the mobile client can render the join / registered state without firing a second
+        /// CHECK_REGISTRATION round-trip. Everything else is identical to v2 — CanManage is
+        /// computed per request, HasExclusiveAccess is populated the same way.
+        /// </summary>
+        public async Task<TournamentOverview> GetOverviewV3(Guid id)
+        {
+            var data = await GetOverviewV2(id);
+
+            var user = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (user != null)
+            {
+                data.HasUserRegistered = await this.AppUnitOfWork.TournamentRepository
+                    .CheckIsUserIsRegistered(id, user.UserId);
+            }
+
+            return data;
+        }
+
         // Exclusive-or-higher role (Exclusive/Admin/Owner) in the given hub for the current caller.
         private async Task<bool> CallerHasExclusiveRole(Guid hubId)
         {

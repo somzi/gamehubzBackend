@@ -90,7 +90,13 @@ namespace GameHubz.Api.Controllers
         {
             await this.bracketService.UpdateMatchResult(request);
 
-            return Ok();
+            // Return the freshly computed bracket so the mobile client can update its local
+            // state directly without firing a follow-up GET /structure/v3. Approval / help
+            // counts already flow to the client over the BadgesUpdated SignalR push, so we
+            // don't need to include them here — that keeps this response focused on the one
+            // piece of state the caller can't recover from the push (the bracket itself).
+            var structure = await this.bracketService.GetTournamentStructureV3(request.TournamentId);
+            return Ok(new { structure });
         }
 
         [HttpPost("matchResult/approve")]
@@ -183,6 +189,16 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> GetOverviewV2([FromRoute] Guid id)
         {
             var data = await this.Service.GetOverviewV2(id);
+
+            return Ok(data);
+        }
+
+        // v3 folds the CHECK_REGISTRATION round-trip into the overview payload — mobile no
+        // longer needs a second call to render the Join / Registered button state.
+        [HttpGet("{id}/overview/v3")]
+        public async Task<IActionResult> GetOverviewV3([FromRoute] Guid id)
+        {
+            var data = await this.Service.GetOverviewV3(id);
 
             return Ok(data);
         }
