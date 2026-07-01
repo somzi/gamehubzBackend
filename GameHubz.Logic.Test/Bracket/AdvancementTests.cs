@@ -6,6 +6,7 @@ using NUnit.Framework;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
+using GameHubz.Logic.Exceptions;
 
 namespace GameHubz.Logic.Test.Bracket
 {
@@ -241,11 +242,16 @@ namespace GameHubz.Logic.Test.Bracket
             var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
             await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 2);
 
-            // Play out the groups (and the auto-drawn knockout) end to end.
+            var groupStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.GroupStage);
+
+            // Play only the groups — auto-advance draws the knockout when the last group match completes.
+            // We deliberately stop before touching the knockout: reset is only legal while nothing there
+            // has been played, which is the flow this test guards.
             for (int guard = 0; guard < 300; guard++)
             {
                 var playable = harness.Matches(tournamentId)
-                    .FirstOrDefault(m => m.Status != MatchStatus.Completed
+                    .FirstOrDefault(m => m.TournamentStageId == groupStage.Id
+                        && m.Status != MatchStatus.Completed
                         && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
                         && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
                 if (playable == null) break;
@@ -257,19 +263,64 @@ namespace GameHubz.Logic.Test.Bracket
 
             var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
             int drawnCount = harness.Matches(tournamentId).Count(m => m.TournamentStageId == knockoutStage.Id);
-            Assert.That(drawnCount, Is.GreaterThan(0), "bracket was drawn and played");
+            Assert.That(drawnCount, Is.GreaterThan(0), "bracket was auto-drawn after the groups completed");
 
-            // Reset tears the knockout down and rolls the completed tournament back to in-progress.
+            // Nothing in the knockout has been played yet — reset should tear it down cleanly.
             await harness.NewService().ResetKnockoutStage(tournamentId);
             Assert.That(harness.Matches(tournamentId).Any(m => m.TournamentStageId == knockoutStage.Id), Is.False,
                 "knockout matches cleared");
             Assert.That(harness.Tournament(tournamentId).Status, Is.EqualTo(TournamentStatus.InProgress),
-                "champion rolled back");
+                "tournament stays in-progress (no champion was crowned)");
 
             // A manual draw rebuilds the same-shape bracket from the unchanged standings.
             await harness.NewService().DrawKnockoutFromGroups(tournamentId);
             int redrawnCount = harness.Matches(tournamentId).Count(m => m.TournamentStageId == knockoutStage.Id);
             Assert.That(redrawnCount, Is.EqualTo(drawnCount), "bracket redrawn with the same number of fixtures");
+        }
+
+        [Test]
+        public async Task ResetKnockoutStage_ThrowsWhenAnyKnockoutMatchPlayed()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 2);
+
+            var groupStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.GroupStage);
+            var knockoutStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.SingleEliminationBracket);
+
+            // Groups first — that's what triggers the auto-draw of the knockout.
+            for (int guard = 0; guard < 300; guard++)
+            {
+                var playable = harness.Matches(tournamentId)
+                    .FirstOrDefault(m => m.TournamentStageId == groupStage.Id
+                        && m.Status != MatchStatus.Completed
+                        && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue
+                        && (m.RoundOpenAt == null || m.RoundOpenAt <= System.DateTime.UtcNow));
+                if (playable == null) break;
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = playable.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+                });
+            }
+
+            // Play one real 2-sided knockout fixture. That alone must lock the bracket against reset —
+            // the organiser has to revert individual results first if they want to redraw.
+            var playedKnockout = harness.Matches(tournamentId)
+                .First(m => m.TournamentStageId == knockoutStage.Id
+                    && m.Status != MatchStatus.Completed
+                    && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue);
+            await harness.NewService().UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = playedKnockout.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 1,
+            });
+
+            var ex = Assert.ThrowsAsync<BusinessRuleException>(
+                () => harness.NewService().ResetKnockoutStage(tournamentId));
+            Assert.That(ex!.Message, Does.Contain("already been played"));
+
+            // The refused reset must be a full no-op: bracket intact, nothing torn down.
+            Assert.That(harness.Matches(tournamentId).Any(m => m.TournamentStageId == knockoutStage.Id), Is.True,
+                "knockout not torn down after refused reset");
         }
 
         [Test]

@@ -287,19 +287,59 @@ namespace GameHubz.Logic.Services
             if (knockoutStage == null)
                 throw new BusinessRuleException("No knockout stage was found for this tournament.");
 
-            int removed = await TearDownKnockoutMatchesAsync(tournament, knockoutStage);
-            if (removed == 0)
-                throw new BusinessRuleException("The bracket has not been drawn yet, so there is nothing to reset.");
-
-            // The knockout may have already crowned a champion — roll the tournament back to in-progress.
-            if (tournament.Status == TournamentStatus.Completed)
+            // Gather all knockout stages (WB + LB for double elim) so a played LB match still blocks reset.
+            var stageIds = new List<Guid> { knockoutStage.Id!.Value };
+            if (knockoutStage.Type == StageType.DoubleEliminationWinnersBracket)
             {
-                tournament.Status = TournamentStatus.InProgress;
-                tournament.WinnerUserId = null;
-                tournament.WinnerTeamId = null;
-                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+                if (lbStage != null && lbStage.Type == StageType.DoubleEliminationLosersBracket)
+                    stageIds.Add(lbStage.Id!.Value);
             }
 
+            // Refuse if any 2-sided knockout match has kicked off. Byes (one side null) hold a
+            // Completed status as a bookkeeping artefact from the draw, not a played result, so
+            // they're excluded from the check. Once a real fixture is Live or Completed the
+            // organiser must revert those results individually before another reset is allowed —
+            // otherwise a reset would silently discard played fixtures.
+            int totalKnockoutMatches = 0;
+            bool anyPlayed = false;
+            foreach (var stageId in stageIds)
+            {
+                if (tournament.IsTeamTournament)
+                {
+                    var teamMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(stageId);
+                    totalKnockoutMatches += teamMatches.Count;
+                    if (teamMatches.Any(tm => tm.HomeTeamParticipantId.HasValue
+                                           && tm.AwayTeamParticipantId.HasValue
+                                           && tm.Status != TeamMatchStatus.Pending))
+                    {
+                        anyPlayed = true;
+                    }
+                }
+                else
+                {
+                    var matches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
+                    totalKnockoutMatches += matches.Count;
+                    if (matches.Any(m => m.HomeParticipantId.HasValue
+                                      && m.AwayParticipantId.HasValue
+                                      && m.Status != MatchStatus.Pending
+                                      && m.Status != MatchStatus.Scheduled))
+                    {
+                        anyPlayed = true;
+                    }
+                }
+            }
+
+            if (totalKnockoutMatches == 0)
+                throw new BusinessRuleException("The bracket has not been drawn yet, so there is nothing to reset.");
+
+            if (anyPlayed)
+                throw new BusinessRuleException(
+                    tournament.Status == TournamentStatus.Completed
+                        ? "This tournament is already completed."
+                        : "At least one knockout match has already been played. Revert the played results first before resetting the bracket.");
+
+            await TearDownKnockoutMatchesAsync(tournament, knockoutStage);
             await this.SaveAsync();
             await InvalidateTournamentBracketCaches(tournamentId);
         }
