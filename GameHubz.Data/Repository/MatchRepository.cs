@@ -175,6 +175,42 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Matches awaiting result approval (a result was proposed but not yet confirmed) across every
+        // tournament owned by the given hubs. Mirrors the admin-help counts so the organizer's pending
+        // result approvals cascade to the hub / tournament badges the same way. A proposal only exists
+        // in approval mode, so ProposedByUserId != null already scopes this to approval-mode tournaments.
+        public async Task<int> CountPendingApprovalsForHubs(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return 0;
+
+            return await this.BaseDbSet()
+                .CountAsync(m => m.ProposedByUserId != null
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress);
+        }
+
+        // Per-tournament pending result-approval counts across the given hubs — feeds the cascade badge.
+        public async Task<List<TournamentCountRow>> GetPendingApprovalCountsByTournament(List<Guid> hubIds)
+        {
+            if (hubIds == null || hubIds.Count == 0) return new List<TournamentCountRow>();
+
+            return await this.BaseDbSet()
+                .Where(m => m.ProposedByUserId != null
+                    && m.Tournament!.HubId != null
+                    && hubIds.Contains(m.Tournament.HubId.Value)
+                    && m.Tournament.Status == TournamentStatus.InProgress)
+                .GroupBy(m => new { m.TournamentId, HubId = m.Tournament!.HubId!.Value, Status = (int)m.Tournament!.Status })
+                .Select(g => new TournamentCountRow
+                {
+                    TournamentId = g.Key.TournamentId,
+                    HubId = g.Key.HubId,
+                    Status = g.Key.Status,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+        }
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             var now = DateTime.UtcNow;
@@ -397,6 +433,7 @@ namespace GameHubz.Data.Repository
                 .Select(x => new MatchAdminHelpItemDto
                 {
                     MatchId = x.Id!.Value,
+                    TeamMatchId = x.TeamMatchId,
                     RoundNumber = x.RoundNumber,
                     Status = x.Status,
                     ScheduledStartTime = x.ScheduledStartTime,

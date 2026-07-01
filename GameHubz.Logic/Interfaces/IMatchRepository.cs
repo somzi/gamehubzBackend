@@ -22,6 +22,10 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<TournamentCountRow>> GetAdminHelpCountsByTournament(List<Guid> hubIds);
 
+        Task<int> CountPendingApprovalsForHubs(List<Guid> hubIds);
+
+        Task<List<TournamentCountRow>> GetPendingApprovalCountsByTournament(List<Guid> hubIds);
+
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
         Task<MatchAvailabilityDto?> GetAvailability(Guid id, Guid userId);

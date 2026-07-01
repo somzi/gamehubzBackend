@@ -48,9 +48,10 @@ namespace GameHubz.Logic.Services
 
             var regRows = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingCountsByTournament(managedHubIds);
             var helpRows = await this.AppUnitOfWork.MatchRepository.GetAdminHelpCountsByTournament(managedHubIds);
+            var approvalRows = await this.AppUnitOfWork.MatchRepository.GetPendingApprovalCountsByTournament(managedHubIds);
             var hubJoinRows = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingCountsByHub(managedHubIds);
 
-            // Merge the two tournament-scoped sources into one row per tournament.
+            // Merge the tournament-scoped sources into one row per tournament.
             var byTournament = new Dictionary<Guid, TournamentApprovalCount>();
             foreach (var r in regRows)
             {
@@ -61,6 +62,11 @@ namespace GameHubz.Logic.Services
             {
                 var row = GetOrAddTournament(byTournament, h.TournamentId, h.HubId, h.Status);
                 row.AdminHelp = h.Count;
+            }
+            foreach (var a in approvalRows)
+            {
+                var row = GetOrAddTournament(byTournament, a.TournamentId, a.HubId, a.Status);
+                row.ResultApprovals = a.Count;
             }
 
             // Hub-level join requests (the portion that lives on the Members tab, not in any tournament).
@@ -120,12 +126,13 @@ namespace GameHubz.Logic.Services
             // Organizer badges: only meaningful for users who manage at least one hub.
             // Resolve the managed-hub set once, then run the three cheap COUNT queries.
             var managedHubIds = await this.AppUnitOfWork.UserHubRepository.GetManagedHubIds(userId);
-            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0;
+            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0, pendingResultApprovals = 0;
             if (managedHubIds.Count > 0)
             {
                 hubJoinRequests = await this.AppUnitOfWork.UserHubRequestRepository.CountPendingByHubIds(managedHubIds);
                 adminHelpRequests = await this.AppUnitOfWork.MatchRepository.CountAdminHelpForHubs(managedHubIds);
                 pendingRegistrations = await this.AppUnitOfWork.TournamentRegistrationRepository.CountPendingForHubs(managedHubIds);
+                pendingResultApprovals = await this.AppUnitOfWork.MatchRepository.CountPendingApprovalsForHubs(managedHubIds);
             }
 
             return new BadgeCountsDto
@@ -140,6 +147,7 @@ namespace GameHubz.Logic.Services
                 HubJoinRequests = hubJoinRequests,
                 AdminHelpRequests = adminHelpRequests,
                 PendingRegistrations = pendingRegistrations,
+                PendingResultApprovals = pendingResultApprovals,
             };
         }
 

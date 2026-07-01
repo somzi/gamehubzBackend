@@ -85,6 +85,16 @@ namespace GameHubz.Logic.Services
                 throw new InvalidTokenException();
             }
 
+            // A refresh token must not outlive the account's ability to log in. Login rejects
+            // deactivated/unverified users; the refresh path must apply the same gate, otherwise a
+            // disabled or soft-deleted user keeps minting access tokens until the refresh token expires.
+            if (!user.IsActive || user.IsDeleted || !user.IsVerified)
+            {
+                await this.AppUnitOfWork.RefreshTokenRepository.HardDeleteAllByUserId(user.Id!.Value);
+                await this.SaveAsync();
+                throw new InvalidTokenException();
+            }
+
             AccessToken accessToken = await this.accessTokenFactory.GenerateEncodedToken(CreateTokenUserInfo(user));
 
             await this.DeleteTokenByUserId(user.Id!.Value, tokenRequest.RefreshToken);
@@ -102,12 +112,21 @@ namespace GameHubz.Logic.Services
 
             if (this.HashPassword(request.OldPassword, user.PasswordNonce) != user.Password)
             {
-                throw new Exception("Invalid password");
+                throw new BusinessRuleException("The current password is incorrect.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.NewPassword))
+            {
+                throw new BusinessRuleException("The new password cannot be empty.");
             }
 
             user.Password = this.HashPassword(request.NewPassword, user.PasswordNonce);
 
             await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+
+            // Invalidate every existing session: after a password change a previously leaked/old
+            // refresh token (e.g. from a compromised device) must no longer be exchangeable.
+            await this.AppUnitOfWork.RefreshTokenRepository.HardDeleteAllByUserId(user.Id!.Value);
 
             await this.SaveAsync();
         }
@@ -163,7 +182,11 @@ namespace GameHubz.Logic.Services
                 throw new ParameterException(this.LocalizationService, "Exception.ParameterExceptionInvalidToken", nameof(refreshTokenValue));
             }
 
-            RefreshTokenEntity? refreshToken = this.AppUnitOfWork.RefreshTokenRepository.FindByTokenValue(refreshTokenValue);
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // Scope the revocation to the caller: a user may only end their own session, never revoke
+            // another user's session by submitting that user's refresh-token value.
+            RefreshTokenEntity? refreshToken = this.AppUnitOfWork.RefreshTokenRepository.FindByUserIdAndTokenValue(caller.UserId, refreshTokenValue);
 
             if (refreshToken != null)
             {

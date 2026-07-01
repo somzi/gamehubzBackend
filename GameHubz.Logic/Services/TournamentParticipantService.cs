@@ -5,6 +5,7 @@ namespace GameHubz.Logic.Services
     public class TournamentParticipantService : AppBaseServiceGeneric<TournamentParticipantEntity, TournamentParticipantDto, TournamentParticipantPost, TournamentParticipantEdit>
     {
         private readonly ICacheService cacheService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TournamentParticipantService(
             IUnitOfWorkFactory factory,
@@ -14,7 +15,8 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            ICacheService cacheService) : base(
+            ICacheService cacheService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -24,6 +26,7 @@ namespace GameHubz.Logic.Services
                 serviceFunctions)
         {
             this.cacheService = cacheService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         protected override IRepository<TournamentParticipantEntity> GetRepository()
@@ -74,6 +77,10 @@ namespace GameHubz.Logic.Services
 
         public async Task RemoveUser(Guid tournamentId, Guid userId)
         {
+            // F36: ejecting a participant rewrites the bracket inputs and is reserved for tournament
+            // managers. Without this check any authenticated user could remove any player.
+            await this.EnsureCanManageTournament(tournamentId);
+
             // Remove every participant and registration row for this user, not just the first.
             // Duplicate rows used to exist (a registration approved more than once), and the old
             // single-row FirstAsync lookups threw "Sequence contains no elements" as soon as one
@@ -99,6 +106,9 @@ namespace GameHubz.Logic.Services
 
         public async Task RemoveTeam(Guid tournamentId, Guid teamId)
         {
+            // F36: removing a team rewrites the bracket inputs — managers only.
+            await this.EnsureCanManageTournament(tournamentId);
+
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
             if (team == null) throw new Exception("Team not found.");
 
@@ -130,6 +140,14 @@ namespace GameHubz.Logic.Services
             if (entity.TournamentId.HasValue)
             {
                 await cacheService.RemoveAsync($"tournament_participants:{entity.TournamentId.Value}");
+            }
+        }
+
+        private async Task EnsureCanManageTournament(Guid tournamentId)
+        {
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }
         }
     }

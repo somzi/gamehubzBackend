@@ -30,16 +30,19 @@ namespace GameHubz.DataModels.Models
         public int AdminHelpRequests { get; set; }
         // Pending tournament registrations awaiting approval in the user's hubs.
         public int PendingRegistrations { get; set; }
+        // Matches with a proposed result awaiting the organizer's approval (approval-mode tournaments
+        // the user manages). The bracket "Approvals" tab acts on these.
+        public int PendingResultApprovals { get; set; }
 
         // ─── Convenience tab totals for the client ──────────────
         public int SocialTotal => FriendRequests + UnreadDirectMessages;
         public int MatchesTotal => UnreadMatchMessages + MatchesToSchedule + ResultsToConfirm;
         // Aggregate of everything the user manages — drives a single "manage" badge
         // on the client if it prefers one dot over per-type counters.
-        public int OrganizerTotal => TeamJoinRequests + HubJoinRequests + AdminHelpRequests + PendingRegistrations;
+        public int OrganizerTotal => TeamJoinRequests + HubJoinRequests + AdminHelpRequests + PendingRegistrations + PendingResultApprovals;
         // Hub-manager subset that cascades down the Hubs tab → hub card → tournament. Equals the
         // sum of the per-hub counts in ApprovalsBreakdownDto, so the tab dot matches the cards.
         // (TeamJoinRequests is a captain concern reachable via Tournaments, not Hubs.)
-        public int HubManageTotal => HubJoinRequests + AdminHelpRequests + PendingRegistrations;
+        public int HubManageTotal => HubJoinRequests + AdminHelpRequests + PendingRegistrations + PendingResultApprovals;
     }
 }

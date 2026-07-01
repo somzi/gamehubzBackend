@@ -31,12 +31,35 @@ namespace GameHubz.Logic.Services
 
         protected override async Task BeforeSave(UserSocialEntity entity, UserSocialPost inputDto, bool isNew)
         {
-            await cacheService.RemoveAsync($"user_profile:{inputDto.UserId}");
+            // F105: the generic save trusted a client-supplied UserId and could overwrite another
+            // user's social row by Id. Bind the row to the caller and, on edit, verify the existing
+            // row already belongs to them.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            if (!isNew && inputDto.Id.HasValue)
+            {
+                var existing = await this.AppUnitOfWork.UserSocialRepository.GetById(inputDto.Id.Value);
+                if (existing == null || existing.UserId != caller.UserId)
+                {
+                    throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+                }
+            }
+
+            entity.UserId = caller.UserId;
+
+            await cacheService.RemoveAsync($"user_profile:{caller.UserId}");
         }
 
         protected override async Task BeforeDelete(Guid entityId)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // F105: only the owner may delete their own social row.
+            var existing = await this.AppUnitOfWork.UserSocialRepository.GetById(entityId);
+            if (existing == null || existing.UserId != user.UserId)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
 
             await cacheService.RemoveAsync($"user_profile:{user.UserId}");
         }

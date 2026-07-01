@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.Common.Consts;
 using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
@@ -10,6 +11,7 @@ namespace GameHubz.Logic.Services
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly UserHubService userHubService;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -22,7 +24,8 @@ namespace GameHubz.Logic.Services
             HubActivityService hubActivityService,
             ICacheService cacheService,
             INotificationService notificationService,
-            TournamentAuthorizationService tournamentAuth) : base(
+            TournamentAuthorizationService tournamentAuth,
+            UserHubService userHubService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -35,6 +38,7 @@ namespace GameHubz.Logic.Services
             this.cacheService = cacheService;
             this.notificationService = notificationService;
             this.tournamentAuth = tournamentAuth;
+            this.userHubService = userHubService;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -109,6 +113,13 @@ namespace GameHubz.Logic.Services
 
         public async Task CloseRegistration(Guid id)
         {
+            // F38: closing registration is a lifecycle transition reserved for tournament managers
+            // (compare OpenRegistration/CancelTournament which gate through GetHubOwnedTournamentOrThrow).
+            if (!await this.tournamentAuth.CanManageTournamentAsync(id))
+            {
+                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
+            }
+
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
             if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
@@ -316,7 +327,7 @@ namespace GameHubz.Logic.Services
                 await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
                 // Notify all hub followers about the new tournament
-                SendNotification(model);
+                await SendNotification(model);
             }
             else
             {
@@ -375,6 +386,30 @@ namespace GameHubz.Logic.Services
         /// </summary>
         protected override async Task BeforeSave(TournamentEntity entity, TournamentPost inputDto, bool isNew)
         {
+            // F104: the generic POST /api/Tournament had no authorization, so any user could create a
+            // tournament under any hub or edit any existing tournament. Creating one requires managing
+            // the target hub; editing requires managing the existing tournament.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (isNew)
+            {
+                if (!entity.HubId.HasValue)
+                {
+                    throw new Exception("A tournament must belong to a hub.");
+                }
+
+                if (caller.RoleEnum != UserRoleEnum.Admin)
+                {
+                    await this.userHubService.EnsureCallerCanManage(entity.HubId.Value, caller.UserId);
+                }
+            }
+            else if (entity.Id.HasValue)
+            {
+                if (!await this.tournamentAuth.CanManageTournamentAsync(entity.Id.Value))
+                {
+                    throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+                }
+            }
+
             var codes = inputDto.Countries?
                 .Where(c => !string.IsNullOrWhiteSpace(c))
                 .Select(c =>
@@ -401,31 +436,36 @@ namespace GameHubz.Logic.Services
             await Task.CompletedTask;
         }
 
-        private void SendNotification(TournamentDto model)
+        // F109: resolve the recipients' push tokens here, while the request-scoped DbContext is alive,
+        // then fire-and-forget ONLY the push send (which goes through NotificationService's own scope).
+        // The old version queried this.AppUnitOfWork inside Task.Run, racing the disposed request context.
+        private async Task SendNotification(TournamentDto model)
         {
+            var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
+            if (hubMembers == null || hubMembers.Count == 0) return;
+
+            var pushTokens = hubMembers
+                .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
+                // Exclusive tournaments are invisible to plain members, so don't notify them.
+                .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
+                .Select(m => m.PushToken!)
+                .Distinct()
+                .ToList();
+
+            if (pushTokens.Count == 0) return;
+
+            var title = model.Name;
+            var tournamentId = model.Id;
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
-                    if (hubMembers == null || hubMembers.Count == 0) return;
-
-                    var pushTokens = hubMembers
-                        .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
-                        // Exclusive tournaments are invisible to plain members, so don't notify them.
-                        .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
-                        .Select(m => m.PushToken)
-                        .Distinct()
-                        .ToList();
-
-                    if (pushTokens.Count > 0)
-                    {
-                        await notificationService.SendToManyAsync(
-                            pushTokens!,
-                            model.Name,
-                            "Registration is open, grab your spot!",
-                            new { tournamentId = model.Id });
-                    }
+                    await notificationService.SendToManyAsync(
+                        pushTokens,
+                        title,
+                        "Registration is open, grab your spot!",
+                        new { tournamentId });
                 }
                 catch { /* fire-and-forget */ }
             });

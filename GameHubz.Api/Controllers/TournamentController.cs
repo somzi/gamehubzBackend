@@ -37,6 +37,30 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("{tournamentId}/bracket/reset")]
+        public async Task<IActionResult> ResetKnockoutBracket(Guid tournamentId)
+        {
+            await this.bracketService.ResetKnockoutStage(tournamentId);
+
+            return Ok();
+        }
+
+        [HttpPost("{tournamentId}/bracket/draw")]
+        public async Task<IActionResult> DrawKnockoutBracket(Guid tournamentId)
+        {
+            await this.bracketService.DrawKnockoutFromGroups(tournamentId);
+
+            return Ok();
+        }
+
+        [HttpPost("{tournamentId}/bracket/swap")]
+        public async Task<IActionResult> SwapBracketParticipants(Guid tournamentId, [FromBody] SwapBracketParticipantsRequest request)
+        {
+            await this.bracketService.SwapBracketParticipants(tournamentId, request.ParticipantAId, request.ParticipantBId);
+
+            return Ok();
+        }
+
         [HttpGet("{tournamentId}/structure")]
         public async Task<IActionResult> GetTournamentStructure(Guid tournamentId)
         {

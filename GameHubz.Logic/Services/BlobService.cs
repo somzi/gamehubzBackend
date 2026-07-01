@@ -22,7 +22,11 @@ namespace GameHubz.Logic.Services
         {
             BlobServiceClient serviceClient = new(this.blobConfig.BlobConnectionString);
             BlobContainerClient containerClient = serviceClient.GetBlobContainerClient(containerName);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.BlobContainer);
+            // F57: PublicAccessType.Blob allows anonymous read of a blob by its (GUID) URL but, unlike
+            // BlobContainer, does NOT allow anonymous listing/enumeration of the container. This closes
+            // the "list every blob then download them all" exposure while keeping image/asset URLs
+            // (which are served directly) working. Blob names are GUIDs, so they aren't guessable.
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
 
             BlobClient blobClient = containerClient.GetBlobClient(blobName);
             await blobClient.UploadAsync(fileStream);

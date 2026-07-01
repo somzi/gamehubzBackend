@@ -9,6 +9,7 @@ namespace GameHubz.Logic.Services
         private readonly TournamentParticipantService tournamentParticipantService;
         private readonly ICacheService cacheService;
         private readonly BadgeService badgeService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TournamentRegistrationService(
             IUnitOfWorkFactory factory,
@@ -20,7 +21,8 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             TournamentParticipantService tournamentParticipantService,
             ICacheService cacheService,
-            BadgeService badgeService) : base(
+            BadgeService badgeService,
+            TournamentAuthorizationService tournamentAuth) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -32,6 +34,7 @@ namespace GameHubz.Logic.Services
             this.tournamentParticipantService = tournamentParticipantService;
             this.cacheService = cacheService;
             this.badgeService = badgeService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         /// <summary>
@@ -66,8 +69,24 @@ namespace GameHubz.Logic.Services
         /// </summary>
         protected override async Task BeforeSave(TournamentRegistrationEntity entity, TournamentRegistrationPost inputDto, bool isNew)
         {
+            // F37: a solo registration is always for the authenticated caller. Never trust a body
+            // UserId — otherwise a user could register (and have eligibility evaluated as) someone else.
+            // Team registrations carry no UserId and go through the captain-checked RegisterTeam path.
+            if (isNew && !entity.TeamId.HasValue)
+            {
+                var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                entity.UserId = caller.UserId;
+            }
+
             if (isNew && entity.TournamentId.HasValue && (entity.UserId.HasValue || entity.TeamId.HasValue))
             {
+                // F41: registrations are only accepted while the tournament's registration is open.
+                var tournamentForStatus = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
+                if (tournamentForStatus.Status != TournamentStatus.RegistrationOpen)
+                {
+                    throw new BusinessRuleException("Registration is not open for this tournament.");
+                }
+
                 // Block duplicate sign-ups. An entrant that already has a non-rejected registration,
                 // or is already a confirmed participant, must not be able to create a second row.
                 // Repeated rows were the root cause of duplicate participants that later broke the
@@ -131,6 +150,9 @@ namespace GameHubz.Logic.Services
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.GetWithTournament(registrationId);
 
+            // F35: approving a registration injects a participant into the roster — managers only.
+            await this.EnsureCanManageTournament(tournamentRegistration.TournamentId);
+
             // If this entrant is already a participant (e.g. a stale/duplicate registration row, or
             // this row was approved before), only flip the status — creating a second participant is
             // exactly the bug that produced duplicate players, and it shouldn't count against capacity.
@@ -179,6 +201,9 @@ namespace GameHubz.Logic.Services
             {
                 return;
             }
+
+            // F35: bulk approval is a manager action.
+            await this.EnsureCanManageTournament(tournamentRegistration.First().TournamentId);
 
             var tournament = tournamentRegistration.First().Tournament;
 
@@ -271,6 +296,9 @@ namespace GameHubz.Logic.Services
         {
             var tournamentRegistration = await this.AppUnitOfWork.TournamentRegistrationRepository.ShallowGetByIdOrThrowIfNull(registrationId);
 
+            // F35: rejecting a registration is a manager action.
+            await this.EnsureCanManageTournament(tournamentRegistration.TournamentId);
+
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Rejected);
 
             await this.SaveAsync();
@@ -290,6 +318,16 @@ namespace GameHubz.Logic.Services
 
         public async Task RegisterTeam(Guid tournamentId, Guid teamId)
         {
+            // F35/F37: registering a team is a participant action performed by the team captain — not a
+            // manager action and not something a user may do for a team they don't own. Verify the
+            // caller is the captain of this team before creating the registration.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(teamId);
+            if (team.CaptainUserId != caller.UserId)
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
+
             // Idempotent: this is exposed as a GET, which HTTP clients (OkHttp, etc.) freely retry
             // on a flaky connection. If the first call already created the registration but the
             // response was lost, the retry would otherwise hit BeforeSave's duplicate guard and
@@ -390,5 +428,13 @@ namespace GameHubz.Logic.Services
 
         protected override IRepository<TournamentRegistrationEntity> GetRepository()
             => this.AppUnitOfWork.TournamentRegistrationRepository;
+
+        private async Task EnsureCanManageTournament(Guid? tournamentId)
+        {
+            if (!tournamentId.HasValue || !await this.tournamentAuth.CanManageTournamentAsync(tournamentId.Value))
+            {
+                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+            }
+        }
     }
 }

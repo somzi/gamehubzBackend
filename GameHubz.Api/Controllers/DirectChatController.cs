@@ -23,6 +23,12 @@ namespace GameHubz.Api.Controllers
             return Ok(await chatService.GetMyChats(search));
         }
 
+        [HttpGet("{chatId}")]
+        public async Task<IActionResult> GetById(Guid chatId)
+        {
+            return Ok(await chatService.GetChatById(chatId));
+        }
+
         [HttpPost("with/{otherUserId}")]
         public async Task<IActionResult> GetOrCreate(Guid otherUserId)
         {

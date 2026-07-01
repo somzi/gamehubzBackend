@@ -263,21 +263,46 @@ namespace GameHubz.Logic.Services
 
             var data = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(id);
 
+            // F55: PushToken is fetched for server-side notification fan-out but must never be exposed
+            // to clients in the member list. Strip it before caching/returning the client-facing DTO.
+            foreach (var member in data)
+            {
+                member.PushToken = null;
+            }
+
             await cacheService.SetAsync(cacheKey, data, TimeSpan.FromMinutes(10));
 
             return data;
         }
 
-        public Task<List<UserHubOverview>> GetMembersPaged(Guid id, int pageNumber, string? search)
+        public async Task<List<UserHubOverview>> GetMembersPaged(Guid id, int pageNumber, string? search)
         {
             const int pageSize = 10;
-            return this.AppUnitOfWork.UserHubRepository.GetUsersByHubPaged(id, pageNumber, pageSize, search);
+            var data = await this.AppUnitOfWork.UserHubRepository.GetUsersByHubPaged(id, pageNumber, pageSize, search);
+
+            // F55: never expose PushToken to clients (see GetMembers).
+            foreach (var member in data)
+            {
+                member.PushToken = null;
+            }
+
+            return data;
         }
 
         public async Task KickUserFromHub(Guid hubId, Guid userId)
         {
-            var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
             var userAdmin = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // F46: only the hub owner/admin may remove a member, and the owner can never be kicked.
+            // Previously the caller was read but never checked, so any user could remove anyone.
+            await this.userHubService.EnsureCallerCanManage(hubId, userAdmin.UserId);
+
+            var userhub = await this.AppUnitOfWork.UserHubRepository.GetByUserAndHub(userId, hubId);
+
+            if (userhub.HubRole == HubRole.HubOwner)
+            {
+                throw new BusinessRuleException("The hub owner cannot be removed.");
+            }
 
             await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(userhub, UserContextReader);
 

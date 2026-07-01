@@ -23,9 +23,9 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpGet("{matchId}/history")]
-        public async Task<IActionResult> GetHistory(Guid matchId)
+        public async Task<IActionResult> GetHistory(Guid matchId, [FromQuery] int? take = null, [FromQuery] DateTime? before = null)
         {
-            var history = await chatService.GetHistory(matchId);
+            var history = await chatService.GetHistory(matchId, take, before);
             return Ok(history);
         }
 

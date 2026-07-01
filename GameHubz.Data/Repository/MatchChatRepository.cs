@@ -20,15 +20,30 @@ namespace GameHubz.Data.Repository
         {
         }
 
-        public async Task<List<ChatMessageDto>> GetByMatchId(Guid matchId)
+        public async Task<List<ChatMessageDto>> GetByMatchId(Guid matchId, int? take = null, DateTime? before = null)
         {
-            return await this.BaseDbSet()
-                .Where(x => x.MatchId == matchId)
+            var q = this.BaseDbSet().Where(x => x.MatchId == matchId);
+
+            if (before.HasValue)
+            {
+                q = q.Where(x => x.CreatedOn < before.Value);
+            }
+
+            // With a take we grab the most recent N (descending) before projecting; without one
+            // the full history is returned (legacy callers, e.g. MatchScheduleCard). Either way
+            // the result is flipped back to oldest→newest for display.
+            if (take.HasValue)
+            {
+                q = q.OrderByDescending(x => x.CreatedOn).Take(take.Value);
+            }
+
+            return await q
                 .Select(x => new ChatMessageDto
                 {
                     Id = x.Id!.Value,
                     UserId = x.UserId!.Value,
                     UserNickname = x.User!.Nickname ?? x.User!.Username,
+                    UserAvatarUrl = x.User!.AvatarUrl,
                     Content = x.Content,
                     SentAt = x.CreatedOn!.Value
                 })

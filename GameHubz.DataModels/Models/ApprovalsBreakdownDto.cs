@@ -33,7 +33,9 @@ namespace GameHubz.DataModels.Models
         public int Status { get; set; }
         public int Registrations { get; set; }
         public int AdminHelp { get; set; }
-        public int Total => Registrations + AdminHelp;
+        // Matches with a proposed result awaiting the organizer's approval (approval-mode tournaments).
+        public int ResultApprovals { get; set; }
+        public int Total => Registrations + AdminHelp + ResultApprovals;
     }
 
     /// <summary>Internal grouped-count projection (tournament-scoped) used to assemble the breakdown.</summary>

@@ -1,3 +1,4 @@
+using GameHubz.Common.Consts;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
@@ -17,6 +18,14 @@ namespace GameHubz.Api.Controllers
             : base(service, appAuthorizationService)
         {
         }
+
+        // The inherited generic POST/DELETE would let any user inject/remove a participant by id,
+        // bypassing the registration-approval flow. Participants are materialized server-side by the
+        // manager-authorized approval path, so lock the generic write endpoints to Admin. The
+        // manager-checked RemoveUser/RemoveTeam below remain the supported removal path.
+        protected override UserRoleEnum[]? UserRolesSave() => [UserRoleEnum.Admin];
+
+        protected override UserRoleEnum[]? UserRolesDelete() => [UserRoleEnum.Admin];
 
         [HttpGet("tournament/{tournamentId}")]
         public async Task<List<TournamentParticipantOverview>> GetByTournament(Guid tournamentId)

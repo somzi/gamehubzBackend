@@ -192,6 +192,7 @@ namespace GameHubz.Api.BackgroundTasks
                 {
                     Id = m.Id!.Value,
                     m.TournamentId,
+                    m.TeamMatchId,
                     TournamentName = m.Tournament!.Name,
                     Deadline = m.RoundDeadline!.Value,
                     m.RoundOpenAt,
@@ -266,7 +267,10 @@ namespace GameHubz.Api.BackgroundTasks
                                 tokens,
                                 match.TournamentName,
                                 body,
-                                new { tournamentId = match.TournamentId, matchId = match.Id, type = "roundDeadline" });
+                                // teamMatchId — carried for team-tournament sub-matches so the mobile deep
+                                // link can route to the team-match modal (the solo modal renders empty for
+                                // a sub-match id).
+                                new { tournamentId = match.TournamentId, matchId = match.Id, teamMatchId = match.TeamMatchId, type = "roundDeadline" });
                         }
                     }
 

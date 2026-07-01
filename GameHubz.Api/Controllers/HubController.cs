@@ -203,7 +203,8 @@ namespace GameHubz.Api.Controllers
             return await hubVerificationService.GetCurrentForHub(id);
         }
 
-        [AllowAnonymous]
+        // F45: must NOT be anonymous — this flips Hub.IsVerified. Requires the class-level [Authorize]
+        // and the service additionally enforces a platform-Admin role.
         [HttpPost("{id}/verification-response")]
         public async Task<HubVerificationRequestDto> RespondVerification(Guid id, [FromBody] RespondHubVerificationRequest request)
         {

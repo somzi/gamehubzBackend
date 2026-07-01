@@ -1,4 +1,5 @@
 using GameHubz.Api.Share;
+using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Domain;
@@ -24,16 +25,25 @@ namespace GameHubz.Api.Controllers
         private readonly ApplicationContext context;
         private readonly ShareLinksConfig config;
         private readonly ILogger<ShareController> logger;
+        private readonly ICacheService cacheService;
 
         public ShareController(
             ApplicationContext context,
             IOptions<ShareLinksConfig> options,
-            ILogger<ShareController> logger)
+            ILogger<ShareController> logger,
+            ICacheService cacheService)
         {
             this.context = context;
             this.config = options.Value;
             this.logger = logger;
+            this.cacheService = cacheService;
         }
+
+        // Cached projection of the public player share card (F83). Flat primitives only, so it
+        // round-trips through the cache serializer without depending on PlayerScoreboard's shape.
+        private sealed record UserShareCache(
+            string Title, string Description, string? ImageUrl,
+            int Total, int WinRate, int Wins, int Draws, int Losses, int Trophies);
 
         [HttpGet("/tournament/{id:guid}")]
         public async Task<ContentResult> Tournament(Guid id)
@@ -146,6 +156,25 @@ namespace GameHubz.Api.Controllers
         [HttpGet("/user/{id:guid}")]
         public async Task<ContentResult> UserProfile(Guid id)
         {
+            // F83: this page is [AllowAnonymous] and the stats below are a full scan over MatchEntity plus
+            // a tournament subquery. Cache the computed card per user (5-min TTL) so repeated hits, link
+            // crawlers, or a GUID-looping attacker don't re-run the heavy aggregation on every request.
+            string cacheKey = $"share:user:{id}";
+            var cachedCard = await this.cacheService.GetAsync<UserShareCache>(cacheKey);
+            if (cachedCard != null)
+            {
+                return await SharePage(
+                    ShareEntityType.User,
+                    "Player",
+                    webPath: $"user/{id}",
+                    deepPath: $"player/{id}",
+                    title: cachedCard.Title,
+                    description: cachedCard.Description,
+                    imageUrl: cachedCard.ImageUrl,
+                    entityId: id,
+                    scoreboard: new PlayerScoreboard(cachedCard.Total, cachedCard.WinRate, cachedCard.Wins, cachedCard.Draws, cachedCard.Losses, cachedCard.Trophies));
+            }
+
             var data = await context.Set<UserEntity>()
                 .AsNoTracking()
                 .Where(x => x.Id == id && x.IsActive)
@@ -204,6 +233,11 @@ namespace GameHubz.Api.Controllers
             string description = total > 0
                 ? $"{total} matches · {wins}W {losses}L {draws}D · {winRate}% win rate · {trophies} {(trophies == 1 ? "trophy" : "trophies")} on {config.AppName}"
                 : $"Player profile on {config.AppName} — tournaments, match history and stats.";
+
+            await this.cacheService.SetAsync(
+                cacheKey,
+                new UserShareCache(displayName, description, data.AvatarUrl, total, winRate, wins, draws, losses, trophies),
+                TimeSpan.FromMinutes(5));
 
             return await SharePage(
                 ShareEntityType.User,

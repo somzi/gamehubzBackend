@@ -13,8 +13,14 @@ namespace GameHubz.Logic.Services
         private readonly EmailQueue emailQueue;
         private readonly DateTimeProvider dateTimeProvider;
         private readonly EmailService emailService;
+        private readonly ICacheService cacheService;
 
         private const int ForgotPasswrodTokenExpireHours = 1;
+
+        // Brute-force guard for the 6-digit reset OTP (F3): max wrong guesses per account before the
+        // code must be re-requested, and the window over which those attempts are counted.
+        private const int MaxOtpResetAttempts = 5;
+        private static readonly TimeSpan OtpAttemptWindow = TimeSpan.FromMinutes(30);
 
         public PasswordManagementService(
             IUnitOfWorkFactory factory,
@@ -25,7 +31,8 @@ namespace GameHubz.Logic.Services
             IPasswordHasher passwordHasher,
             EmailQueue emailQueue,
             DateTimeProvider dateTimeProvider,
-            EmailService emailService)
+            EmailService emailService,
+            ICacheService cacheService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.userService = userService;
@@ -34,6 +41,7 @@ namespace GameHubz.Logic.Services
             this.emailQueue = emailQueue;
             this.dateTimeProvider = dateTimeProvider;
             this.emailService = emailService;
+            this.cacheService = cacheService;
         }
 
         public async Task ResetPassword(ResetPasswordRequestDto resetPasswordRequestDto)
@@ -61,6 +69,10 @@ namespace GameHubz.Logic.Services
             user.Password = this.passwordHasher.HashPassword(resetPasswordRequestDto.Password, user.PasswordNonce);
 
             await this.userService.AddUpdateUserAnonymously(user);
+
+            // Invalidate all existing sessions on a password reset (see AuthService.ChangeUserPassword).
+            await this.AppUnitOfWork.RefreshTokenRepository.HardDeleteAllByUserId(user.Id!.Value);
+            await this.SaveAsync();
         }
 
         public async Task ResetPasswordWithOtp(ResetPasswordOtpRequestDto resetPasswordRequestDto)
@@ -70,10 +82,21 @@ namespace GameHubz.Logic.Services
                 throw new PasswordNotMatchingException(this.LocalizationService);
             }
 
+            // Brute-force guard (F3): the OTP is only 6 digits, so cap wrong guesses per account within
+            // the validity window. Tracked in the cache (no schema change); keyed by the target email.
+            string normalizedEmail = (resetPasswordRequestDto.Email ?? string.Empty).Trim().ToLowerInvariant();
+            string attemptsKey = $"pwd_reset_otp_attempts:{normalizedEmail}";
+            int attempts = await this.cacheService.GetAsync<int?>(attemptsKey) ?? 0;
+            if (attempts >= MaxOtpResetAttempts)
+            {
+                throw new BusinessRuleException("Too many incorrect attempts. Please request a new reset code.");
+            }
+
             UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByOtpAndMail(resetPasswordRequestDto);
 
             if (user == null)
             {
+                await this.cacheService.SetAsync<int?>(attemptsKey, attempts + 1, OtpAttemptWindow);
                 throw new EntityNotFoundException("Forgot Password Token", "UserEntity", this.LocalizationService);
             }
 
@@ -88,6 +111,12 @@ namespace GameHubz.Logic.Services
             user.Password = this.passwordHasher.HashPassword(resetPasswordRequestDto.Password, user.PasswordNonce);
 
             await this.userService.AddUpdateUserAnonymously(user);
+
+            // Reset succeeded: clear the attempt counter and invalidate all existing sessions
+            // (see AuthService.ChangeUserPassword).
+            await this.cacheService.RemoveAsync(attemptsKey);
+            await this.AppUnitOfWork.RefreshTokenRepository.HardDeleteAllByUserId(user.Id!.Value);
+            await this.SaveAsync();
         }
 
         public async Task CreateForgotPasswordToken(ForgotPasswordRequestDto forgotPasswordRequest)
@@ -130,26 +159,13 @@ namespace GameHubz.Logic.Services
             await this.emailQueue.Enqueue(emailQueue);
         }
 
-        public async Task<string> SendEmailWithForgotPasswordToken(string email)
-        {
-            email = (email ?? string.Empty).Trim().ToLowerInvariant();
-            var user = await AppUnitOfWork.UserRepository.GetByEmail(email) ?? throw new BusinessRuleException("This email does not exists.");
-
-            int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);
-            string otpCode = otpNumber.ToString("000 000");
-            string otpForDatabase = otpNumber.ToString();
-
-            user.ForgotPasswordOtp = otpForDatabase;
-            user.ForgotPasswordTokenExpires = DateTime.UtcNow.AddMinutes(30);
-            await this.userService.AddUpdateUserAnonymously(user);
-
-            await SendMailForResetPassword(otpCode, email);
-
-            return otpForDatabase;
-        }
+        // NOTE (F1): the former SendEmailWithForgotPasswordToken(string) overload generated the reset
+        // OTP and RETURNED it to the caller (the controller forwarded it in the HTTP response — a full
+        // account-takeover primitive). It has been removed; all forgot-password flows now go through
+        // SendForgotPasswordOtp below, which delivers the code only by email.
 
         /// <summary>
-        /// Secure forgot-password entry point (v2). Unlike the legacy overload above it:
+        /// Secure forgot-password entry point used by both the legacy and v2 forgotPassword routes:
         /// (1) never returns the OTP in the response — the code is delivered only by email, and
         /// (2) does not reveal whether an account exists for the address, so the endpoint can't be
         /// used to enumerate registered emails. A missing user is a silent no-op.
