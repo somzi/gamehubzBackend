@@ -72,6 +72,36 @@ namespace GameHubz.Api.Controllers
             return Ok(result);
         }
 
+        // Combined payload for the mobile match modal — bundles details + streams + the caller's
+        // availability (when the match is still in play) so opening a match only costs one round
+        // trip instead of three. The Details field is polymorphic (solo details vs team-match
+        // details), mirroring the /details endpoint above.
+        //
+        // The match entity is loaded ONCE at the top and its TeamMatchId + Status are passed
+        // downstream, avoiding the two redundant ShallowGetById calls the earlier draft did (one
+        // inside GetTeamMatchRef and one inside GetStreamsAndAvailability). Task.WhenAll is
+        // deliberately NOT used here — the repositories share a single DbContext and EF Core
+        // throws on concurrent operations against the same context.
+        [HttpGet("{id}/details/full")]
+        public async Task<IActionResult> GetDetailsFull(Guid id)
+        {
+            var match = await this.Service.GetMatchEntityById(id);
+            if (match == null) return NotFound(new { message = "Match not found" });
+
+            object details = match.TeamMatchId.HasValue
+                ? await this.teamMatchService.GetTeamMatchDetails(match.TeamMatchId.Value)
+                : await this.Service.GetWithEvidence(id);
+
+            var (streams, availability) = await this.Service.GetStreamsAndAvailability(id, match.Status);
+
+            return Ok(new MatchDetailsFullDto
+            {
+                Details = details,
+                Streams = streams,
+                Availability = availability,
+            });
+        }
+
         [HttpPost("{id}/schedule")]
         public async Task<IActionResult> SetScheduled(Guid id)
         {

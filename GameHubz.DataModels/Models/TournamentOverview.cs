@@ -78,5 +78,14 @@ namespace GameHubz.DataModels.Models
         /// </summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool HasExclusiveAccess { get; set; }
+
+        /// <summary>
+        /// True when the requesting user is already registered in this tournament (approved or
+        /// pending). Only populated by the v3 overview endpoint; lets the mobile client skip the
+        /// separate CHECK_REGISTRATION call it used to fire on open (that call is now redundant
+        /// whenever the client hits v3). Omitted when false so the v1 / v2 payloads stay unchanged.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool HasUserRegistered { get; set; }
     }
 }

@@ -84,6 +84,37 @@ namespace GameHubz.Logic.Services
             return detail;
         }
 
+        /// <summary>
+        /// Fetches this match's streams (empty on any error) alongside the caller's availability
+        /// (when the match is still in play — Completed / NoShow returns null). Used by the
+        /// /details/full combo endpoint; kept as its own method so the controller can compose the
+        /// polymorphic details piece without pulling team logic into MatchService. Takes the
+        /// already-loaded match status so we don't re-hit the DB just to check it — the caller
+        /// (controller) has the entity in hand.
+        /// </summary>
+        public async Task<(List<MatchStreamDto> Streams, MatchAvailabilityDto? Availability)> GetStreamsAndAvailability(Guid id, MatchStatus matchStatus)
+        {
+            List<MatchStreamDto> streams;
+            try { streams = await GetStreams(id); }
+            catch { streams = new List<MatchStreamDto>(); }
+
+            MatchAvailabilityDto? availability = null;
+            if (matchStatus == MatchStatus.Pending || matchStatus == MatchStatus.Scheduled || matchStatus == MatchStatus.Live)
+            {
+                try
+                {
+                    var user = await this.UserContextReader.GetTokenUserInfoFromContext();
+                    if (user != null)
+                    {
+                        availability = await GetAvailability(id, user.UserId);
+                    }
+                }
+                catch { availability = null; }
+            }
+
+            return (streams, availability);
+        }
+
         public async Task<MatchEntity?> GetMatchEntityById(Guid id)
         {
             return await this.AppUnitOfWork.MatchRepository.ShallowGetById(id);
