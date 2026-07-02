@@ -15,5 +15,11 @@ namespace GameHubz.DataModels.Domain
         public string? AvatarUrl { get; set; }
         public bool IsPublic { get; set; } = true;
         public bool IsVerified { get; set; } = false;
+
+        /// <summary>Discord webhook URL for public tournament announcements. Null = integration off.</summary>
+        public string? DiscordWebhookUrl { get; set; }
+
+        /// <summary>JSON per-event toggles (e.g. { "registrationOpened": true, ... }). Null = all events on.</summary>
+        public string? DiscordNotificationSettings { get; set; }
     }
 }

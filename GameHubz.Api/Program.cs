@@ -69,6 +69,14 @@ namespace GameHubz.Api
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
             });
 
+            // Discord webhook announcements. No BaseAddress — each hub stores its own absolute
+            // webhook URL. Short timeout: the sends are fire-and-forget, nothing should linger.
+            builder.Services.AddHttpClient("DiscordWebhook", client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(10);
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+            });
+
             // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
             // and the pattern-based delete path in RedisCacheService (used for invalidating
             // every page of a paginated key family at once).

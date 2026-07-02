@@ -133,9 +133,18 @@ namespace GameHubz.Logic.Test.Bracket
                 factory, userContext, localization,
                 new Mock<IHubContext<UserHub>>().Object);
 
+            // Real notifiers over the shared store: test hubs never carry a DiscordWebhookUrl, so the
+            // Discord branch resolves to "not configured" and only the mocked transport would be hit.
+            var embedBuilder = new DiscordEmbedBuilder();
+            var discordNotifications = new Mock<IDiscordNotificationService>().Object;
+            var tournamentNotifier = new TournamentNotifier(factory, Notifications, discordNotifications, embedBuilder);
+            var matchNotifier = new MatchNotifier(factory, discordNotifications, embedBuilder);
+            var bracketNotifier = new BracketNotifier(factory, Notifications, discordNotifications, embedBuilder);
+
             return new BracketService(
                 factory, userContext, localization,
-                hubActivityService, Cache, Notifications, tournamentAuth, badgeService);
+                hubActivityService, Cache, Notifications, tournamentAuth, badgeService,
+                tournamentNotifier, matchNotifier, bracketNotifier);
         }
 
         private static IUserContextReader BuildReader(Guid userId, string role)

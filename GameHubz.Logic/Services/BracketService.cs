@@ -10,6 +10,9 @@ namespace GameHubz.Logic.Services
         private readonly INotificationService notificationService;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly BadgeService badgeService;
+        private readonly TournamentNotifier tournamentNotifier;
+        private readonly MatchNotifier matchNotifier;
+        private readonly BracketNotifier bracketNotifier;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -19,7 +22,10 @@ namespace GameHubz.Logic.Services
             ICacheService cacheService,
             INotificationService notificationService,
             TournamentAuthorizationService tournamentAuth,
-            BadgeService badgeService)
+            BadgeService badgeService,
+            TournamentNotifier tournamentNotifier,
+            MatchNotifier matchNotifier,
+            BracketNotifier bracketNotifier)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
@@ -27,6 +33,9 @@ namespace GameHubz.Logic.Services
             this.notificationService = notificationService;
             this.tournamentAuth = tournamentAuth;
             this.badgeService = badgeService;
+            this.tournamentNotifier = tournamentNotifier;
+            this.matchNotifier = matchNotifier;
+            this.bracketNotifier = bracketNotifier;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -259,8 +268,8 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
 
-            // Notify all participants that the tournament is now live
-            await SendNotification(tournament, tournamentId);
+            // Notify all participants that the tournament is now live (Expo push + Discord webhook)
+            await this.bracketNotifier.TournamentStarted(tournament, tournamentId);
         }
 
         /// <summary>
@@ -2265,7 +2274,15 @@ namespace GameHubz.Logic.Services
                 (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
             }
 
+            // Capture the result being deleted before the core clears it — the Discord announcement
+            // (sent only after the revert succeeds) names the removed score line.
+            int? revertedHomeScore = match.HomeUserScore;
+            int? revertedAwayScore = match.AwayUserScore;
+
             await RevertMatchResultCore(match, nextMatch, loserBracketMatch);
+
+            // Discord-only announcement (no Expo equivalent exists for reverts).
+            await this.matchNotifier.MatchReverted(match, revertedHomeScore, revertedAwayScore);
         }
 
         // Core of a single-match revert: undo this match's own advancement / stats, clear its result,
@@ -2634,6 +2651,9 @@ namespace GameHubz.Logic.Services
             var proposerId = match.ProposedByUserId!.Value;
 
             await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
+
+            // Discord-only announcement of the confirmed result (participants already have badges/pushes).
+            await this.matchNotifier.MatchApproved(match, homeScore, awayScore);
         }
 
         /// <summary>
@@ -2757,6 +2777,9 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+
+            // Discord-only announcement (no Expo equivalent exists for double walkovers).
+            await this.matchNotifier.DoubleWalkover(match);
         }
 
         /// <summary>
@@ -3704,6 +3727,9 @@ namespace GameHubz.Logic.Services
                     {
                         await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                         await NotifyTournamentWinnerAsync(tournament);
+                        // Public "Tournament Finished" Discord announcement — separate from the
+                        // personal "you won" push above.
+                        await this.tournamentNotifier.TournamentFinished(tournament);
                     }
                 }
             }
@@ -3720,6 +3746,9 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                 await NotifyTournamentWinnerAsync(tournament);
+                // Public "Tournament Finished" Discord announcement — separate from the
+                // personal "you won" push above.
+                await this.tournamentNotifier.TournamentFinished(tournament);
             }
         }
 
@@ -3820,6 +3849,9 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                 await NotifyTournamentWinnerAsync(tournament);
+                // Public "Tournament Finished" Discord announcement — separate from the
+                // personal "you won" push above.
+                await this.tournamentNotifier.TournamentFinished(tournament);
             }
         }
 
@@ -4121,6 +4153,9 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                 await NotifyTournamentWinnerAsync(tournament);
+                // Public "Tournament Finished" Discord announcement — separate from the
+                // personal "you won" push above.
+                await this.tournamentNotifier.TournamentFinished(tournament);
             }
         }
 
@@ -4445,6 +4480,9 @@ namespace GameHubz.Logic.Services
                     {
                         await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                         await NotifyTournamentWinnerAsync(tournament);
+                        // Public "Tournament Finished" Discord announcement — separate from the
+                        // personal "you won" push above.
+                        await this.tournamentNotifier.TournamentFinished(tournament);
                     }
                 }
             }
@@ -4474,6 +4512,9 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
                 await NotifyTournamentWinnerAsync(tournament);
+                // Public "Tournament Finished" Discord announcement — separate from the
+                // personal "you won" push above.
+                await this.tournamentNotifier.TournamentFinished(tournament);
             }
         }
 
@@ -5938,33 +5979,6 @@ namespace GameHubz.Logic.Services
 
                 i = j;
             }
-        }
-
-        // F109: participant ids + push tokens are resolved here (awaited, while the request-scoped
-        // DbContext is alive); only the push send is fired-and-forgotten. The old version queried
-        // this.AppUnitOfWork inside Task.Run, racing against the disposed request-scoped context.
-        private async Task SendNotification(TournamentEntity tournament, Guid tournamentId)
-        {
-            var userIds = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllUserIdsByTournamentId(tournamentId);
-            if (userIds.Count == 0) return;
-
-            var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(userIds);
-            if (pushTokens.Count == 0) return;
-
-            var title = tournament.Name;
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await notificationService.SendToManyAsync(
-                        pushTokens,
-                        $"{title}",
-                        $"Tournament is now live. Good luck!",
-                        new { tournamentId });
-                }
-                catch { /* fire-and-forget */ }
-            });
         }
 
         #endregion 5. Private Helpers (Core Logic)

@@ -22,5 +22,10 @@
         public bool IsPublic { get; set; } = true;
         public bool IsVerified { get; set; } = false;
         public bool HasPendingJoinRequest { get; set; }
+
+        // Discord integration settings — populated only for the hub owner (the webhook URL is a
+        // secret: anyone holding it can post to the Discord channel), stripped for everyone else.
+        public string? DiscordWebhookUrl { get; set; }
+        public string? DiscordNotificationSettings { get; set; }
     }
 }

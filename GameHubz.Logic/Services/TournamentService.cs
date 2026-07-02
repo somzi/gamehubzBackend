@@ -9,7 +9,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
-        private readonly INotificationService notificationService;
+        private readonly TournamentNotifier tournamentNotifier;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly UserHubService userHubService;
 
@@ -23,7 +23,7 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService,
+            TournamentNotifier tournamentNotifier,
             TournamentAuthorizationService tournamentAuth,
             UserHubService userHubService) : base(
                 factory.CreateAppUnitOfWork(),
@@ -36,7 +36,7 @@ namespace GameHubz.Logic.Services
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
-            this.notificationService = notificationService;
+            this.tournamentNotifier = tournamentNotifier;
             this.tournamentAuth = tournamentAuth;
             this.userHubService = userHubService;
         }
@@ -138,6 +138,9 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"tournament:{id}");
             await cacheService.RemoveAsync($"bracket:{id}");
             await cacheService.RemoveAsync($"league_standings:{id}");
+
+            // Discord-only announcement (no Expo push exists for closing registration).
+            await this.tournamentNotifier.RegistrationClosed(tournament);
         }
 
         public async Task Publish(Guid id)
@@ -346,8 +349,8 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
-                // Notify all hub followers about the new tournament
-                await SendNotification(model);
+                // Notify all hub followers about the new tournament (Expo push + Discord webhook)
+                await this.tournamentNotifier.RegistrationOpened(model);
             }
             else
             {
@@ -454,41 +457,6 @@ namespace GameHubz.Logic.Services
             }
 
             await Task.CompletedTask;
-        }
-
-        // F109: resolve the recipients' push tokens here, while the request-scoped DbContext is alive,
-        // then fire-and-forget ONLY the push send (which goes through NotificationService's own scope).
-        // The old version queried this.AppUnitOfWork inside Task.Run, racing the disposed request context.
-        private async Task SendNotification(TournamentDto model)
-        {
-            var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
-            if (hubMembers == null || hubMembers.Count == 0) return;
-
-            var pushTokens = hubMembers
-                .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
-                // Exclusive tournaments are invisible to plain members, so don't notify them.
-                .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
-                .Select(m => m.PushToken!)
-                .Distinct()
-                .ToList();
-
-            if (pushTokens.Count == 0) return;
-
-            var title = model.Name;
-            var tournamentId = model.Id;
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await notificationService.SendToManyAsync(
-                        pushTokens,
-                        title,
-                        "Registration is open, grab your spot!",
-                        new { tournamentId });
-                }
-                catch { /* fire-and-forget */ }
-            });
         }
 
         private static bool ShouldDeleteTournament(TournamentEntity tournament)
