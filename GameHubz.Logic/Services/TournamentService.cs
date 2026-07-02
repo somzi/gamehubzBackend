@@ -158,6 +158,11 @@ namespace GameHubz.Logic.Services
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.RegistrationOpen);
+
+            // Notify all hub followers about the opened registration (Expo push + Discord webhook).
+            // Was missing entirely before — SaveEntity only fires this on tournament CREATION,
+            // never on this explicit open-registration transition for an existing tournament.
+            await this.tournamentNotifier.RegistrationOpened(tournament);
         }
 
         public async Task<TournamentOverview> GetOverview(Guid id)

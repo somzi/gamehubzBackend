@@ -13,6 +13,7 @@ using Moq;
 using GameHubz.Common.Interfaces;
 using GameHubz.Common.Models;
 using GameHubz.Data.Context;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
@@ -20,6 +21,7 @@ using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.SignalR;
 using GameHubz.Logic.Test.Factories;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Test.Bracket
 {
@@ -141,10 +143,16 @@ namespace GameHubz.Logic.Test.Bracket
             var matchNotifier = new MatchNotifier(factory, discordNotifications, embedBuilder);
             var bracketNotifier = new BracketNotifier(factory, Notifications, discordNotifications, embedBuilder);
 
+            // Personal bot DMs (phase 2): mocked transport — test users never link Discord, so the
+            // DM branches no-op before ever reaching it.
+            var discordDm = new Mock<IDiscordDmService>().Object;
+            var shareLinks = Options.Create(new ShareLinksConfig());
+
             return new BracketService(
                 factory, userContext, localization,
                 hubActivityService, Cache, Notifications, tournamentAuth, badgeService,
-                tournamentNotifier, matchNotifier, bracketNotifier);
+                tournamentNotifier, matchNotifier, bracketNotifier,
+                discordDm, shareLinks);
         }
 
         private static IUserContextReader BuildReader(Guid userId, string role)

@@ -1,5 +1,7 @@
 ﻿using GameHubz.Common.Consts;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Enums;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Services
 {
@@ -13,6 +15,8 @@ namespace GameHubz.Logic.Services
         private readonly TournamentNotifier tournamentNotifier;
         private readonly MatchNotifier matchNotifier;
         private readonly BracketNotifier bracketNotifier;
+        private readonly IDiscordDmService discordDmService;
+        private readonly ShareLinksConfig shareLinksConfig;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -25,7 +29,9 @@ namespace GameHubz.Logic.Services
             BadgeService badgeService,
             TournamentNotifier tournamentNotifier,
             MatchNotifier matchNotifier,
-            BracketNotifier bracketNotifier)
+            BracketNotifier bracketNotifier,
+            IDiscordDmService discordDmService,
+            IOptions<ShareLinksConfig> shareLinksOptions)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
@@ -36,6 +42,8 @@ namespace GameHubz.Logic.Services
             this.tournamentNotifier = tournamentNotifier;
             this.matchNotifier = matchNotifier;
             this.bracketNotifier = bracketNotifier;
+            this.discordDmService = discordDmService;
+            this.shareLinksConfig = shareLinksOptions.Value;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -3055,23 +3063,35 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(opponentUserId.Value);
 
             var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
+            if (opponent == null) return;
 
-            var token = opponent.PushToken!;
             var matchId = match.Id!.Value;
             var proposerName = proposer.Username;
-            _ = Task.Run(async () =>
+
+            if (!string.IsNullOrEmpty(opponent.PushToken))
             {
-                try
+                var token = opponent.PushToken!;
+                _ = Task.Run(async () =>
                 {
-                    await notificationService.SendToOneAsync(
-                        token,
-                        "Result to confirm",
-                        $"{proposerName} reported a result. Tap to confirm or dispute.",
-                        new { matchId = matchId.ToString(), type = "resultProposed" });
-                }
-                catch { /* fire-and-forget */ }
-            });
+                    try
+                    {
+                        await notificationService.SendToOneAsync(
+                            token,
+                            "Result to confirm",
+                            $"{proposerName} reported a result. Tap to confirm or dispute.",
+                            new { matchId = matchId.ToString(), type = "resultProposed" });
+                    }
+                    catch { /* fire-and-forget */ }
+                });
+            }
+
+            // Additive Discord DM (push stays the primary channel).
+            if (opponent.DiscordDmEnabled)
+            {
+                this.discordDmService.SendDmInBackground(
+                    opponent.DiscordUserId,
+                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}");
+            }
         }
 
         // Refreshes both sides' badges after a proposal is confirmed or rejected (the opponent's
@@ -3111,23 +3131,46 @@ namespace GameHubz.Logic.Services
 
                 if (winnerUserIds.Count == 0) return;
 
-                var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(winnerUserIds);
-                if (pushTokens.Count == 0) return;
+                // Push tokens + linked Discord accounts in one query — push stays the primary
+                // channel, the bot DM is additive for winners who linked Discord.
+                var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(winnerUserIds);
+                var pushTokens = targets
+                    .Where(t => !string.IsNullOrEmpty(t.PushToken))
+                    .Select(t => t.PushToken!)
+                    .Distinct()
+                    .ToList();
+                var discordUserIds = targets
+                    .Where(t => t.DiscordDmEnabled && !string.IsNullOrEmpty(t.DiscordUserId))
+                    .Select(t => t.DiscordUserId!)
+                    .Distinct()
+                    .ToList();
+
+                if (pushTokens.Count == 0 && discordUserIds.Count == 0) return;
 
                 var tournamentId = tournament.Id!.Value;
                 var title = tournament.Name;
-                _ = Task.Run(async () =>
+
+                if (pushTokens.Count > 0)
                 {
-                    try
+                    _ = Task.Run(async () =>
                     {
-                        await notificationService.SendToManyAsync(
-                            pushTokens,
-                            title,
-                            "Congratulations — you won the tournament! 🏆",
-                            new { tournamentId, type = "tournamentWon" });
-                    }
-                    catch { /* fire-and-forget */ }
-                });
+                        try
+                        {
+                            await notificationService.SendToManyAsync(
+                                pushTokens,
+                                title,
+                                "Congratulations — you won the tournament! 🏆",
+                                new { tournamentId, type = "tournamentWon" });
+                        }
+                        catch { /* fire-and-forget */ }
+                    });
+                }
+
+                string dmContent = $"🏆 Congratulations — you won **{title}**!\n{shareLinksConfig.BaseUrl}/tournament/{tournamentId}";
+                foreach (var discordUserId in discordUserIds)
+                {
+                    this.discordDmService.SendDmInBackground(discordUserId, dmContent);
+                }
             }
             catch { /* never let a win-notification failure break tournament completion */ }
         }

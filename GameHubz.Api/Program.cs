@@ -77,6 +77,38 @@ namespace GameHubz.Api
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
             });
 
+            // ─── Discord bot (phase 2): HTTP-only — REST DMs + slash commands, no gateway ───
+            IConfigurationSection discordSettings = builder.Configuration.GetSection("Discord");
+            builder.Services.Configure<DiscordConfig>(discordSettings);
+
+            // Bot-authorized client for DM sending and command registration. The Authorization
+            // header is only attached when a token is configured — DiscordDmService treats a
+            // client without it as "integration off".
+            string? discordBotToken = discordSettings["BotToken"];
+            builder.Services.AddHttpClient("DiscordBot", client =>
+            {
+                client.BaseAddress = new Uri("https://discord.com/api/v10/");
+                client.Timeout = TimeSpan.FromSeconds(10);
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+                if (!string.IsNullOrWhiteSpace(discordBotToken))
+                {
+                    client.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bot", discordBotToken);
+                }
+            });
+
+            // Unauthenticated client for the OAuth code exchange (the token endpoint must never
+            // see the Bot header; it authenticates via client_id/client_secret form fields).
+            builder.Services.AddHttpClient("DiscordOAuth", client =>
+            {
+                client.BaseAddress = new Uri("https://discord.com/api/v10/");
+                client.Timeout = TimeSpan.FromSeconds(10);
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+            });
+
+            // One-shot idempotent slash-command registration (opt-in via config).
+            builder.Services.AddHostedService<DiscordCommandRegistrationTask>();
+
             // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
             // and the pattern-based delete path in RedisCacheService (used for invalidating
             // every page of a paginated key family at once).

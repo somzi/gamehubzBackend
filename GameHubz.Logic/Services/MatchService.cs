@@ -1,6 +1,8 @@
 ﻿using FluentValidation;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Enums;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Services
 {
@@ -12,6 +14,8 @@ namespace GameHubz.Logic.Services
         private readonly StreamVodResolver streamVodResolver;
         private readonly YouTubeStreamClient youTubeStreamClient;
         private readonly BadgeService badgeService;
+        private readonly IDiscordDmService discordDmService;
+        private readonly ShareLinksConfig shareLinksConfig;
 
         public MatchService(
             IUnitOfWorkFactory factory,
@@ -26,7 +30,9 @@ namespace GameHubz.Logic.Services
             TournamentAuthorizationService tournamentAuth,
             StreamVodResolver streamVodResolver,
             YouTubeStreamClient youTubeStreamClient,
-            BadgeService badgeService) : base(
+            BadgeService badgeService,
+            IDiscordDmService discordDmService,
+            IOptions<ShareLinksConfig> shareLinksOptions) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -41,6 +47,8 @@ namespace GameHubz.Logic.Services
             this.streamVodResolver = streamVodResolver;
             this.youTubeStreamClient = youTubeStreamClient;
             this.badgeService = badgeService;
+            this.discordDmService = discordDmService;
+            this.shareLinksConfig = shareLinksOptions.Value;
         }
 
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
@@ -202,17 +210,30 @@ namespace GameHubz.Logic.Services
             if (opponentUserId == null) return;
 
             var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
+            if (opponent == null) return;
 
             var (title, body) = match.Status == MatchStatus.Scheduled
                 ? ("Match Scheduled", $"Your match is confirmed vs {user.Username}")
                 : ("Match schedule", $"{user.Username} set their availability, add yours to confirm a time");
 
-            FireAndForgetPush(
-                new List<string> { opponent.PushToken! },
-                title,
-                body,
-                new { matchId = matchId.ToString() });
+            if (!string.IsNullOrEmpty(opponent.PushToken))
+            {
+                FireAndForgetPush(
+                    new List<string> { opponent.PushToken! },
+                    title,
+                    body,
+                    new { matchId = matchId.ToString() });
+            }
+
+            // Additive Discord DM (push stays the primary channel). Same event, same data —
+            // resolved here in the request scope, sent fire-and-forget by the DM service.
+            if (opponent.DiscordDmEnabled)
+            {
+                string dmContent = match.Status == MatchStatus.Scheduled
+                    ? $"📅 **Match scheduled** — your match vs **{user.Username}** is confirmed.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}"
+                    : $"🕒 **{user.Username}** set their availability — add yours to confirm a time.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}";
+                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent);
+            }
         }
 
         public async Task SetScheduled(Guid matchId)

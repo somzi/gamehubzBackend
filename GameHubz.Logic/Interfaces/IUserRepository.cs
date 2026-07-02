@@ -41,5 +41,9 @@ namespace GameHubz.Logic.Interfaces
         Task ClearPushTokenAsync(string pushToken);
 
         Task<List<string>> GetPushTokensByUserIds(List<Guid> userIds);
+
+        Task<UserEntity?> GetByDiscordUserId(string discordUserId);
+
+        Task<List<UserNotificationTarget>> GetNotificationTargetsByUserIds(List<Guid> userIds);
     }
 }

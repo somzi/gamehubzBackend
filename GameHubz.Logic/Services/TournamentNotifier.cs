@@ -32,13 +32,33 @@ namespace GameHubz.Logic.Services
         {
             try
             {
-                await SendRegistrationOpenedPush(model);
+                await SendRegistrationOpenedPush(model.HubId!.Value, model.IsExclusive, model.Id!.Value, model.Name);
 
                 var hub = await GetDiscordTargetAsync(model.HubId, s => s.RegistrationOpened);
                 if (hub != null)
-                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationOpened(hub.Name, model.Name));
+                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationOpened(hub.Name, model.Name, model.MaxPlayers, model.Prize, model.PrizeCurrency));
             }
             catch { /* notifications must never break tournament creation */ }
+        }
+
+        /// <summary>
+        /// Same event as above, for the explicit "Open Registration" transition on an already-created
+        /// tournament (TournamentService.OpenRegistration). That path never fired the "Registration is
+        /// open" notification before Discord phase 1 — the old push was wired only into SaveEntity's
+        /// creation branch — so neither Expo nor Discord ever announced it. Overload kept same-named
+        /// so both call sites read naturally; only the source of the fields differs (entity vs DTO).
+        /// </summary>
+        public async Task RegistrationOpened(TournamentEntity tournament)
+        {
+            try
+            {
+                await SendRegistrationOpenedPush(tournament.HubId!.Value, tournament.IsExclusive, tournament.Id!.Value, tournament.Name);
+
+                var hub = await GetDiscordTargetAsync(tournament.HubId, s => s.RegistrationOpened);
+                if (hub != null)
+                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationOpened(hub.Name, tournament.Name, tournament.MaxPlayers ?? 0, tournament.Prize, tournament.PrizeCurrency));
+            }
+            catch { /* notifications must never break opening registration */ }
         }
 
         /// <summary>
@@ -95,24 +115,21 @@ namespace GameHubz.Logic.Services
 
         // F109 (moved from TournamentService): resolve the recipients' push tokens here, while the
         // request-scoped DbContext is alive, then fire-and-forget ONLY the push send (which goes
-        // through NotificationService's own scope).
-        private async Task SendRegistrationOpenedPush(TournamentDto model)
+        // through NotificationService's own scope). Shared by both RegistrationOpened overloads.
+        private async Task SendRegistrationOpenedPush(Guid hubId, bool isExclusive, Guid tournamentId, string title)
         {
-            var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
+            var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
             if (hubMembers == null || hubMembers.Count == 0) return;
 
             var pushTokens = hubMembers
                 .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
                 // Exclusive tournaments are invisible to plain members, so don't notify them.
-                .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
+                .Where(m => !isExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
                 .Select(m => m.PushToken!)
                 .Distinct()
                 .ToList();
 
             if (pushTokens.Count == 0) return;
-
-            var title = model.Name;
-            var tournamentId = model.Id;
 
             _ = Task.Run(async () =>
             {

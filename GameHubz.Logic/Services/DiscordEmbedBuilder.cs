@@ -1,3 +1,5 @@
+using GameHubz.DataModels.Enums;
+
 namespace GameHubz.Logic.Services
 {
     /// <summary>
@@ -15,12 +17,36 @@ namespace GameHubz.Logic.Services
         private const int Orange = 0xE67E22;  // admin corrections
         private const int Gold = 0xF1C40F;    // champions
 
-        public object RegistrationOpened(string hubName, string tournamentName)
+        // The embed "title" field is a fixed size — it can't be made any bigger. Discord's markdown
+        // heading syntax ("# text") inside the DESCRIPTION renders noticeably larger than the title
+        // bar, so the tournament name goes there as an H1 and title is dropped entirely to avoid
+        // showing the name twice.
+        public object RegistrationOpened(string hubName, string tournamentName, int maxPlayers, int prize, PrizeCurrency prizeCurrency)
             => BuildEmbed(
-                $"📣 Registration Open — {tournamentName}",
-                "Registration is open, grab your spot!",
+                null,
+                BuildRegistrationOpenedDescription(tournamentName, maxPlayers, prize, prizeCurrency),
                 Green,
                 hubName);
+
+        private static string BuildRegistrationOpenedDescription(string tournamentName, int maxPlayers, int prize, PrizeCurrency prizeCurrency)
+        {
+            var lines = new List<string> { $"# 🏆 {tournamentName}" };
+            if (maxPlayers > 0) lines.Add($"👥 **{maxPlayers}** slots");
+            if (prize > 0) lines.Add($"💰 Prize pool: **{prize} {PrizeCurrencyLabel(prizeCurrency)}**");
+            lines.Add("📣 **Registration is open — grab your spot!**");
+            return string.Join("\n", lines);
+        }
+
+        // Mirrors the labels shown in the mobile Create Tournament form (prizeCurrencies in
+        // CreateTournamentModal.tsx) so the Discord announcement matches what the organizer picked.
+        private static string PrizeCurrencyLabel(PrizeCurrency currency) => currency switch
+        {
+            PrizeCurrency.Eur => "EUR",
+            PrizeCurrency.Dollar => "USD",
+            PrizeCurrency.StarPass => "StarPass",
+            PrizeCurrency.FCP => "FCP",
+            _ => currency.ToString(),
+        };
 
         public object RegistrationClosed(string hubName, string tournamentName, int participantCount)
             => BuildEmbed(
@@ -68,7 +94,9 @@ namespace GameHubz.Logic.Services
                 Orange,
                 hubName);
 
-        private static object BuildEmbed(string title, string description, int color, string hubName)
+        // title is nullable: RegistrationOpened puts the tournament name in the description as a
+        // markdown heading instead (see above) and omits the title bar entirely.
+        private static object BuildEmbed(string? title, string description, int color, string hubName)
             => new
             {
                 embeds = new[]
