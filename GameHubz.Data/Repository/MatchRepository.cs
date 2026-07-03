@@ -403,6 +403,7 @@ namespace GameHubz.Data.Repository
                 .Where(x => x.Id == id)
                 .Select(x => new MatchResultDetailDto
                 {
+                    Status = x.Status,
                     AwayUser = x.AwayParticipant!.User!.Nickname ?? "unknown",
                     HomeUser = x.HomeParticipant!.User!.Nickname ?? "unknown",
                     AwayUserId = x.AwayParticipant!.UserId,

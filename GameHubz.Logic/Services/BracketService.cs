@@ -2706,6 +2706,10 @@ namespace GameHubz.Logic.Services
             // sides (participants weren't loaded above, so fetch them just for the badge bump).
             var participantsMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
             if (participantsMatch != null) await BumpMatchBadgesAsync(participantsMatch);
+
+            // The rejected proposal also sat in the managers' pending-approvals count — refresh
+            // their bracket-tab pill live (a non-playing organizer gets no participant push).
+            await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
         }
 
         /// <summary>
@@ -2879,6 +2883,10 @@ namespace GameHubz.Logic.Services
             int awayScore,
             Guid tournamentId)
         {
+            // Captured before the proposal fields are cleared below: a consumed proposal was part
+            // of the tournament managers' pending-approvals badge, so they need a push at the end.
+            bool hadProposal = match.ProposedByUserId != null;
+
             match.HomeUserScore = homeScore;
             match.AwayUserScore = awayScore;
             match.Status = MatchStatus.Completed;
@@ -3028,6 +3036,13 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+
+            // Approving (or a privileged result overriding) a proposal removes it from the
+            // managers' pending-approvals count, but the pushes above only reach the match
+            // participants — an organizer who isn't playing kept a stale bracket-tab pill
+            // until the next full refetch. Push the managers too.
+            if (hadProposal)
+                await this.badgeService.PushToTournamentManagersAsync(tournamentId);
         }
 
         private async Task SaveProposal(MatchEntity match, int homeScore, int awayScore, TokenUserInfo currentUser)
@@ -3044,6 +3059,10 @@ namespace GameHubz.Logic.Services
 
             // The opponent now has a result waiting for them — bump their badge and push.
             await NotifyResultProposedAsync(match, currentUser);
+
+            // A new proposal enters the managers' pending-approvals count the moment it's saved —
+            // push them too so the bracket-tab pill appears without waiting for a refetch.
+            await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
         }
 
         // Notifies the participant who did NOT propose the result that one is awaiting their

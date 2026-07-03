@@ -1,7 +1,13 @@
-﻿namespace GameHubz.DataModels.Models
+﻿using GameHubz.DataModels.Enums;
+
+namespace GameHubz.DataModels.Models
 {
     public class MatchResultDetailDto
     {
+        // Lets a client that opened the match from a bare deep link (no bracket context)
+        // know whether the match is already Completed instead of guessing from the scores.
+        public MatchStatus? Status { get; set; }
+
         public string HomeUser { get; set; } = string.Empty;
         public string AwayUser { get; set; } = string.Empty;
         public Guid? HomeUserId { get; set; }
