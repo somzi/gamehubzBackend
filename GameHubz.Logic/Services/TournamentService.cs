@@ -137,6 +137,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{id}");
             await cacheService.RemoveAsync($"bracket:{id}");
+            await cacheService.RemoveAsync($"bracket:v3:{id}");
             await cacheService.RemoveAsync($"league_standings:{id}");
 
             // Discord-only announcement (no Expo push exists for closing registration).
@@ -277,6 +278,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
@@ -364,6 +366,7 @@ namespace GameHubz.Logic.Services
                 // bracket structure response, so flush the bracket cache too — otherwise the new
                 // setting won't be visible until the 5-minute cache window expires.
                 await cacheService.RemoveAsync($"bracket:{model.Id}");
+                await cacheService.RemoveAsync($"bracket:v3:{model.Id}");
                 await cacheService.RemoveAsync($"league_standings:{model.Id}");
             }
 
@@ -482,6 +485,7 @@ namespace GameHubz.Logic.Services
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
@@ -511,6 +515,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }

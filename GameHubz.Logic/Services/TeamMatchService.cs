@@ -83,6 +83,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
 
             return new SubmitRepresentativeResponse
