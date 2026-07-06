@@ -252,7 +252,7 @@ namespace GameHubz.Logic.Services
             return isUserAlreadyRegistred;
         }
 
-        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null)
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null, bool clearRoundStart = false, bool clearDeadline = false)
         {
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
@@ -271,8 +271,18 @@ namespace GameHubz.Logic.Services
 
             foreach (var match in roundMatches)
             {
-                if (roundStart != null) match.RoundOpenAt = roundStart;
-                if (deadline != null) match.RoundDeadline = deadline;
+                // Clear beats set: null RoundOpenAt = round open immediately, null RoundDeadline =
+                // no deadline. A plain null value still means "keep existing" for old clients.
+                if (clearRoundStart) match.RoundOpenAt = null;
+                else if (roundStart != null) match.RoundOpenAt = roundStart;
+
+                if (clearDeadline) match.RoundDeadline = null;
+                else if (deadline != null) match.RoundDeadline = deadline;
+
+                // The deadline changed (or vanished) — re-arm the reminder waves so a future
+                // deadline gets fresh reminders instead of being seen as already-notified.
+                if (clearDeadline || deadline != null) match.RoundReminderStage = 0;
+
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             }
 
