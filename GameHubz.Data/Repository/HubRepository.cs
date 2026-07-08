@@ -71,6 +71,7 @@ namespace GameHubz.Data.Repository
                     OwnerName = x.User.Username,
                     IsPublic = x.IsPublic,
                     IsVerified = x.IsVerified,
+                    CreatedOn = x.CreatedOn,
                     DiscordWebhookUrl = x.DiscordWebhookUrl,
                     DiscordNotificationSettings = x.DiscordNotificationSettings,
                     HubSocials = x.HubSocials != null

@@ -1,4 +1,6 @@
-﻿namespace GameHubz.DataModels.Models
+﻿using GameHubz.DataModels.Enums;
+
+namespace GameHubz.DataModels.Models
 {
     public class HubOverviewDto
     {
@@ -27,5 +29,11 @@
         // secret: anyone holding it can post to the Discord channel), stripped for everyone else.
         public string? DiscordWebhookUrl { get; set; }
         public string? DiscordNotificationSettings { get; set; }
+
+        public DateTime? CreatedOn { get; set; }
+
+        // Caller-specific — the shared per-hub cache never holds a trustworthy value, so
+        // HubService.GetOverviewById overwrites it on every read. Null = not a member.
+        public HubRole? UserHubRole { get; set; }
     }
 }

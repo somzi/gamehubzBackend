@@ -96,10 +96,16 @@ namespace GameHubz.Logic.Services
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
             hubDto.IsUserFollowHub = isFollowing;
 
-            if (!hubDto.IsUserOwner)
+            if (hubDto.IsUserOwner)
+            {
+                hubDto.UserHubRole = HubRole.HubOwner;
+            }
+            else
             {
                 var callerRole = await this.userHubService.GetUserHubRoleCachedAsync(user.UserId, id);
                 hubDto.IsUserAdmin = callerRole == HubRole.HubAdmin;
+                // Caller-specific — always overwrite whatever the shared per-hub cache held.
+                hubDto.UserHubRole = callerRole;
             }
 
             if (!hubDto.IsPublic && !isFollowing && !hubDto.IsUserOwner)
