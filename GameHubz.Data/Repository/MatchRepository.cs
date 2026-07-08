@@ -404,8 +404,15 @@ namespace GameHubz.Data.Repository
                 .Select(x => new MatchResultDetailDto
                 {
                     Status = x.Status,
-                    AwayUser = x.AwayParticipant!.User!.Nickname ?? "unknown",
-                    HomeUser = x.HomeParticipant!.User!.Nickname ?? "unknown",
+                    // Nickname is persisted as "" (entity default) when the user never set one,
+                    // so ?? alone leaks the empty string and the mobile modal falls back to its
+                    // "Home"/"Away" placeholders. Treat blank as unset and use Username.
+                    AwayUser = string.IsNullOrWhiteSpace(x.AwayParticipant!.User!.Nickname)
+                        ? x.AwayParticipant!.User!.Username
+                        : x.AwayParticipant!.User!.Nickname!,
+                    HomeUser = string.IsNullOrWhiteSpace(x.HomeParticipant!.User!.Nickname)
+                        ? x.HomeParticipant!.User!.Username
+                        : x.HomeParticipant!.User!.Nickname!,
                     AwayUserId = x.AwayParticipant!.UserId,
                     HomeUserId = x.HomeParticipant!.UserId,
                     AwayUserScore = x.AwayUserScore ?? 0,
@@ -436,6 +443,11 @@ namespace GameHubz.Data.Repository
                     MatchId = x.Id!.Value,
                     TeamMatchId = x.TeamMatchId,
                     RoundNumber = x.RoundNumber,
+                    GroupName = x.TournamentGroup != null ? x.TournamentGroup.Name : null,
+                    HomeTeamName = x.TeamMatch != null && x.TeamMatch.HomeTeamParticipant != null && x.TeamMatch.HomeTeamParticipant.Team != null
+                        ? x.TeamMatch.HomeTeamParticipant.Team.TeamName : null,
+                    AwayTeamName = x.TeamMatch != null && x.TeamMatch.AwayTeamParticipant != null && x.TeamMatch.AwayTeamParticipant.Team != null
+                        ? x.TeamMatch.AwayTeamParticipant.Team.TeamName : null,
                     Status = x.Status,
                     ScheduledStartTime = x.ScheduledStartTime,
                     RequestedByUserId = x.AdminHelpRequestedByUserId,
@@ -473,6 +485,11 @@ namespace GameHubz.Data.Repository
                 {
                     MatchId = x.Id!.Value,
                     RoundNumber = x.RoundNumber,
+                    GroupName = x.TournamentGroup != null ? x.TournamentGroup.Name : null,
+                    HomeTeamName = x.TeamMatch != null && x.TeamMatch.HomeTeamParticipant != null && x.TeamMatch.HomeTeamParticipant.Team != null
+                        ? x.TeamMatch.HomeTeamParticipant.Team.TeamName : null,
+                    AwayTeamName = x.TeamMatch != null && x.TeamMatch.AwayTeamParticipant != null && x.TeamMatch.AwayTeamParticipant.Team != null
+                        ? x.TeamMatch.AwayTeamParticipant.Team.TeamName : null,
                     Status = x.Status,
                     ScheduledStartTime = x.ScheduledStartTime,
                     ProposedHomeScore = x.ProposedHomeScore,

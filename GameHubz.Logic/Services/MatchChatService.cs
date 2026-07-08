@@ -83,7 +83,7 @@ namespace GameHubz.Logic.Services
             {
                 Id = entity.Id!.Value,
                 UserId = user.UserId,
-                UserNickname = sender?.Nickname ?? user.Username,
+                UserNickname = string.IsNullOrWhiteSpace(sender?.Nickname) ? user.Username : sender!.Nickname!,
                 UserAvatarUrl = sender?.AvatarUrl,
                 Content = content,
                 SentAt = entity.CreatedOn!.Value
