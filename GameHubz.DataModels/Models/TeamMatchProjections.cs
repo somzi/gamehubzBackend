@@ -13,6 +13,7 @@ namespace GameHubz.DataModels.Models
         public Guid? AwayTeamRepresentativeUserId { get; set; }
         public int? MatchOrder { get; set; }
         public bool RequireResultApproval { get; set; }
+        public TeamWinCondition WinCondition { get; set; }
         public TeamMatchTeamProjection? HomeTeam { get; set; }
         public TeamMatchTeamProjection? AwayTeam { get; set; }
         public List<SubMatchProjection> SubMatches { get; set; } = [];

@@ -332,9 +332,9 @@ namespace GameHubz.Logic.Services
             {
                 var emailAddress = new MailAddress(entity.Email);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw new Exception(ex.Message);
+                throw new BusinessRuleException("Invalid email address format.");
             }
         }
 

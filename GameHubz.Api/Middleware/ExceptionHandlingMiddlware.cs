@@ -71,6 +71,10 @@ namespace GameHubz.Api.Middleware
             {
                 await this.CreateExceptionResponse(context, HttpStatusCode.Unauthorized, ex, ExceptionCategory.Unauthorized);
             }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                // Client disconnected mid-request — nothing to respond to and not a server fault.
+            }
             catch (Exception ex)
             {
                 await this.CreateExceptionResponse(context, HttpStatusCode.InternalServerError, ex, ExceptionCategory.Unhandled);

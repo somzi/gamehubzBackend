@@ -221,6 +221,9 @@ namespace GameHubz.Logic.Services
                 TeamMatchId = projection.TeamMatchId,
                 Status = projection.Status,
                 WinnerTeamParticipantId = projection.WinnerTeamParticipantId,
+                HomeTeamParticipantId = projection.HomeTeamParticipantId,
+                AwayTeamParticipantId = projection.AwayTeamParticipantId,
+                WinCondition = projection.WinCondition,
                 HomeTeam = projection.HomeTeam == null ? null : new TeamMatchTeamInfoDto
                 {
                     TeamId = projection.HomeTeam.TeamId,

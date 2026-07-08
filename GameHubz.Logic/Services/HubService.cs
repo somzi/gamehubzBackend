@@ -224,7 +224,7 @@ namespace GameHubz.Logic.Services
 
             var alreadyOwnsHub = await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(user.UserId);
             if (alreadyOwnsHub)
-                throw new Exception("You already own a hub and cannot create another one.");
+                throw new BusinessRuleException("You already own a hub and cannot create another one.");
 
             var hub = new HubEntity
             {

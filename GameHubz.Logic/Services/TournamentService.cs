@@ -117,14 +117,14 @@ namespace GameHubz.Logic.Services
             // (compare OpenRegistration/CancelTournament which gate through GetHubOwnedTournamentOrThrow).
             if (!await this.tournamentAuth.CanManageTournamentAsync(id))
             {
-                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
             if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
             {
-                throw new Exception("A tournament requires a minimum of 2 participants.");
+                throw new BusinessRuleException("A tournament requires a minimum of 2 participants.");
             }
 
             tournament.Status = TournamentStatus.RegistrationClosed;
@@ -344,7 +344,7 @@ namespace GameHubz.Logic.Services
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
             {
-                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             return tournament;

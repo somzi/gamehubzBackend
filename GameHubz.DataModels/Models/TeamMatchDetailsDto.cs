@@ -7,6 +7,9 @@ namespace GameHubz.DataModels.Models
         public Guid TeamMatchId { get; set; }
         public TeamMatchStatus Status { get; set; }
         public Guid? WinnerTeamParticipantId { get; set; }
+        public Guid? HomeTeamParticipantId { get; set; }
+        public Guid? AwayTeamParticipantId { get; set; }
+        public TeamWinCondition WinCondition { get; set; }
         public TeamMatchTeamInfoDto? HomeTeam { get; set; }
         public TeamMatchTeamInfoDto? AwayTeam { get; set; }
         public List<TeamSubMatchDto> SubMatches { get; set; } = new();

@@ -2985,7 +2985,7 @@ namespace GameHubz.Logic.Services
                     {
                         // Solo elimination
                         if (winnerParticipientId == null)
-                            throw new Exception("Draws not allowed in elimination matches. Someone must win!");
+                            throw new BusinessRuleException("Draws not allowed in elimination matches. Someone must win!");
 
                         await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
 

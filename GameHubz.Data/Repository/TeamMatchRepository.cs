@@ -78,6 +78,7 @@ namespace GameHubz.Data.Repository
                     AwayTeamRepresentativeUserId = tm.AwayTeamRepresentativeUserId,
                     MatchOrder = tm.MatchOrder,
                     RequireResultApproval = tm.Tournament!.RequireResultApproval,
+                    WinCondition = tm.Tournament!.TeamWinCondition,
                     HomeTeam = tm.HomeTeamParticipant != null && tm.HomeTeamParticipant.Team != null
                         ? new TeamMatchTeamProjection
                         {
