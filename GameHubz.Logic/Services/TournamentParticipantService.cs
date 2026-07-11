@@ -110,7 +110,7 @@ namespace GameHubz.Logic.Services
             await this.EnsureCanManageTournament(tournamentId);
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             foreach (var member in team.Members)
             {

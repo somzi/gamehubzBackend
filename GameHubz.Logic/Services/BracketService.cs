@@ -60,7 +60,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new Exception("Tournament not found");
+                throw new BusinessRuleException("Tournament not found");
 
             Guid hubOwnerId = tournament?.Hub?.UserId ?? Guid.Empty;
             bool isPrivileged = isAdmin || currentUserId == hubOwnerId;
@@ -98,7 +98,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new Exception("Tournament not found");
+                throw new BusinessRuleException("Tournament not found");
 
             bool canManage = currentUser != null
                 && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
@@ -138,7 +138,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new Exception("Tournament not found");
+                throw new BusinessRuleException("Tournament not found");
 
             bool canManage = currentUser != null
                 && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
@@ -219,10 +219,10 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(request.TournamentId);
 
             if (tournament == null)
-                throw new Exception("Tournament not found");
+                throw new BusinessRuleException("Tournament not found");
 
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
-                throw new Exception("Not enough participants to start tournament.");
+                throw new BusinessRuleException("Not enough participants to start tournament.");
 
             // Every participating team must be full: sub-matches are created per roster slot,
             // so an under-filled team produces matches with no player that can never be played,
@@ -239,7 +239,7 @@ namespace GameHubz.Logic.Services
                     .ToList();
 
                 if (incompleteTeams.Count > 0)
-                    throw new Exception($"All teams must be full before starting. Incomplete: {string.Join(", ", incompleteTeams)}");
+                    throw new BusinessRuleException($"All teams must be full before starting. Incomplete: {string.Join(", ", incompleteTeams)}");
             }
 
             var tournamentId = request.TournamentId;
@@ -255,7 +255,7 @@ namespace GameHubz.Logic.Services
             var previousStatus = tournament.Status;
             bool claimed = await this.AppUnitOfWork.TournamentRepository.TryClaimBracketGeneration(tournamentId);
             if (!claimed)
-                throw new Exception("Tournament already started.");
+                throw new BusinessRuleException("Tournament already started.");
 
             try
             {
@@ -679,7 +679,7 @@ namespace GameHubz.Logic.Services
 
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
-                        throw new Exception("Group count and qualifiers count are required for this format.");
+                        throw new BusinessRuleException("Group count and qualifiers count are required for this format.");
                     if (tournament.IsTeamTournament)
                         await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
                     else
@@ -690,12 +690,12 @@ namespace GameHubz.Logic.Services
                     // Team Swiss is not wired up — round-by-round pairing would need TeamMatchEntity
                     // generation on every advance plus the team result pipeline. Solo only for now.
                     if (tournament.IsTeamTournament)
-                        throw new Exception("Team Swiss tournaments are not supported yet.");
+                        throw new BusinessRuleException("Team Swiss tournaments are not supported yet.");
                     await GenerateSwissTournament(tournamentId, roundDuration);
                     break;
 
                 default:
-                    throw new Exception($"Tournament format {tournament.Format} not supported");
+                    throw new BusinessRuleException($"Tournament format {tournament.Format} not supported");
             }
         }
 
@@ -709,7 +709,7 @@ namespace GameHubz.Logic.Services
 
             var participants = tournament!.TournamentParticipants?.ToList();
             if (participants == null || participants.Count == 0)
-                throw new Exception("No participants");
+                throw new BusinessRuleException("No participants");
 
             var shuffledParticipants = participants.OrderBy(a => Guid.NewGuid()).ToList();
 
@@ -801,11 +801,11 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants!.Count < numberOfGroups * 2)
-                throw new Exception($"Not enough participants. Need at least {numberOfGroups * 2} players for {numberOfGroups} groups.");
+                throw new BusinessRuleException($"Not enough participants. Need at least {numberOfGroups * 2} players for {numberOfGroups} groups.");
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
             if (totalQualifiers < 2)
-                throw new Exception("Need at least 2 qualifiers to build a knockout bracket.");
+                throw new BusinessRuleException("Need at least 2 qualifiers to build a knockout bracket.");
             // Both single- and double-elimination pad the bracket up to the next power of two with byes
             // (e.g. 6 qualifiers → bracket of 8, top 2 seeds on a bye), so any qualifier count works.
 
@@ -901,7 +901,7 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             if (!tournament!.TeamSize.HasValue)
-                throw new Exception("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException("TeamSize is required for team tournaments.");
 
             int teamSize = tournament.TeamSize.Value;
 
@@ -910,7 +910,7 @@ namespace GameHubz.Logic.Services
                 .ToList();
 
             if (participants == null || participants.Count < 2)
-                throw new Exception("Not enough team participants");
+                throw new BusinessRuleException("Not enough team participants");
 
             var stage = new TournamentStageEntity
             {
@@ -965,18 +965,18 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             if (!tournament!.TeamSize.HasValue)
-                throw new Exception("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException("TeamSize is required for team tournaments.");
 
             int teamSize = tournament.TeamSize.Value;
 
             var participants = tournament.TournamentParticipants?.ToList();
 
             if (participants!.Count < numberOfGroups * 2)
-                throw new Exception($"Not enough participants. Need at least {numberOfGroups * 2} teams for {numberOfGroups} groups.");
+                throw new BusinessRuleException($"Not enough participants. Need at least {numberOfGroups * 2} teams for {numberOfGroups} groups.");
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
             if (totalQualifiers < 2)
-                throw new Exception("Need at least 2 qualifiers to build a knockout bracket.");
+                throw new BusinessRuleException("Need at least 2 qualifiers to build a knockout bracket.");
             // Both single- and double-elimination pad the bracket up to the next power of two with byes
             // (e.g. 6 qualifiers → bracket of 8, top 2 seeds on a bye), so any qualifier count works.
 
@@ -1071,10 +1071,11 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 4)
-                throw new Exception("Double elimination requires at least 4 participants.");
+                throw new BusinessRuleException("Double elimination requires at least 4 participants.");
 
             // Solo-only generator. Team double-elimination has its own generator
             // (GenerateTeamDoubleEliminationBracket); GenerateBracketForFormat routes teams there.
+            // Reaching this is a routing bug, not a user error — 500 + ErrorLog is correct.
             if (tournament.IsTeamTournament)
                 throw new Exception("Use GenerateTeamDoubleEliminationBracket for team tournaments.");
 
@@ -1141,10 +1142,10 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 4)
-                throw new Exception("Double elimination requires at least 4 participants.");
+                throw new BusinessRuleException("Double elimination requires at least 4 participants.");
 
             if (!tournament.TeamSize.HasValue)
-                throw new Exception("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException("TeamSize is required for team tournaments.");
 
             int teamSize = tournament.TeamSize.Value;
 
@@ -1654,7 +1655,7 @@ namespace GameHubz.Logic.Services
 
             var participants = tournament!.TournamentParticipants?.ToList();
             if (participants == null || participants.Count < 2)
-                throw new Exception("Not enough participants");
+                throw new BusinessRuleException("Not enough participants");
 
             // Optional post-Swiss knockout: validate against the real participant count now,
             // at generation time (mirrors how GroupStageWithKnockout validates its config).
@@ -1666,13 +1667,13 @@ namespace GameHubz.Logic.Services
                 int direct = directBerths!.Value;
 
                 if (size < 2 || !IsPowerOfTwo(size))
-                    throw new Exception("Knockout qualifiers must be a power of 2 (2, 4, 8, 16, 32).");
+                    throw new BusinessRuleException("Knockout qualifiers must be a power of 2 (2, 4, 8, 16, 32).");
                 if (size > n)
-                    throw new Exception($"Knockout qualifiers ({size}) cannot exceed the participant count ({n}).");
+                    throw new BusinessRuleException($"Knockout qualifiers ({size}) cannot exceed the participant count ({n}).");
                 if (direct < 0 || direct > size)
-                    throw new Exception($"Direct qualifiers must be between 0 and {size}.");
+                    throw new BusinessRuleException($"Direct qualifiers must be between 0 and {size}.");
                 if (direct < size && direct + 2 * (size - direct) > n)
-                    throw new Exception(
+                    throw new BusinessRuleException(
                         $"Not enough participants for the play-in: {direct} direct + {2 * (size - direct)} play-in players need {direct + 2 * (size - direct)}, but only {n} registered.");
             }
 
@@ -1949,10 +1950,10 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 2)
-                throw new Exception("Not enough team participants");
+                throw new BusinessRuleException("Not enough team participants");
 
             if (!tournament.TeamSize.HasValue)
-                throw new Exception("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException("TeamSize is required for team tournaments.");
 
             int teamSize = tournament.TeamSize.Value;
 
@@ -3291,7 +3292,7 @@ namespace GameHubz.Logic.Services
             if (cached != null) return cached;
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
-            if (tournament == null) throw new Exception("Tournament not found");
+            if (tournament == null) throw new BusinessRuleException("Tournament not found");
 
             var standings = tournament.TournamentParticipants?
                 .Select(p => new LeagueStandingDto
@@ -4059,7 +4060,8 @@ namespace GameHubz.Logic.Services
                 int playInPairs = knockoutSize - directBerths;
                 var pool = ordered.Skip(directBerths).Take(playInPairs * 2).ToList();
 
-                // Guarded at bracket creation, but participants are the source of truth here.
+                // Guarded at bracket creation, but participants are the source of truth here — a
+                // mismatch means corrupted state, not user input, so keep it a 500 + ErrorLog row.
                 if (pool.Count < playInPairs * 2)
                     throw new Exception($"Play-in needs {playInPairs * 2} players below rank {directBerths}, found {pool.Count}.");
 
@@ -4122,6 +4124,8 @@ namespace GameHubz.Logic.Services
                 .Concat(bySeed.Where(p => p.Id.HasValue && winnerIds.Contains(p.Id.Value)))
                 .ToList();
 
+            // Invariant during automatic advancement — nothing the reporting user did wrong, so
+            // keep it a server fault (500 + ErrorLog) rather than a confusing 400.
             if (qualifiers.Count != knockoutSize.Value)
                 throw new Exception($"Play-in produced {qualifiers.Count} qualifiers, expected {knockoutSize.Value}.");
 
@@ -4718,6 +4722,8 @@ namespace GameHubz.Logic.Services
                 }
             }
 
+            // Invariant during automatic stage advancement (qualifier config was validated at
+            // creation) — a server fault, not something the reporting user can fix.
             if (qualifiers.Count < 2) throw new Exception("Not enough qualifiers to create knockout bracket.");
 
             int totalQualifiers = qualifiers.Count;

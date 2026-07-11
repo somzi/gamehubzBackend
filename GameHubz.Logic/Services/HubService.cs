@@ -90,7 +90,7 @@ namespace GameHubz.Logic.Services
 
             if (hubDto == null)
             {
-                throw new Exception("Hub not found");
+                throw new BusinessRuleException("Hub not found");
             }
 
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
@@ -192,7 +192,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(request.Id!.Value);
 
             if (hub.UserId != caller.UserId)
-                throw new Exception("Only the hub owner can edit hub details.");
+                throw new BusinessRuleException("Only the hub owner can edit hub details.");
 
             hub.Name = request.Name;
             hub.Description = request.Description;
@@ -266,7 +266,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(entityId);
 
             if (hub.UserId != caller.UserId)
-                throw new Exception("Only the hub owner can delete the hub.");
+                throw new BusinessRuleException("Only the hub owner can delete the hub.");
 
             var activities = await this.AppUnitOfWork.HubActivityRepository.GetByHubId(entityId);
 
@@ -385,7 +385,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
 
             if (hub.UserId != caller.UserId)
-                throw new Exception("Only the hub owner can change the hub avatar.");
+                throw new BusinessRuleException("Only the hub owner can change the hub avatar.");
 
             string fileName = $"avatar";
             string folderPath = $"hubs/{hub!.Name}";

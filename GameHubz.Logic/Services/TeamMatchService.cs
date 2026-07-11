@@ -24,10 +24,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatchId);
-            if (teamMatch == null) throw new Exception("Team match not found.");
+            if (teamMatch == null) throw new BusinessRuleException("Team match not found.");
 
             if (teamMatch.Status != TeamMatchStatus.TieBreakRequired)
-                throw new Exception("Tie-break is not required for this match.");
+                throw new BusinessRuleException("Tie-break is not required for this match.");
 
             var homeTeam = teamMatch.HomeTeamParticipant?.Team;
             var awayTeam = teamMatch.AwayTeamParticipant?.Team;
@@ -36,18 +36,18 @@ namespace GameHubz.Logic.Services
             bool isAwayCaptain = awayTeam?.CaptainUserId == user.UserId;
 
             if (!isHomeCaptain && !isAwayCaptain)
-                throw new Exception("Only a team captain can submit a representative.");
+                throw new BusinessRuleException("Only a team captain can submit a representative.");
 
             if (isHomeCaptain)
             {
                 bool isMemberOfHomeTeam = homeTeam!.Members.Any(m => m.UserId == request.UserId);
-                if (!isMemberOfHomeTeam) throw new Exception("Selected user is not a member of your team.");
+                if (!isMemberOfHomeTeam) throw new BusinessRuleException("Selected user is not a member of your team.");
                 teamMatch.HomeTeamRepresentativeUserId = request.UserId;
             }
             else
             {
                 bool isMemberOfAwayTeam = awayTeam!.Members.Any(m => m.UserId == request.UserId);
-                if (!isMemberOfAwayTeam) throw new Exception("Selected user is not a member of your team.");
+                if (!isMemberOfAwayTeam) throw new BusinessRuleException("Selected user is not a member of your team.");
                 teamMatch.AwayTeamRepresentativeUserId = request.UserId;
             }
 
@@ -103,7 +103,7 @@ namespace GameHubz.Logic.Services
         public async Task<TieBreakStatusDto> GetTieBreakStatus(Guid teamMatchId)
         {
             var projection = await this.AppUnitOfWork.TeamMatchRepository.GetTieBreakProjection(teamMatchId);
-            if (projection == null) throw new Exception("Team match not found.");
+            if (projection == null) throw new BusinessRuleException("Team match not found.");
 
             return new TieBreakStatusDto
             {
@@ -129,7 +129,7 @@ namespace GameHubz.Logic.Services
         public async Task<TeamMatchDetailsDto> GetTeamMatchDetails(Guid teamMatchId)
         {
             var projection = await this.AppUnitOfWork.TeamMatchRepository.GetDetailsProjection(teamMatchId);
-            if (projection == null) throw new Exception("Team match not found.");
+            if (projection == null) throw new BusinessRuleException("Team match not found.");
 
             var homeTeamMembers = projection.HomeTeam?.Members ?? [];
             var awayTeamMembers = projection.AwayTeam?.Members ?? [];

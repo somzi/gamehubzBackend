@@ -43,15 +43,15 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
 
             if (hub.UserId == user.UserId)
-                throw new Exception("You already own this hub.");
+                throw new BusinessRuleException("You already own this hub.");
 
             var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(user.UserId, hubId);
             if (isBanned)
-                throw new Exception("You are banned from this hub.");
+                throw new BusinessRuleException("You are banned from this hub.");
 
             var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(user.UserId, hubId);
             if (alreadyFollowing)
-                throw new Exception("You are already a member of this hub.");
+                throw new BusinessRuleException("You are already a member of this hub.");
 
             if (hub.IsPublic)
             {
@@ -71,7 +71,7 @@ namespace GameHubz.Logic.Services
 
             var alreadyRequested = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(hubId, user.UserId);
             if (alreadyRequested)
-                throw new Exception("You already have a pending request for this hub.");
+                throw new BusinessRuleException("You already have a pending request for this hub.");
 
             var request = new UserHubRequestEntity
             {
@@ -164,13 +164,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetByIdWithHub(requestId);
-            if (request == null) throw new Exception("Request not found.");
-            if (request.Hub == null) throw new Exception("Hub not found.");
+            if (request == null) throw new BusinessRuleException("Request not found.");
+            if (request.Hub == null) throw new BusinessRuleException("Hub not found.");
 
             await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
-                throw new Exception("Request is no longer pending.");
+                throw new BusinessRuleException("Request is no longer pending.");
 
             var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(request.UserId!.Value, request.HubId!.Value);
             if (!alreadyFollowing)
@@ -206,13 +206,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetByIdWithHub(requestId);
-            if (request == null) throw new Exception("Request not found.");
-            if (request.Hub == null) throw new Exception("Hub not found.");
+            if (request == null) throw new BusinessRuleException("Request not found.");
+            if (request.Hub == null) throw new BusinessRuleException("Hub not found.");
 
             await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
-                throw new Exception("Request is no longer pending.");
+                throw new BusinessRuleException("Request is no longer pending.");
 
             request.Status = JoinRequestStatus.Rejected;
             await this.AppUnitOfWork.UserHubRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -233,7 +233,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingByHubAndUser(hubId, user.UserId);
-            if (request == null) throw new Exception("No pending request found.");
+            if (request == null) throw new BusinessRuleException("No pending request found.");
 
             await this.AppUnitOfWork.UserHubRequestRepository.HardDeleteEntity(request);
             await this.SaveAsync();

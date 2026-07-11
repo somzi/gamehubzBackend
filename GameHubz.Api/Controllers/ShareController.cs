@@ -16,7 +16,8 @@ namespace GameHubz.Api.Controllers
     /// Public share pages for share.codespheresolutions.dev.
     /// Each route serves server-rendered HTML: link-preview crawlers read the
     /// Open Graph tags, real visitors get a deep-link attempt into the app with
-    /// a store-link fallback. Every hit is recorded in ShareLog.
+    /// a store-link fallback. Hits on existing entities are recorded in ShareLog
+    /// (per-IP daily cap; not-found hits are never logged).
     /// </summary>
     [ApiController]
     [AllowAnonymous]
@@ -70,7 +71,7 @@ namespace GameHubz.Api.Controllers
 
             if (data == null)
             {
-                return await NotFoundPage(ShareEntityType.Tournament, "Tournament", $"tournament/{id}", id);
+                return NotFoundPage("Tournament", $"tournament/{id}");
             }
 
             var stats = new List<ShareStat> { new("Format", Humanize(data.Format.ToString())) };
@@ -134,7 +135,7 @@ namespace GameHubz.Api.Controllers
 
             if (data == null)
             {
-                return await NotFoundPage(ShareEntityType.Hub, "Hub", $"hub/{id}", id);
+                return NotFoundPage("Hub", $"hub/{id}");
             }
 
             string stats = $"{data.MemberCount} members · {data.TournamentCount} tournaments";
@@ -188,7 +189,7 @@ namespace GameHubz.Api.Controllers
 
             if (data == null)
             {
-                return await NotFoundPage(ShareEntityType.User, "Player", $"user/{id}", id);
+                return NotFoundPage("Player", $"user/{id}");
             }
 
             string displayName = string.IsNullOrWhiteSpace(data.Nickname) ? data.Username : data.Nickname!;
@@ -273,7 +274,7 @@ namespace GameHubz.Api.Controllers
 
             if (data == null)
             {
-                return await NotFoundPage(ShareEntityType.Team, "Team", $"team/{id}", id);
+                return NotFoundPage("Team", $"team/{id}");
             }
 
             var stats = new List<ShareStat>
@@ -408,14 +409,12 @@ namespace GameHubz.Api.Controllers
             };
         }
 
-        private async Task<ContentResult> NotFoundPage(
-            ShareEntityType entityType,
+        // Deliberately NOT logged to ShareLog: the entity doesn't exist, so the row would carry
+        // zero analytics value while giving bots and dead links an unbounded write primitive.
+        private ContentResult NotFoundPage(
             string entityLabel,
-            string webPath,
-            Guid entityId)
+            string webPath)
         {
-            await LogShare(entityType, entityId);
-
             var model = new SharePageModel
             {
                 Title = $"{entityLabel} not available",
@@ -437,10 +436,21 @@ namespace GameHubz.Api.Controllers
             };
         }
 
+        // Soft daily write cap per client IP. The Get+Set pair races under concurrency, but for
+        // abuse capping "roughly N" is all we need — an atomic counter isn't worth extending
+        // ICacheService. Real users share a link a handful of times a day; only bots hit this.
+        private const int MaxShareLogsPerIpPerDay = 200;
+
         private async Task LogShare(ShareEntityType entityType, Guid entityId)
         {
             try
             {
+                string ip = ResolveClientIp() ?? "unknown";
+                string capKey = $"sharelog_ip:{ip}:{DateTime.UtcNow:yyyyMMdd}";
+                int hitsToday = await cacheService.GetAsync<int>(capKey);
+                if (hitsToday >= MaxShareLogsPerIpPerDay) return;
+                await cacheService.SetAsync(capKey, hitsToday + 1, TimeSpan.FromHours(25));
+
                 string userAgent = Request.Headers.UserAgent.ToString();
 
                 context.Add(new ShareLogEntity

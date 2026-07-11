@@ -69,6 +69,18 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Just the owner/admin ids — the badge fan-out needs nothing else, so don't drag every
+        // member + the User join + role sorting through the wire like GetUsersByHub does.
+        public async Task<List<Guid>> GetManagerUserIds(Guid hubId)
+        {
+            return await this.BaseDbSet()
+                .Where(uh => uh.HubId == hubId
+                    && uh.UserId != null
+                    && (uh.HubRole == HubRole.HubOwner || uh.HubRole == HubRole.HubAdmin))
+                .Select(uh => uh.UserId!.Value)
+                .ToListAsync();
+        }
+
         public async Task<List<UserHubOverview>> GetUsersByHub(Guid hubId)
         {
             return await this.BaseDbSet()

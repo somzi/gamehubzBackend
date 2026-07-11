@@ -255,10 +255,10 @@ namespace GameHubz.Logic.Services
         public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null, bool clearRoundStart = false, bool clearDeadline = false)
         {
             if (roundNumber < 1)
-                throw new Exception("Round number must be greater than 0.");
+                throw new BusinessRuleException("Round number must be greater than 0.");
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
-                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage round deadlines.");
 
             // When a stage is given, scope the update to that bracket only — the Winners and Losers
             // brackets are separate stages that share RoundNumber, so a tournament-wide update would
@@ -267,7 +267,7 @@ namespace GameHubz.Logic.Services
                 ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
                 : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
-                throw new Exception("Round not found.");
+                throw new BusinessRuleException("Round not found.");
 
             foreach (var match in roundMatches)
             {
@@ -326,7 +326,7 @@ namespace GameHubz.Logic.Services
             var tournament = await GetHubOwnedTournamentOrThrow(id);
 
             if (!validator(tournament))
-                throw new Exception(errorMessage);
+                throw new BusinessRuleException(errorMessage);
 
             tournament.Status = newStatus;
 
@@ -435,7 +435,7 @@ namespace GameHubz.Logic.Services
             {
                 if (!entity.HubId.HasValue)
                 {
-                    throw new Exception("A tournament must belong to a hub.");
+                    throw new BusinessRuleException("A tournament must belong to a hub.");
                 }
 
                 if (caller.RoleEnum != UserRoleEnum.Admin)
@@ -456,7 +456,7 @@ namespace GameHubz.Logic.Services
                 .Select(c =>
                 {
                     var country = CountryCatalog.Get(c)
-                        ?? throw new Exception($"Unknown country code '{c}'.");
+                        ?? throw new BusinessRuleException($"Unknown country code '{c}'.");
                     return country.Code;
                 })
                 .Distinct()
@@ -507,14 +507,14 @@ namespace GameHubz.Logic.Services
         private async Task UpdateRoundSchedule(Guid tournamentId, int roundNumber, DateTime? opensAt = null, DateTime? deadline = null)
         {
             if (roundNumber < 1)
-                throw new Exception("Round number must be greater than 0.");
+                throw new BusinessRuleException("Round number must be greater than 0.");
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
-                throw new Exception("Only the hub owner or a hub admin can manage round deadlines.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage round deadlines.");
 
             var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
-                throw new Exception("Round not found.");
+                throw new BusinessRuleException("Round not found.");
 
             foreach (var match in roundMatches)
             {

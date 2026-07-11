@@ -90,6 +90,13 @@ namespace GameHubz.Logic.Services
                 if (identity == null)
                     return BuildResultHtml(false, "Discord didn't confirm the sign-in. Try again from the GameHubz app.");
 
+                // One Discord account maps to at most one GameHubz account — GetByDiscordUserId is
+                // a FirstOrDefault, so a duplicate link would make slash commands and DM routing
+                // pick an arbitrary account. Re-linking your own account is fine (refreshes username).
+                var alreadyLinked = await this.AppUnitOfWork.UserRepository.GetByDiscordUserId(identity.Value.Id);
+                if (alreadyLinked != null && alreadyLinked.Id != userId)
+                    return BuildResultHtml(false, "This Discord account is already linked to another GameHubz account. Unlink it there first.");
+
                 var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(userId);
                 user.DiscordUserId = identity.Value.Id;
                 user.DiscordUsername = identity.Value.Username;

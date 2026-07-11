@@ -21,6 +21,7 @@ using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.SignalR;
 using GameHubz.Logic.Test.Factories;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Test.Bracket
@@ -131,9 +132,12 @@ namespace GameHubz.Logic.Test.Bracket
 
             // PushAsync is best-effort (try/catch), so a bare mocked SignalR hub context is enough —
             // the badge send no-ops while the badge computation still exercises the real repositories.
+            // The scope factory backs the fire-and-forget manager fan-out; the bare mock makes that
+            // background task no-op inside its own catch, which is what tests want.
             var badgeService = new BadgeService(
                 factory, userContext, localization,
-                new Mock<IHubContext<UserHub>>().Object);
+                new Mock<IHubContext<UserHub>>().Object,
+                new Mock<IServiceScopeFactory>().Object);
 
             // Real notifiers over the shared store: test hubs never carry a DiscordWebhookUrl, so the
             // Discord branch resolves to "not configured" and only the mocked transport would be hit.

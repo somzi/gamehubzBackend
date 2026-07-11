@@ -111,7 +111,7 @@ namespace GameHubz.Logic.Services
 
                 if (!IsEligibleToJoin(tournament, user))
                 {
-                    throw new Exception("You can't join this tournament — it's restricted to a different region or country.");
+                    throw new BusinessRuleException("You can't join this tournament — it's restricted to a different region or country.");
                 }
 
                 // Exclusive tournaments require an Exclusive-or-higher role in the owning hub.
@@ -124,7 +124,7 @@ namespace GameHubz.Logic.Services
 
                     if (!hasExclusiveAccess)
                     {
-                        throw new Exception("You can't join this tournament — it's restricted to exclusive members of this hub.");
+                        throw new BusinessRuleException("You can't join this tournament — it's restricted to exclusive members of this hub.");
                     }
                 }
             }
@@ -164,7 +164,7 @@ namespace GameHubz.Logic.Services
 
             if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
             {
-                throw new Exception("Cannot approve registration. Tournament has reached maximum number of players.");
+                throw new BusinessRuleException("Cannot approve registration. Tournament has reached maximum number of players.");
             }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);

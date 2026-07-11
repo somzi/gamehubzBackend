@@ -79,7 +79,7 @@ namespace GameHubz.Logic.Services
             // Owner role is bound to Hub.UserId and is assigned only when the hub is created.
             if (role == HubRole.HubOwner)
             {
-                throw new Exception("Owner role cannot be assigned. The hub already has an owner.");
+                throw new BusinessRuleException("Owner role cannot be assigned. The hub already has an owner.");
             }
 
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
@@ -94,7 +94,7 @@ namespace GameHubz.Logic.Services
             var existing = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (existing != null)
             {
-                throw new Exception("User is already a member of this hub.");
+                throw new BusinessRuleException("User is already a member of this hub.");
             }
 
             var entity = new UserHubEntity
@@ -117,7 +117,7 @@ namespace GameHubz.Logic.Services
             // Owner role is immutable through this endpoint.
             if (newRole == HubRole.HubOwner)
             {
-                throw new Exception("Owner role cannot be assigned. The hub already has an owner.");
+                throw new BusinessRuleException("Owner role cannot be assigned. The hub already has an owner.");
             }
 
             // Only the Owner can change roles (grant or revoke admin).
@@ -125,11 +125,11 @@ namespace GameHubz.Logic.Services
             await this.EnsureCallerIsOwner(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
-                ?? throw new Exception("Membership not found.");
+                ?? throw new BusinessRuleException("Membership not found.");
 
             if (member.HubRole == HubRole.HubOwner)
             {
-                throw new Exception("The hub owner's role cannot be changed.");
+                throw new BusinessRuleException("The hub owner's role cannot be changed.");
             }
 
             member.HubRole = newRole;
@@ -148,11 +148,11 @@ namespace GameHubz.Logic.Services
             var callerRole = await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
-                ?? throw new Exception("Membership not found.");
+                ?? throw new BusinessRuleException("Membership not found.");
 
             if (member.HubRole == HubRole.HubOwner)
             {
-                throw new Exception("The hub owner cannot be removed.");
+                throw new BusinessRuleException("The hub owner cannot be removed.");
             }
 
             // Admins may only act on regular and exclusive members. Removing another
@@ -182,7 +182,7 @@ namespace GameHubz.Logic.Services
             await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var ban = await this.AppUnitOfWork.UserHubBanRepository.FindActiveBan(userId, hubId)
-                ?? throw new Exception("This user is not banned from this hub.");
+                ?? throw new BusinessRuleException("This user is not banned from this hub.");
 
             await this.AppUnitOfWork.UserHubBanRepository.SoftDeleteEntity(ban, this.UserContextReader);
             await this.SaveAsync();
@@ -198,7 +198,7 @@ namespace GameHubz.Logic.Services
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (member != null && member.HubRole == HubRole.HubOwner)
             {
-                throw new Exception("The hub owner cannot be banned.");
+                throw new BusinessRuleException("The hub owner cannot be banned.");
             }
 
             // Admins may only act on regular and exclusive members. Banning another
@@ -264,10 +264,10 @@ namespace GameHubz.Logic.Services
 
                 var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(caller.UserId, inputDto.HubId.Value);
                 if (isBanned)
-                    throw new Exception("You are banned from this hub.");
+                    throw new BusinessRuleException("You are banned from this hub.");
 
                 if (!hub.IsPublic && hub.UserId != caller.UserId)
-                    throw new Exception("This hub is private. You need to request to join.");
+                    throw new BusinessRuleException("This hub is private. You need to request to join.");
             }
 
             await this.InvalidateHubCaches(caller.UserId, inputDto.HubId);

@@ -102,6 +102,10 @@ namespace GameHubz.Data.Repository
                     ? x.UserHubs!.Any(uh => uh.UserId == userId) || x.UserId == userId
                     : !x.UserHubs!.Any(uh => uh.UserId == userId) && x.UserId != userId)
                 .Where(x => s == null || x.Name.ToLower().StartsWith(s))
+                // Postgres gives no ordering guarantee without ORDER BY, so Skip/Take alone can
+                // repeat or drop hubs between pages. Name first (what the list shows), Id tiebreak.
+                .OrderBy(x => x.Name)
+                .ThenBy(x => x.Id)
                 .Skip(pageNumber * 10)
                 .Take(10)
                 .Select(x => new HubDto

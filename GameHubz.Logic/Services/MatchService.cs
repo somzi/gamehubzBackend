@@ -271,7 +271,7 @@ namespace GameHubz.Logic.Services
             }
 
             var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             foreach (var file in files)
             {
@@ -303,10 +303,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (!IsMatchParticipant(match, user.UserId))
-                throw new Exception("Only match participants can request admin help");
+                throw new BusinessRuleException("Only match participants can request admin help");
 
             // Idempotent: a second tap must not spam the admins with notifications.
             if (match.AdminHelpRequested) return;
@@ -349,10 +349,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new Exception("Match not found");
+            if (match == null) throw new BusinessRuleException("Match not found");
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
-                throw new Exception("Only tournament admins can resolve help requests");
+                throw new BusinessRuleException("Only tournament admins can resolve help requests");
 
             if (!match.AdminHelpRequested) return;
 
@@ -492,7 +492,7 @@ namespace GameHubz.Logic.Services
                 handle = existingSocial?.Username?.Trim() ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(handle))
-                throw new Exception("No channel found. Add your channel handle to start streaming.");
+                throw new BusinessRuleException("No channel found. Add your channel handle to start streaming.");
 
             // Persist the channel on the profile for next time (create or update).
             if (existingSocial == null)
@@ -560,7 +560,7 @@ namespace GameHubz.Logic.Services
             // Target the caller's own stream by default; an admin may pass StreamerUserId to end another's.
             var targetStreamerId = request?.StreamerUserId ?? user.UserId;
             var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
-            if (stream == null) throw new Exception("No stream found for this match.");
+            if (stream == null) throw new BusinessRuleException("No stream found for this match.");
 
             await EnsureCanManageStream(stream, matchId, user);
 
@@ -596,11 +596,11 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (string.IsNullOrWhiteSpace(request.VodUrl))
-                throw new Exception("VOD URL is required.");
+                throw new BusinessRuleException("VOD URL is required.");
 
             var targetStreamerId = request.StreamerUserId ?? user.UserId;
             var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
-            if (stream == null) throw new Exception("No stream found for this match.");
+            if (stream == null) throw new BusinessRuleException("No stream found for this match.");
 
             await EnsureCanManageStream(stream, matchId, user);
 
@@ -710,7 +710,7 @@ namespace GameHubz.Logic.Services
 
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
             if (match == null || !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
-                throw new Exception("Only the streamer or a tournament admin can manage this stream.");
+                throw new BusinessRuleException("Only the streamer or a tournament admin can manage this stream.");
         }
 
         private static bool IsStreamingPlatform(SocialType platform) =>

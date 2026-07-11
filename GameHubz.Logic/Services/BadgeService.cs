@@ -1,6 +1,7 @@
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GameHubz.Logic.Services
 {
@@ -12,15 +13,18 @@ namespace GameHubz.Logic.Services
     public class BadgeService : AppBaseService
     {
         private readonly IHubContext<UserHub> hubContext;
+        private readonly IServiceScopeFactory serviceScopeFactory;
 
         public BadgeService(
             IUnitOfWorkFactory factory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            IHubContext<UserHub> hubContext)
+            IHubContext<UserHub> hubContext,
+            IServiceScopeFactory serviceScopeFactory)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
+            this.serviceScopeFactory = serviceScopeFactory;
         }
 
         public async Task<BadgeCountsDto> GetMyBadgesAsync()
@@ -174,28 +178,41 @@ namespace GameHubz.Logic.Services
         /// Refreshes the organizer badges (pending registrations / admin-help) for everyone who
         /// manages the tournament's hub — the owner plus any hub admins. Best-effort; used when a
         /// registration or admin-help state changes so the managers' counters update live.
+        /// Runs in the background on its own DI scope (same F72 pattern as NotificationService):
+        /// the recompute costs ~10 queries per manager, which must not extend the request that
+        /// triggered it. Every call site saves first, so the fresh context reads committed state.
         /// </summary>
-        public async Task PushToTournamentManagersAsync(Guid tournamentId)
+        public Task PushToTournamentManagersAsync(Guid tournamentId)
         {
-            try
+            _ = Task.Run(async () =>
             {
-                var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
-                if (ownership == null) return;
+                try
+                {
+                    using var scope = this.serviceScopeFactory.CreateScope();
+                    var badgeService = scope.ServiceProvider.GetRequiredService<BadgeService>();
+                    await badgeService.PushToTournamentManagersCoreAsync(tournamentId);
+                }
+                catch
+                {
+                    // best-effort — never let a badge push break the underlying mutation
+                }
+            });
 
-                var members = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
-                var managerIds = members
-                    .Where(m => m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
-                    .Select(m => m.UserId)
-                    .ToHashSet();
-                managerIds.Add(ownership.OwnerUserId); // owner may lack a UserHub row
+            return Task.CompletedTask;
+        }
 
-                foreach (var id in managerIds)
-                    await PushAsync(id);
-            }
-            catch
-            {
-                // best-effort
-            }
+        // Must only run on a fresh scope's BadgeService instance (see PushToTournamentManagersAsync) —
+        // by the time this executes, the triggering request's DbContext may already be disposed.
+        private async Task PushToTournamentManagersCoreAsync(Guid tournamentId)
+        {
+            var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
+            if (ownership == null) return;
+
+            var managerIds = (await this.AppUnitOfWork.UserHubRepository.GetManagerUserIds(ownership.HubId)).ToHashSet();
+            managerIds.Add(ownership.OwnerUserId); // owner may lack a UserHub row
+
+            foreach (var id in managerIds)
+                await PushAsync(id);
         }
     }
 }

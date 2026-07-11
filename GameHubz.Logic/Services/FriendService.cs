@@ -234,17 +234,17 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (toUserId == user.UserId)
-                throw new Exception("You cannot send a friend request to yourself.");
+                throw new BusinessRuleException("You cannot send a friend request to yourself.");
 
             var target = await this.AppUnitOfWork.UserRepository.GetById(toUserId);
             if (target == null)
-                throw new Exception("User not found.");
+                throw new BusinessRuleException("User not found.");
 
             if (await this.AppUnitOfWork.UserBlockRepository.EitherBlocks(user.UserId, toUserId))
-                throw new Exception("Cannot send a request — there is an active block between the users.");
+                throw new BusinessRuleException("Cannot send a request — there is an active block between the users.");
 
             if (await this.AppUnitOfWork.FriendshipRepository.AreFriends(user.UserId, toUserId))
-                throw new Exception("You are already friends.");
+                throw new BusinessRuleException("You are already friends.");
 
             var existing = await this.AppUnitOfWork.FriendRequestRepository.FindPendingBetween(user.UserId, toUserId);
             if (existing != null)
@@ -257,7 +257,7 @@ namespace GameHubz.Logic.Services
                                             user.Username, null, null);
                 }
 
-                throw new Exception("A pending request already exists.");
+                throw new BusinessRuleException("A pending request already exists.");
             }
 
             var request = new FriendRequestEntity
@@ -301,13 +301,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new Exception("Friend request not found.");
+                throw new BusinessRuleException("Friend request not found.");
 
             if (request.ToUserId != user.UserId)
-                throw new Exception("Only the recipient can accept this request.");
+                throw new BusinessRuleException("Only the recipient can accept this request.");
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new Exception("This request is no longer pending.");
+                throw new BusinessRuleException("This request is no longer pending.");
 
             request.Status = FriendRequestStatus.Accepted;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -352,13 +352,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new Exception("Friend request not found.");
+                throw new BusinessRuleException("Friend request not found.");
 
             if (request.ToUserId != user.UserId)
-                throw new Exception("Only the recipient can reject this request.");
+                throw new BusinessRuleException("Only the recipient can reject this request.");
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new Exception("This request is no longer pending.");
+                throw new BusinessRuleException("This request is no longer pending.");
 
             request.Status = FriendRequestStatus.Rejected;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -377,13 +377,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new Exception("Friend request not found.");
+                throw new BusinessRuleException("Friend request not found.");
 
             if (request.FromUserId != user.UserId)
-                throw new Exception("Only the sender can cancel this request.");
+                throw new BusinessRuleException("Only the sender can cancel this request.");
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new Exception("This request is no longer pending.");
+                throw new BusinessRuleException("This request is no longer pending.");
 
             request.Status = FriendRequestStatus.Cancelled;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -402,7 +402,7 @@ namespace GameHubz.Logic.Services
 
             var friendship = await this.AppUnitOfWork.FriendshipRepository.Find(user.UserId, otherUserId);
             if (friendship == null)
-                throw new Exception("You are not friends with this user.");
+                throw new BusinessRuleException("You are not friends with this user.");
 
             await this.AppUnitOfWork.FriendshipRepository.SoftDeleteEntity(friendship, this.UserContextReader);
             await this.SaveAsync();
@@ -418,11 +418,11 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (otherUserId == user.UserId)
-                throw new Exception("You cannot block yourself.");
+                throw new BusinessRuleException("You cannot block yourself.");
 
             var target = await this.AppUnitOfWork.UserRepository.GetById(otherUserId);
             if (target == null)
-                throw new Exception("User not found.");
+                throw new BusinessRuleException("User not found.");
 
             // If a soft-deleted block row exists for this pair, resurrect it —
             // UQ_UserBlock_Pair is not partial, so re-inserting would violate it.

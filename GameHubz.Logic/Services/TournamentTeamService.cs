@@ -29,14 +29,14 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(request.TournamentId);
 
             if (!tournament.IsTeamTournament)
-                throw new Exception("This tournament is not a team tournament.");
+                throw new BusinessRuleException("This tournament is not a team tournament.");
 
             if (tournament.Status != TournamentStatus.RegistrationOpen)
-                throw new Exception("Tournament registration is not open.");
+                throw new BusinessRuleException("Tournament registration is not open.");
 
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, request.TournamentId);
             if (alreadyInTeam)
-                throw new Exception("User is already in a team for this tournament.");
+                throw new BusinessRuleException("User is already in a team for this tournament.");
 
             var team = new TournamentTeamEntity
             {
@@ -72,10 +72,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             if (team.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can rename the team.");
+                throw new BusinessRuleException("Only the captain can rename the team.");
 
             team.TeamName = request.TeamName;
             await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
@@ -91,10 +91,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             if (team.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can delete the team.");
+                throw new BusinessRuleException("Only the captain can delete the team.");
 
             foreach (var member in team.Members)
             {
@@ -112,16 +112,16 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
-            if (data == null) throw new Exception("Team not found.");
+            if (data == null) throw new BusinessRuleException("Team not found.");
 
             if (!data.TeamSize.HasValue)
-                throw new Exception("Tournament team size is not configured.");
+                throw new BusinessRuleException("Tournament team size is not configured.");
 
             if (data.CurrentMemberCount >= data.TeamSize.Value)
-                throw new Exception("Team is already full.");
+                throw new BusinessRuleException("Team is already full.");
 
             if (data.UserAlreadyInTournament)
-                throw new Exception("User is already in a team for this tournament.");
+                throw new BusinessRuleException("User is already in a team for this tournament.");
 
             var member = new TournamentTeamMemberEntity
             {
@@ -152,16 +152,16 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             if (team.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can kick members.");
+                throw new BusinessRuleException("Only the captain can kick members.");
 
             if (userId == user.UserId)
-                throw new Exception("Captain cannot kick themselves.");
+                throw new BusinessRuleException("Captain cannot kick themselves.");
 
             var member = team.Members.FirstOrDefault(m => m.UserId == userId);
-            if (member == null) throw new Exception("User is not a member of this team.");
+            if (member == null) throw new BusinessRuleException("User is not a member of this team.");
 
             await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
 
@@ -179,23 +179,23 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
-            if (data == null) throw new Exception("Team not found.");
+            if (data == null) throw new BusinessRuleException("Team not found.");
 
             if (!data.RequiresApproval)
-                throw new Exception("This team is public. Use the join endpoint instead.");
+                throw new BusinessRuleException("This team is public. Use the join endpoint instead.");
 
             if (!data.TeamSize.HasValue)
-                throw new Exception("Tournament team size is not configured.");
+                throw new BusinessRuleException("Tournament team size is not configured.");
 
             if (data.CurrentMemberCount >= data.TeamSize.Value)
-                throw new Exception("Team is already full.");
+                throw new BusinessRuleException("Team is already full.");
 
             if (data.UserAlreadyInTournament)
-                throw new Exception("User is already in a team for this tournament.");
+                throw new BusinessRuleException("User is already in a team for this tournament.");
 
             var alreadyRequested = await this.AppUnitOfWork.TeamJoinRequestRepository.HasPendingRequest(teamId, user.UserId);
             if (alreadyRequested)
-                throw new Exception("You already have a pending request for this team.");
+                throw new BusinessRuleException("You already have a pending request for this team.");
 
             var request = new TeamJoinRequestEntity
             {
@@ -251,7 +251,7 @@ namespace GameHubz.Logic.Services
         public async Task<TeamShareSummaryDto> GetTeamShareSummary(Guid teamId)
         {
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             return new TeamShareSummaryDto
             {
@@ -280,10 +280,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetById(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             if (team.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can view join requests.");
+                throw new BusinessRuleException("Only the captain can view join requests.");
 
             return await this.AppUnitOfWork.TeamJoinRequestRepository.GetPendingRequestsByTeamId(teamId);
         }
@@ -293,24 +293,24 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
-            if (request == null) throw new Exception("Request not found.");
+            if (request == null) throw new BusinessRuleException("Request not found.");
 
             var team = request.Team!;
 
             if (team.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can approve requests.");
+                throw new BusinessRuleException("Only the captain can approve requests.");
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(team.TournamentId!.Value);
 
             if (!tournament.TeamSize.HasValue)
-                throw new Exception("Tournament team size is not configured.");
+                throw new BusinessRuleException("Tournament team size is not configured.");
 
             if (team.Members.Count >= tournament.TeamSize.Value)
-                throw new Exception("Team is already full.");
+                throw new BusinessRuleException("Team is already full.");
 
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(request.UserId!.Value, team.TournamentId!.Value);
             if (alreadyInTeam)
-                throw new Exception("User is already in a team for this tournament.");
+                throw new BusinessRuleException("User is already in a team for this tournament.");
 
             var member = new TournamentTeamMemberEntity
             {
@@ -345,10 +345,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
-            if (request == null) throw new Exception("Request not found.");
+            if (request == null) throw new BusinessRuleException("Request not found.");
 
             if (request.Team!.CaptainUserId != user.UserId)
-                throw new Exception("Only the captain can reject requests.");
+                throw new BusinessRuleException("Only the captain can reject requests.");
 
             request.Status = JoinRequestStatus.Rejected;
             await this.AppUnitOfWork.TeamJoinRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -383,10 +383,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new Exception("Team not found.");
+            if (team == null) throw new BusinessRuleException("Team not found.");
 
             var member = team.Members.FirstOrDefault(m => m.UserId == user.UserId);
-            if (member == null) throw new Exception("User is not a member of this team.");
+            if (member == null) throw new BusinessRuleException("User is not a member of this team.");
 
             await this.AppUnitOfWork.TournamentTeamMemberRepository.SoftDeleteEntity(member, this.UserContextReader);
 

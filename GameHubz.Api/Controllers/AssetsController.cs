@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using GameHubz.DataModels.Models;
+using GameHubz.Logic.Exceptions;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
 using GameHubz.Common.Models;
@@ -59,7 +60,7 @@ namespace GameHubz.Api.Controllers
 
             if (assetUpload.File.Length <= 0)
             {
-                throw new Exception(this.localizationService["Exception.FileSizeZeroBytesException"]);
+                throw new BusinessRuleException(this.localizationService["Exception.FileSizeZeroBytesException"]);
             }
 
             Asset asset = await this.assetService.UploadAsset(assetUpload);

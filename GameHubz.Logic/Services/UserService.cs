@@ -360,7 +360,7 @@ namespace GameHubz.Logic.Services
                 else if (!string.Equals(user.Country, request.Country, StringComparison.OrdinalIgnoreCase))
                 {
                     // Already set to a different value — locked, reject the change.
-                    throw new Exception("Country is already set and cannot be changed.");
+                    throw new BusinessRuleException("Country is already set and cannot be changed.");
                 }
             }
 
@@ -384,7 +384,7 @@ namespace GameHubz.Logic.Services
             }
 
             var country = CountryCatalog.Get(countryCode)
-                ?? throw new Exception($"Unknown country code '{countryCode}'.");
+                ?? throw new BusinessRuleException($"Unknown country code '{countryCode}'.");
 
             user.Country = country.Code;
             user.Region = country.Region;
