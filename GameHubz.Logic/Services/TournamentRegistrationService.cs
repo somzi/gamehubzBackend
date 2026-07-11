@@ -182,6 +182,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveByPatternAsync($"user_feed:{tournamentRegistration.UserId}:*");
                 await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
                 await cacheService.RemoveAsync($"bracket:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveAsync($"bracket:v3:{tournamentRegistration.TournamentId}");
                 await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.TournamentId}");
             }
             // Post-commit invalidation of the participants list — BeforeSave in the participant
@@ -284,6 +285,7 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.First().TournamentId}");
             await cacheService.RemoveAsync($"bracket:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentRegistration.First().TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
             // Post-commit safety net — see ApproveRegistration above.
             await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");

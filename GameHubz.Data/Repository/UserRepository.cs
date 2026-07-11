@@ -204,5 +204,28 @@ namespace GameHubz.Data.Repository
                 .Select(x => x.PushToken!)
                 .ToListAsync();
         }
+
+        public async Task<UserEntity?> GetByDiscordUserId(string discordUserId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.DiscordUserId == discordUserId)
+                .FirstOrDefaultAsync();
+        }
+
+        // Both notification channels in one query: push token (primary) + linked Discord account
+        // (additive bot DM). Rows with neither channel are skipped.
+        public async Task<List<UserNotificationTarget>> GetNotificationTargetsByUserIds(List<Guid> userIds)
+        {
+            return await this.BaseDbSet()
+                .Where(x => userIds.Contains(x.Id!.Value)
+                    && (x.PushToken != null || (x.DiscordUserId != null && x.DiscordDmEnabled)))
+                .Select(x => new UserNotificationTarget
+                {
+                    PushToken = x.PushToken,
+                    DiscordUserId = x.DiscordUserId,
+                    DiscordDmEnabled = x.DiscordDmEnabled,
+                })
+                .ToListAsync();
+        }
     }
 }

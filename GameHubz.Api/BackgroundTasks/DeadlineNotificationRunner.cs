@@ -1,8 +1,10 @@
 using GameHubz.Data.Context;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Api.BackgroundTasks
 {
@@ -21,6 +23,8 @@ namespace GameHubz.Api.BackgroundTasks
 
         private readonly ApplicationContext context;
         private readonly INotificationService notificationService;
+        private readonly IDiscordDmService discordDmService;
+        private readonly ShareLinksConfig shareLinksConfig;
         private readonly ILogger<DeadlineNotificationRunner> logger;
         private readonly int registrationLeadMinutes;
         private readonly int roundEarlyLeadMinutes;
@@ -29,11 +33,15 @@ namespace GameHubz.Api.BackgroundTasks
         public DeadlineNotificationRunner(
             ApplicationContext context,
             INotificationService notificationService,
+            IDiscordDmService discordDmService,
+            IOptions<ShareLinksConfig> shareLinksOptions,
             IConfiguration configuration,
             ILogger<DeadlineNotificationRunner> logger)
         {
             this.context = context;
             this.notificationService = notificationService;
+            this.discordDmService = discordDmService;
+            this.shareLinksConfig = shareLinksOptions.Value;
             this.logger = logger;
 
             // Registration: a single last-call reminder this many minutes before the deadline.
@@ -139,11 +147,18 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (targetIds.Count > 0)
                     {
-                        var tokens = await context.Set<UserEntity>()
+                        // Both channels in one query: push token (primary) + linked Discord DM (additive).
+                        var targets = await context.Set<UserEntity>()
                             .AsNoTracking()
-                            .Where(u => targetIds.Contains(u.Id!.Value) && u.IsActive && u.PushToken != null)
-                            .Select(u => u.PushToken!)
+                            .Where(u => targetIds.Contains(u.Id!.Value) && u.IsActive
+                                && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
+                            .Select(u => new { u.PushToken, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
+
+                        var tokens = targets
+                            .Where(t => t.PushToken != null)
+                            .Select(t => t.PushToken!)
+                            .ToList();
 
                         if (tokens.Count > 0)
                         {
@@ -152,6 +167,13 @@ namespace GameHubz.Api.BackgroundTasks
                                 tournament.Name,
                                 "Registration closes soon — join before the deadline!",
                                 new { tournamentId = tournament.Id, type = "registrationDeadline" });
+                        }
+
+                        string dmContent = $"⏰ **{tournament.Name}** — registration closes soon, join before the deadline!\n"
+                            + $"{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}";
+                        foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
+                        {
+                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
                         }
                     }
 
@@ -255,11 +277,18 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (userIds.Count > 0)
                     {
-                        var tokens = await context.Set<UserEntity>()
+                        // Both channels in one query: push token (primary) + linked Discord DM (additive).
+                        var targets = await context.Set<UserEntity>()
                             .AsNoTracking()
-                            .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive && u.PushToken != null)
-                            .Select(u => u.PushToken!)
+                            .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive
+                                && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
+                            .Select(u => new { u.PushToken, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
+
+                        var tokens = targets
+                            .Where(t => t.PushToken != null)
+                            .Select(t => t.PushToken!)
+                            .ToList();
 
                         if (tokens.Count > 0)
                         {
@@ -271,6 +300,13 @@ namespace GameHubz.Api.BackgroundTasks
                                 // link can route to the team-match modal (the solo modal renders empty for
                                 // a sub-match id).
                                 new { tournamentId = match.TournamentId, matchId = match.Id, teamMatchId = match.TeamMatchId, type = "roundDeadline" });
+                        }
+
+                        string dmContent = $"⏰ **{match.TournamentName}** — {body}\n"
+                            + $"{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}";
+                        foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
+                        {
+                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
                         }
                     }
 

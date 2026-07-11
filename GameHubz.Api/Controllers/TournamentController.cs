@@ -214,7 +214,7 @@ namespace GameHubz.Api.Controllers
         [HttpPut("{id}/roundSchedule")]
         public async Task<IActionResult> SetRoundDeadline([FromRoute] Guid id, [FromBody] SetRoundDeadlineRequest request)
         {
-            await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline, request.RoundStart, request.StageId);
+            await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline, request.RoundStart, request.StageId, request.ClearRoundStart, request.ClearDeadline);
 
             return Ok();
         }

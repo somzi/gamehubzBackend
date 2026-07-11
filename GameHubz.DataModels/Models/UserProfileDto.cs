@@ -24,5 +24,11 @@ namespace GameHubz.DataModels.Models
 
         public List<UserSocialDto>? UserSocials { get; set; } = new();
         public string? AvatarUrl { get; set; }
+
+        // Discord bot link status — populated only when the caller requests their OWN profile
+        // (the mobile Socials screen prefills from this); stripped for everyone else. Distinct
+        // from the manually-entered public Discord social in UserSocials.
+        public string? DiscordUsername { get; set; }
+        public bool DiscordDmEnabled { get; set; } = true;
     }
 }

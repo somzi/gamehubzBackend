@@ -81,21 +81,29 @@ namespace GameHubz.Logic.Services
             string key = $"user_profile:{userId}";
 
             var cachedProfile = await cacheService.GetAsync<UserProfileDto>(key);
-            if (cachedProfile != null)
+            if (cachedProfile == null)
             {
-                return cachedProfile;
+                var userEntity = await this.AppUnitOfWork.UserRepository.GetWithSocials(userId);
+
+                if (userEntity == null)
+                    throw new BusinessRuleException("User not found");
+
+                cachedProfile = this.mapper.Map<UserProfileDto>(userEntity);
+
+                await cacheService.SetAsync(key, cachedProfile, TimeSpan.FromHours(1));
             }
 
-            var userEntity = await this.AppUnitOfWork.UserRepository.GetWithSocials(userId);
+            // The Discord bot link is a private notification setting, not a public social — only
+            // the profile owner sees it (their Socials screen prefills from this). Safe to mutate:
+            // the cache round-trips through JSON, every read gets a fresh instance.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (caller == null || caller.UserId != userId)
+            {
+                cachedProfile.DiscordUsername = null;
+                cachedProfile.DiscordDmEnabled = true;
+            }
 
-            if (userEntity == null)
-                throw new BusinessRuleException("User not found");
-
-            var userProfileDto = this.mapper.Map<UserProfileDto>(userEntity);
-
-            await cacheService.SetAsync(key, userProfileDto, TimeSpan.FromHours(1));
-
-            return userProfileDto;
+            return cachedProfile;
         }
 
         public async Task UploadAvatar(IFormFile file)

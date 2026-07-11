@@ -9,7 +9,7 @@ namespace GameHubz.Logic.Services
     {
         private readonly HubActivityService hubActivityService;
         private readonly ICacheService cacheService;
-        private readonly INotificationService notificationService;
+        private readonly TournamentNotifier tournamentNotifier;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly UserHubService userHubService;
 
@@ -23,7 +23,7 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             HubActivityService hubActivityService,
             ICacheService cacheService,
-            INotificationService notificationService,
+            TournamentNotifier tournamentNotifier,
             TournamentAuthorizationService tournamentAuth,
             UserHubService userHubService) : base(
                 factory.CreateAppUnitOfWork(),
@@ -36,7 +36,7 @@ namespace GameHubz.Logic.Services
         {
             this.hubActivityService = hubActivityService;
             this.cacheService = cacheService;
-            this.notificationService = notificationService;
+            this.tournamentNotifier = tournamentNotifier;
             this.tournamentAuth = tournamentAuth;
             this.userHubService = userHubService;
         }
@@ -117,14 +117,14 @@ namespace GameHubz.Logic.Services
             // (compare OpenRegistration/CancelTournament which gate through GetHubOwnedTournamentOrThrow).
             if (!await this.tournamentAuth.CanManageTournamentAsync(id))
             {
-                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
             if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
             {
-                throw new Exception("A tournament requires a minimum of 2 participants.");
+                throw new BusinessRuleException("A tournament requires a minimum of 2 participants.");
             }
 
             tournament.Status = TournamentStatus.RegistrationClosed;
@@ -137,7 +137,11 @@ namespace GameHubz.Logic.Services
 
             await cacheService.RemoveAsync($"tournament:{id}");
             await cacheService.RemoveAsync($"bracket:{id}");
+            await cacheService.RemoveAsync($"bracket:v3:{id}");
             await cacheService.RemoveAsync($"league_standings:{id}");
+
+            // Discord-only announcement (no Expo push exists for closing registration).
+            await this.tournamentNotifier.RegistrationClosed(tournament);
         }
 
         public async Task Publish(Guid id)
@@ -155,6 +159,11 @@ namespace GameHubz.Logic.Services
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.RegistrationOpen);
+
+            // Notify all hub followers about the opened registration (Expo push + Discord webhook).
+            // Was missing entirely before — SaveEntity only fires this on tournament CREATION,
+            // never on this explicit open-registration transition for an existing tournament.
+            await this.tournamentNotifier.RegistrationOpened(tournament);
         }
 
         public async Task<TournamentOverview> GetOverview(Guid id)
@@ -243,7 +252,7 @@ namespace GameHubz.Logic.Services
             return isUserAlreadyRegistred;
         }
 
-        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null)
+        public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null, bool clearRoundStart = false, bool clearDeadline = false)
         {
             if (roundNumber < 1)
                 throw new Exception("Round number must be greater than 0.");
@@ -262,13 +271,24 @@ namespace GameHubz.Logic.Services
 
             foreach (var match in roundMatches)
             {
-                if (roundStart != null) match.RoundOpenAt = roundStart;
-                if (deadline != null) match.RoundDeadline = deadline;
+                // Clear beats set: null RoundOpenAt = round open immediately, null RoundDeadline =
+                // no deadline. A plain null value still means "keep existing" for old clients.
+                if (clearRoundStart) match.RoundOpenAt = null;
+                else if (roundStart != null) match.RoundOpenAt = roundStart;
+
+                if (clearDeadline) match.RoundDeadline = null;
+                else if (deadline != null) match.RoundDeadline = deadline;
+
+                // The deadline changed (or vanished) — re-arm the reminder waves so a future
+                // deadline gets fresh reminders instead of being seen as already-notified.
+                if (clearDeadline || deadline != null) match.RoundReminderStage = 0;
+
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             }
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
@@ -324,7 +344,7 @@ namespace GameHubz.Logic.Services
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
             {
-                throw new Exception("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
             }
 
             return tournament;
@@ -346,8 +366,8 @@ namespace GameHubz.Logic.Services
             {
                 await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
-                // Notify all hub followers about the new tournament
-                await SendNotification(model);
+                // Notify all hub followers about the new tournament (Expo push + Discord webhook)
+                await this.tournamentNotifier.RegistrationOpened(model);
             }
             else
             {
@@ -356,6 +376,7 @@ namespace GameHubz.Logic.Services
                 // bracket structure response, so flush the bracket cache too — otherwise the new
                 // setting won't be visible until the 5-minute cache window expires.
                 await cacheService.RemoveAsync($"bracket:{model.Id}");
+                await cacheService.RemoveAsync($"bracket:v3:{model.Id}");
                 await cacheService.RemoveAsync($"league_standings:{model.Id}");
             }
 
@@ -456,41 +477,6 @@ namespace GameHubz.Logic.Services
             await Task.CompletedTask;
         }
 
-        // F109: resolve the recipients' push tokens here, while the request-scoped DbContext is alive,
-        // then fire-and-forget ONLY the push send (which goes through NotificationService's own scope).
-        // The old version queried this.AppUnitOfWork inside Task.Run, racing the disposed request context.
-        private async Task SendNotification(TournamentDto model)
-        {
-            var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(model.HubId!.Value);
-            if (hubMembers == null || hubMembers.Count == 0) return;
-
-            var pushTokens = hubMembers
-                .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
-                // Exclusive tournaments are invisible to plain members, so don't notify them.
-                .Where(m => !model.IsExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
-                .Select(m => m.PushToken!)
-                .Distinct()
-                .ToList();
-
-            if (pushTokens.Count == 0) return;
-
-            var title = model.Name;
-            var tournamentId = model.Id;
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await notificationService.SendToManyAsync(
-                        pushTokens,
-                        title,
-                        "Registration is open, grab your spot!",
-                        new { tournamentId });
-                }
-                catch { /* fire-and-forget */ }
-            });
-        }
-
         private static bool ShouldDeleteTournament(TournamentEntity tournament)
         {
             return tournament.Status == TournamentStatus.RegistrationClosed || tournament.Status == TournamentStatus.RegistrationOpen;
@@ -509,6 +495,7 @@ namespace GameHubz.Logic.Services
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
@@ -538,6 +525,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }

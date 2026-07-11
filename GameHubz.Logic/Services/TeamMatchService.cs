@@ -83,6 +83,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
 
             return new SubmitRepresentativeResponse
@@ -220,6 +221,9 @@ namespace GameHubz.Logic.Services
                 TeamMatchId = projection.TeamMatchId,
                 Status = projection.Status,
                 WinnerTeamParticipantId = projection.WinnerTeamParticipantId,
+                HomeTeamParticipantId = projection.HomeTeamParticipantId,
+                AwayTeamParticipantId = projection.AwayTeamParticipantId,
+                WinCondition = projection.WinCondition,
                 HomeTeam = projection.HomeTeam == null ? null : new TeamMatchTeamInfoDto
                 {
                     TeamId = projection.HomeTeam.TeamId,

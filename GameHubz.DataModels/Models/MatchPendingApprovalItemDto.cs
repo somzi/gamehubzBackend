@@ -11,6 +11,11 @@ namespace GameHubz.DataModels.Models
     {
         public Guid MatchId { get; set; }
         public int? RoundNumber { get; set; }
+        // Group-stage matches only — lets the admin inbox say "Group A · Round 4".
+        public string? GroupName { get; set; }
+        // Team-tournament sub-matches only — the tournament team each player belongs to.
+        public string? HomeTeamName { get; set; }
+        public string? AwayTeamName { get; set; }
         public MatchStatus Status { get; set; }
         public DateTime? ScheduledStartTime { get; set; }
 

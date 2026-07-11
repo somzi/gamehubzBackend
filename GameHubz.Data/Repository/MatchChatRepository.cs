@@ -42,7 +42,8 @@ namespace GameHubz.Data.Repository
                 {
                     Id = x.Id!.Value,
                     UserId = x.UserId!.Value,
-                    UserNickname = x.User!.Nickname ?? x.User!.Username,
+                    // Nickname can be persisted as "" (entity default) — treat blank as unset.
+                    UserNickname = string.IsNullOrWhiteSpace(x.User!.Nickname) ? x.User!.Username : x.User!.Nickname!,
                     UserAvatarUrl = x.User!.AvatarUrl,
                     Content = x.Content,
                     SentAt = x.CreatedOn!.Value

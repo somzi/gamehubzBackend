@@ -60,7 +60,21 @@ namespace GameHubz.Logic.Services
         {
             var entities = await this.AppUnitOfWork.HubRepository.GetByUserId(id);
 
-            return this.Mapper.Map<List<HubOverviewDto>>(entities);
+            var dtos = this.Mapper.Map<List<HubOverviewDto>>(entities);
+
+            // Same secrecy rule as GetOverviewById: the Discord fields auto-map from the entity,
+            // but only the owner themselves may see the webhook URL.
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (caller == null || caller.UserId != id)
+            {
+                foreach (var dto in dtos)
+                {
+                    dto.DiscordWebhookUrl = null;
+                    dto.DiscordNotificationSettings = null;
+                }
+            }
+
+            return dtos;
         }
 
         public async Task<HubOverviewDto> GetOverviewById(Guid id)
@@ -82,10 +96,16 @@ namespace GameHubz.Logic.Services
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
             hubDto.IsUserFollowHub = isFollowing;
 
-            if (!hubDto.IsUserOwner)
+            if (hubDto.IsUserOwner)
+            {
+                hubDto.UserHubRole = HubRole.HubOwner;
+            }
+            else
             {
                 var callerRole = await this.userHubService.GetUserHubRoleCachedAsync(user.UserId, id);
                 hubDto.IsUserAdmin = callerRole == HubRole.HubAdmin;
+                // Caller-specific — always overwrite whatever the shared per-hub cache held.
+                hubDto.UserHubRole = callerRole;
             }
 
             if (!hubDto.IsPublic && !isFollowing && !hubDto.IsUserOwner)
@@ -93,7 +113,36 @@ namespace GameHubz.Logic.Services
                 hubDto.HasPendingJoinRequest = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(id, user.UserId);
             }
 
+            // The webhook URL is a secret (anyone holding it can post to the hub's Discord channel)
+            // and only the owner can edit hub settings, so strip the Discord fields for everyone else.
+            // Safe to mutate: the cache round-trips through JSON, every read gets a fresh instance.
+            if (!hubDto.IsUserOwner)
+            {
+                hubDto.DiscordWebhookUrl = null;
+                hubDto.DiscordNotificationSettings = null;
+            }
+
             return hubDto;
+        }
+
+        // Empty/whitespace becomes null (integration off). A non-empty value must be a real Discord
+        // webhook endpoint — without this check the server could be pointed at an arbitrary URL and
+        // used as a blind HTTP POST proxy (SSRF) by the notifiers' fire-and-forget sends.
+        private static string? NormalizeDiscordWebhookUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            var trimmed = url.Trim();
+            bool isDiscordWebhook =
+                trimmed.StartsWith("https://discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("https://discordapp.com/api/webhooks/", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("https://ptb.discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("https://canary.discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase);
+
+            if (!isDiscordWebhook)
+                throw new BusinessRuleException("The Discord webhook URL must start with https://discord.com/api/webhooks/.");
+
+            return trimmed;
         }
 
         private async Task<HubOverviewDto?> GetCachedHubData(Guid hubId)
@@ -149,6 +198,16 @@ namespace GameHubz.Logic.Services
             hub.Description = request.Description;
             hub.IsPublic = request.IsPublic;
 
+            // Null = field not sent (older clients / screens that only edit name & privacy) → keep the
+            // stored value, same preservation rule as TournamentService.BeforeDtoMapToEntity. An empty
+            // string is an explicit clear from the Discord form.
+            if (request.DiscordWebhookUrl != null)
+                hub.DiscordWebhookUrl = NormalizeDiscordWebhookUrl(request.DiscordWebhookUrl);
+            if (request.DiscordNotificationSettings != null)
+                hub.DiscordNotificationSettings = string.IsNullOrWhiteSpace(request.DiscordNotificationSettings)
+                    ? null
+                    : request.DiscordNotificationSettings;
+
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 
             await this.SaveAsync();
@@ -165,7 +224,7 @@ namespace GameHubz.Logic.Services
 
             var alreadyOwnsHub = await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(user.UserId);
             if (alreadyOwnsHub)
-                throw new Exception("You already own a hub and cannot create another one.");
+                throw new BusinessRuleException("You already own a hub and cannot create another one.");
 
             var hub = new HubEntity
             {

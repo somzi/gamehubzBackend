@@ -10,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly FriendService friendService;
         private readonly ICacheService cacheService;
         private readonly BadgeService badgeService;
+        private readonly IDiscordDmService discordDmService;
 
         public DirectChatService(
             IUnitOfWorkFactory factory,
@@ -19,7 +20,8 @@ namespace GameHubz.Logic.Services
             INotificationService notificationService,
             FriendService friendService,
             ICacheService cacheService,
-            BadgeService badgeService)
+            BadgeService badgeService,
+            IDiscordDmService discordDmService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
@@ -27,6 +29,7 @@ namespace GameHubz.Logic.Services
             this.friendService = friendService;
             this.cacheService = cacheService;
             this.badgeService = badgeService;
+            this.discordDmService = discordDmService;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -57,7 +60,7 @@ namespace GameHubz.Logic.Services
 
             var dto = await this.AppUnitOfWork.DirectChatRepository.GetChatDtoForUser(chatId, user.UserId);
             if (dto == null)
-                throw new Exception("Chat not found.");
+                throw new BusinessRuleException("Chat not found.");
 
             return dto;
         }
@@ -67,14 +70,14 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (otherUserId == user.UserId)
-                throw new Exception("You cannot chat with yourself.");
+                throw new BusinessRuleException("You cannot chat with yourself.");
 
             if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
-                throw new Exception("Cannot open chat — there is an active block between the users.");
+                throw new BusinessRuleException("Cannot open chat — there is an active block between the users.");
 
             var other = await this.AppUnitOfWork.UserRepository.GetById(otherUserId);
             if (other == null)
-                throw new Exception("User not found.");
+                throw new BusinessRuleException("User not found.");
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.Find(user.UserId, otherUserId);
             if (chat == null)
@@ -109,7 +112,7 @@ namespace GameHubz.Logic.Services
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new Exception("Chat not found.");
+                throw new BusinessRuleException("Chat not found.");
 
             return await this.AppUnitOfWork.DirectMessageRepository.GetByChatId(chatId, take, before);
         }
@@ -123,19 +126,19 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (string.IsNullOrWhiteSpace(content))
-                throw new Exception("Message cannot be empty.");
+                throw new BusinessRuleException("Message cannot be empty.");
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new Exception("Chat not found.");
+                throw new BusinessRuleException("Chat not found.");
 
             Guid otherUserId = chat.UserAId == user.UserId ? chat.UserBId : chat.UserAId;
 
             if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
-                throw new Exception("Cannot send message — there is an active block between the users.");
+                throw new BusinessRuleException("Cannot send message — there is an active block between the users.");
 
             if (!await this.friendService.AreFriendsCachedAsync(user.UserId, otherUserId))
-                throw new Exception("Cannot send message — you are no longer friends.");
+                throw new BusinessRuleException("Cannot send message — you are no longer friends.");
 
             var message = new DirectMessageEntity
             {
@@ -181,8 +184,8 @@ namespace GameHubz.Logic.Services
             // Live badge bump for the recipient (unread DM count).
             await this.badgeService.PushAsync(otherUserId);
 
-            // Push notification to the OTHER user
-            SendPushNotification(otherUserId, user.Username, content, chatId);
+            // Push + Discord DM to the OTHER user
+            await NotifyRecipientAsync(otherUserId, user.Username, content, chatId);
 
             return dto;
         }
@@ -193,7 +196,7 @@ namespace GameHubz.Logic.Services
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new Exception("Chat not found.");
+                throw new BusinessRuleException("Chat not found.");
 
             await this.AppUnitOfWork.DirectMessageRepository.MarkRead(chatId, user.UserId);
 
@@ -215,29 +218,46 @@ namespace GameHubz.Logic.Services
         // PRIVATE
         // ─────────────────────────────────────────────────────────────────
 
-        private void SendPushNotification(Guid recipientUserId, string senderUsername, string content, Guid chatId)
+        // F109: the recipient is resolved here (awaited, while the request-scoped DbContext is
+        // alive); only the sends themselves are fired-and-forgotten. The old version queried
+        // this.AppUnitOfWork inside Task.Run, racing against the disposed request-scoped context.
+        // The Discord DM mirrors the push exactly: same trigger, same truncated body.
+        private async Task NotifyRecipientAsync(Guid recipientUserId, string senderUsername, string content, Guid chatId)
         {
-            _ = Task.Run(async () =>
+            var recipient = await this.AppUnitOfWork.UserRepository.GetById(recipientUserId);
+            if (recipient == null) return;
+
+            string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
+
+            if (!string.IsNullOrEmpty(recipient.PushToken))
             {
-                try
+                var token = recipient.PushToken!;
+                _ = Task.Run(async () =>
                 {
-                    var recipient = await this.AppUnitOfWork.UserRepository.GetById(recipientUserId);
-                    if (recipient?.PushToken == null) return;
+                    try
+                    {
+                        await notificationService.SendToOneAsync(
+                            token,
+                            senderUsername,
+                            body,
+                            new
+                            {
+                                type = "direct_message",
+                                chatId = chatId.ToString(),
+                            });
+                    }
+                    catch { /* swallow */ }
+                });
+            }
 
-                    string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
-
-                    await notificationService.SendToOneAsync(
-                        recipient.PushToken,
-                        senderUsername,
-                        body,
-                        new
-                        {
-                            type = "direct_message",
-                            chatId = chatId.ToString(),
-                        });
-                }
-                catch { /* swallow */ }
-            });
+            // Additive Discord DM (push stays the primary channel). No share link — direct
+            // chats have no public web page to point at.
+            if (recipient.DiscordDmEnabled)
+            {
+                this.discordDmService.SendDmInBackground(
+                    recipient.DiscordUserId,
+                    $"💬 **{senderUsername}**: {body}");
+            }
         }
     }
 }

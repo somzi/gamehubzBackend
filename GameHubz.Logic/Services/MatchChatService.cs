@@ -1,7 +1,9 @@
 ﻿using FluentValidation;
+using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Services
 {
@@ -11,6 +13,8 @@ namespace GameHubz.Logic.Services
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly IDiscordDmService discordDmService;
+        private readonly ShareLinksConfig shareLinksConfig;
 
         public MatchChatService(
             IUnitOfWorkFactory factory,
@@ -23,7 +27,9 @@ namespace GameHubz.Logic.Services
             IHubContext<MatchChatHub> hubContext,
             INotificationService notificationService,
             BadgeService badgeService,
-            TournamentAuthorizationService tournamentAuth) : base(
+            TournamentAuthorizationService tournamentAuth,
+            IDiscordDmService discordDmService,
+            IOptions<ShareLinksConfig> shareLinksOptions) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -36,6 +42,8 @@ namespace GameHubz.Logic.Services
             this.notificationService = notificationService;
             this.badgeService = badgeService;
             this.tournamentAuth = tournamentAuth;
+            this.discordDmService = discordDmService;
+            this.shareLinksConfig = shareLinksOptions.Value;
         }
 
         public async Task<ChatMessageDto> SendMessage(Guid matchId, string content)
@@ -75,7 +83,7 @@ namespace GameHubz.Logic.Services
             {
                 Id = entity.Id!.Value,
                 UserId = user.UserId,
-                UserNickname = sender?.Nickname ?? user.Username,
+                UserNickname = string.IsNullOrWhiteSpace(sender?.Nickname) ? user.Username : sender!.Nickname!,
                 UserAvatarUrl = sender?.AvatarUrl,
                 Content = content,
                 SentAt = entity.CreatedOn!.Value
@@ -113,31 +121,43 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(opponentUserId.Value);
 
             var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-            if (string.IsNullOrEmpty(opponent?.PushToken)) return;
+            if (opponent == null) return;
 
-            var token = opponent.PushToken!;
             var tournamentId = match.TournamentId.ToString();
 
-            _ = Task.Run(async () =>
+            if (!string.IsNullOrEmpty(opponent.PushToken))
             {
-                try
+                var token = opponent.PushToken!;
+                _ = Task.Run(async () =>
                 {
-                    await notificationService.SendToOneAsync(
-                        token,
-                        user.Username,
-                        content,
-                        new
-                        {
-                            type = "matchMessage",
-                            matchId = matchId.ToString(),
-                            // Carried for team-tournament sub-matches so the mobile deep link can route
-                            // to the team-match modal (the solo modal renders empty for a sub-match id).
-                            teamMatchId = match.TeamMatchId?.ToString(),
-                            tournamentId,
-                        });
-                }
-                catch { /* fire-and-forget – swallow errors */ }
-            });
+                    try
+                    {
+                        await notificationService.SendToOneAsync(
+                            token,
+                            user.Username,
+                            content,
+                            new
+                            {
+                                type = "matchMessage",
+                                matchId = matchId.ToString(),
+                                // Carried for team-tournament sub-matches so the mobile deep link can route
+                                // to the team-match modal (the solo modal renders empty for a sub-match id).
+                                teamMatchId = match.TeamMatchId?.ToString(),
+                                tournamentId,
+                            });
+                    }
+                    catch { /* fire-and-forget – swallow errors */ }
+                });
+            }
+
+            // Additive Discord DM (push stays the primary channel) — same trigger as the push.
+            if (opponent.DiscordDmEnabled)
+            {
+                string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
+                this.discordDmService.SendDmInBackground(
+                    opponent.DiscordUserId,
+                    $"💬 **{user.Username}** (match chat): {body}\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}");
+            }
         }
 
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)

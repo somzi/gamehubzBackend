@@ -73,5 +73,14 @@ namespace GameHubz.DataModels.Domain
         public string? ForgotPasswordOtp { get; set; }
 
         public string? PushToken { get; set; }
+
+        /// <summary>Discord snowflake id of the linked account (OAuth identify). Null = not linked.</summary>
+        public string? DiscordUserId { get; set; }
+
+        /// <summary>Discord username captured at link time (display only).</summary>
+        public string? DiscordUsername { get; set; }
+
+        /// <summary>Per-user switch for bot DM notifications; only meaningful while linked.</summary>
+        public bool DiscordDmEnabled { get; set; } = true;
     }
 }
