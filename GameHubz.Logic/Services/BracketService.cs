@@ -4189,6 +4189,12 @@ namespace GameHubz.Logic.Services
 
                     playInMatch.NextMatchId = firstRound[slot / 2].Id;
                     playInMatch.NextMatchHomeAwaySlot = slot % 2;
+                    // playInMatch is a no-tracking reload, but the play-in result that triggered
+                    // this advance is still tracked from UpdateMatchResult earlier in the request —
+                    // detach the live instance by Id before attaching this copy, or EF's identity
+                    // conflict throws and the knockout is never drawn. Same idiom as the Swiss bye
+                    // and post-stage seeding paths.
+                    await this.AppUnitOfWork.MatchRepository.DetachById(playInMatch.Id!.Value);
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(playInMatch, this.UserContextReader);
                     break;
                 }
