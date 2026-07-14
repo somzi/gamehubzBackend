@@ -23,8 +23,12 @@ namespace GameHubz.Data.Repository
 
         public async Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId)
         {
+            // NoShow (a double forfeit an admin closed) is terminal — it must not keep a league
+            // from completing just because nobody played that fixture.
             var hasUnfinished = await this.BaseDbSet()
-                .AnyAsync(m => m.TournamentId == tournamentId && m.Status != MatchStatus.Completed);
+                .AnyAsync(m => m.TournamentId == tournamentId
+                    && m.Status != MatchStatus.Completed
+                    && m.Status != MatchStatus.NoShow);
 
             return !hasUnfinished;
         }

@@ -87,10 +87,12 @@ namespace GameHubz.Logic.Services
                 Orange,
                 hubName);
 
-        public object DoubleWalkover(string hubName, string tournamentName, string homeName, string awayName)
+        public object DoubleWalkover(string hubName, string tournamentName, string homeName, string awayName, bool opponentAdvances)
             => BuildEmbed(
                 $"🚫 Double Walkover — {homeName} vs {awayName}",
-                $"Neither player showed up in **{tournamentName}**. The match was closed with no winner and the opponent advances.",
+                opponentAdvances
+                    ? $"Neither player showed up in **{tournamentName}**. The match was closed with no winner and the opponent advances."
+                    : $"Neither player showed up in **{tournamentName}**. The match was closed as a no-show — no points for either player.",
                 Orange,
                 hubName);
 

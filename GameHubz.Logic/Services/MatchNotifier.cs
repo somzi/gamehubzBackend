@@ -51,7 +51,9 @@ namespace GameHubz.Logic.Services
         /// "matchReverted" switch — both are admin corrections to a match, and the settings JSON
         /// deliberately stays at six switches.
         /// </summary>
-        public async Task DoubleWalkover(MatchEntity match)
+        // opponentAdvances: elimination walkovers advance the sibling opponent; group/league/Swiss
+        // no-shows just close the fixture with nothing awarded — the embed copy differs.
+        public async Task DoubleWalkover(MatchEntity match, bool opponentAdvances)
         {
             try
             {
@@ -60,7 +62,7 @@ namespace GameHubz.Logic.Services
 
                 var (tournament, hub) = context.Value;
                 var (homeName, awayName) = await ResolveSideNamesAsync(match);
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.DoubleWalkover(hub.Name, tournament.Name, homeName, awayName));
+                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.DoubleWalkover(hub.Name, tournament.Name, homeName, awayName, opponentAdvances));
             }
             catch { /* notifications must never break a double walkover */ }
         }

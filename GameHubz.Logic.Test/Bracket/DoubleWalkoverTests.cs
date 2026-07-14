@@ -91,17 +91,20 @@ namespace GameHubz.Logic.Test.Bracket
                 Throws.Exception, "an already-completed match can't be double-walkover'd");
         }
 
+        // League / Swiss / group double walkovers are covered in NoShowWalkoverTests — they now
+        // close the fixture as a NoShow double forfeit instead of being rejected.
+
         [Test]
-        public async Task DoubleWalkover_OnLeagueMatch_Throws()
+        public async Task DoubleWalkover_OnTeamSubMatch_Throws()
         {
             var harness = new BracketTestHarness(useSqlite: true);
-            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
-            await harness.NewService().GenerateLeagueTournament(tid);
+            var tid = await harness.SeedTeamTournamentAsync(TournamentFormat.SingleElimination, 4, teamSize: 2);
+            await harness.NewService().GenerateTeamSingleEliminationBracket(tid);
 
-            var match = harness.Matches(tid).First(m => m.Stage == MatchStage.GroupStage);
+            var subMatch = harness.Matches(tid).First(m => m.TeamMatchId.HasValue);
 
-            Assert.That(async () => await harness.NewService().ApplyDoubleWalkover(match.Id!.Value),
-                Throws.Exception, "double walkover is elimination-only");
+            Assert.That(async () => await harness.NewService().ApplyDoubleWalkover(subMatch.Id!.Value),
+                Throws.Exception, "team fixtures aggregate sub-matches — a sub-match can't be voided in isolation");
         }
 
         [Test]

@@ -159,6 +159,17 @@ namespace GameHubz.Logic.Test.Bracket
                 discordDm, shareLinks);
         }
 
+        /// <summary>
+        /// TeamMatchService acting as a specific user — drives the tie-break representative flow.
+        /// Same fresh-context-per-operation rule as NewService.
+        /// </summary>
+        public TeamMatchService NewTeamMatchServiceAsUser(Guid userId)
+            => new TeamMatchService(
+                new TestUnitOfWorkFactory(newContext(), localization),
+                BuildReader(userId, "User"),
+                localization,
+                Cache);
+
         private static IUserContextReader BuildReader(Guid userId, string role)
         {
             var token = new TokenUserInfo { UserId = userId, Role = role };
@@ -297,6 +308,39 @@ namespace GameHubz.Logic.Test.Bracket
 
             await ctx.SaveChangesAsync();
             return tournamentId;
+        }
+
+        /// <summary>
+        /// Creates the TournamentTeam + member rows behind a seeded participant's TeamId. The
+        /// default team seeding leaves TeamId dangling (enough for generation-shape tests); flows
+        /// that read the roster — captain checks, the tie-break representative submission — need
+        /// the real rows. FKs are off in the SQLite harness, so no User rows are required.
+        /// </summary>
+        public async Task SeedTeamRosterAsync(Guid teamId, Guid tournamentId, Guid captainUserId, params Guid[] otherMemberUserIds)
+        {
+            using var ctx = ReadContext();
+
+            ctx.Add(new TournamentTeamEntity
+            {
+                Id = teamId,
+                TournamentId = tournamentId,
+                TeamName = "Team " + teamId.ToString("N").Substring(0, 6),
+                CaptainUserId = captainUserId,
+                IsDeleted = false,
+            });
+
+            foreach (var userId in new[] { captainUserId }.Concat(otherMemberUserIds))
+            {
+                ctx.Add(new TournamentTeamMemberEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TeamId = teamId,
+                    UserId = userId,
+                    IsDeleted = false,
+                });
+            }
+
+            await ctx.SaveChangesAsync();
         }
 
         // ---- Reads for assertions -----------------------------------------

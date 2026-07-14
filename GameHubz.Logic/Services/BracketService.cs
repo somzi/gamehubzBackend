@@ -2226,7 +2226,10 @@ namespace GameHubz.Logic.Services
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) throw new BusinessRuleException("Match not found");
 
-            if (match.Status != MatchStatus.Completed)
+            // NoShow is deletable too — that's the undo for a mistakenly applied group/league/Swiss
+            // double walkover (the core reopens the match to Scheduled; standings are unaffected
+            // since a NoShow never contributed to them).
+            if (match.Status != MatchStatus.Completed && match.Status != MatchStatus.NoShow)
                 throw new BusinessRuleException("This match has no result to delete.");
 
             // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
@@ -2714,13 +2717,15 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
-        /// Admin/owner action for an elimination match that was never played because BOTH sides
-        /// failed to show: the match is closed with no winner (both eliminated) and the opponent
-        /// coming from the sibling matchup advances unopposed — a walkover into the next round.
-        /// Works whether or not the sibling has been decided yet: if it has, the present opponent is
-        /// advanced now; if not, the walkover is applied automatically once that sibling completes
-        /// (the settle hook on the advance path fires then). Caller must be able to manage the
-        /// tournament. Solo elimination only — team matches are rejected.
+        /// Admin/owner action for a match that was never played because BOTH sides failed to show.
+        /// Elimination brackets: the match is closed with no winner (both eliminated) and the
+        /// opponent coming from the sibling matchup advances unopposed — a walkover into the next
+        /// round; works whether or not the sibling has been decided yet (the settle hook covers the
+        /// late case). League / group / Swiss: the fixture is closed as <see cref="MatchStatus.NoShow"/>
+        /// — a double forfeit awarding NOTHING to either player (deliberately not a draw), while the
+        /// round still completes, unlocks and pairs as if the match had been played. Caller must be
+        /// able to manage the tournament. Solo only — team matches are rejected; play-in matches are
+        /// rejected because every play-in slot must produce a qualifier for the knockout draw.
         /// </summary>
         public async Task ApplyDoubleWalkover(Guid matchId)
         {
@@ -2734,45 +2739,65 @@ namespace GameHubz.Logic.Services
             if (match.TeamMatchId.HasValue)
                 throw new BusinessRuleException("Double walkover isn't available for team matches.");
 
-            if (!IsElimination(match.TournamentStage?.Type))
+            var stageType = match.TournamentStage?.Type;
+            bool isGroupMachinery = stageType == StageType.League
+                || stageType == StageType.GroupStage
+                || stageType == StageType.Swiss;
+
+            // A voided play-in match would leave a knockout slot without a qualifier and the
+            // bracket draw expects an exact count — the organizer must enter a result instead.
+            if (stageType == StageType.PlayIn)
+                throw new BusinessRuleException("Double walkover isn't available for play-in matches — every play-in slot must produce a qualifier, so enter a result instead.");
+
+            if (!isGroupMachinery && !IsElimination(stageType))
                 throw new BusinessRuleException("Double walkover is only available in elimination brackets.");
 
             if (match.Status == MatchStatus.Completed)
                 throw new BusinessRuleException("This match is already completed.");
 
+            if (match.Status == MatchStatus.NoShow)
+                throw new BusinessRuleException("This match is already closed as a no-show.");
+
             if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
                 throw new BusinessRuleException("Both players must be set before a double walkover.");
 
-            // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
-            if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
-                throw new BusinessRuleException("This match has no next round, so a walkover can't advance anyone.");
-
-            // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
-            // check-then-act over many rows and must not race a concurrent result report.
-            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
-            try
+            if (isGroupMachinery)
             {
-                // Close the match with no winner. A Completed elimination match with no
-                // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
-                // SourceProducesWinner) — both players are out, nothing advances from here.
-                match.Status = MatchStatus.Completed;
-                match.WinnerParticipantId = null;
-                match.HomeUserScore = null;
-                match.AwayUserScore = null;
-                match.ProposedHomeScore = null;
-                match.ProposedAwayScore = null;
-                match.ProposedByUserId = null;
-                match.ScheduledStartTime ??= DateTime.UtcNow;
-                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-                await this.SaveAsync();
-
-                // Now that the void is committed, advance the surviving opponent(s) through every
-                // match the void forces (winner and loser edges, cascading across rounds / stages).
-                await SettleForcedWalkovers(match.TournamentId);
+                await ApplyGroupNoShowWalkover(match);
             }
-            finally
+            else
             {
-                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+                // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
+                if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
+                    throw new BusinessRuleException("This match has no next round, so a walkover can't advance anyone.");
+
+                // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
+                // check-then-act over many rows and must not race a concurrent result report.
+                await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+                try
+                {
+                    // Close the match with no winner. A Completed elimination match with no
+                    // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
+                    // SourceProducesWinner) — both players are out, nothing advances from here.
+                    match.Status = MatchStatus.Completed;
+                    match.WinnerParticipantId = null;
+                    match.HomeUserScore = null;
+                    match.AwayUserScore = null;
+                    match.ProposedHomeScore = null;
+                    match.ProposedAwayScore = null;
+                    match.ProposedByUserId = null;
+                    match.ScheduledStartTime ??= DateTime.UtcNow;
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                    await this.SaveAsync();
+
+                    // Now that the void is committed, advance the surviving opponent(s) through every
+                    // match the void forces (winner and loser edges, cascading across rounds / stages).
+                    await SettleForcedWalkovers(match.TournamentId);
+                }
+                finally
+                {
+                    await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+                }
             }
 
             // Cache / badge invalidation — mirrors FinalizeMatchResult.
@@ -2792,7 +2817,59 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
 
             // Discord-only announcement (no Expo equivalent exists for double walkovers).
-            await this.matchNotifier.DoubleWalkover(match);
+            await this.matchNotifier.DoubleWalkover(match, opponentAdvances: !isGroupMachinery);
+        }
+
+        // Group-machinery double forfeit (League / GroupStage / Swiss): the fixture closes as
+        // NoShow — an explicit "administratively closed, nobody played" signal. Deliberately NOT
+        // the elimination path's Completed-with-no-winner: ResyncSoloLeagueStatistics scores a
+        // completed no-winner match as a DRAW (a point each), and a double no-show must award
+        // nothing. NoShow rows contribute nothing to standings (the stats reads filter on
+        // Completed), still register the pairing for Swiss rematch avoidance, and count as
+        // terminal for round-completeness — so the round unlocks / pairs / completes exactly as
+        // if the fixture had been played. Undo: delete-result reopens it, or a late real result
+        // simply overwrites it through the normal report path.
+        private async Task ApplyGroupNoShowWalkover(MatchEntity match)
+        {
+            // Serialised per tournament like FinalizeMatchResult — the advancement hooks below are
+            // check-then-act over the whole round and must not race a concurrent result report.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                match.Status = MatchStatus.NoShow;
+                match.WinnerParticipantId = null;
+                match.HomeUserScore = null;
+                match.AwayUserScore = null;
+                match.ProposedHomeScore = null;
+                match.ProposedAwayScore = null;
+                match.ProposedByUserId = null;
+                match.ScheduledStartTime ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                // The closed fixture may have been the round's (or the competition's) last open
+                // one — run the same advancement hooks a reported result runs. Standings need no
+                // resync: an unplayed fixture never contributed, and NoShow keeps contributing
+                // nothing.
+                if (match.TournamentStage?.Type == StageType.Swiss)
+                {
+                    await CheckAndAdvanceSwissStage(match);
+                }
+                else if (match.TournamentStage?.Type == StageType.GroupStage)
+                {
+                    await CheckAndAdvanceGroupStage(match.TournamentId, match.TournamentStageId!.Value);
+                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                }
+                else
+                {
+                    await CheckAndCompleteLeague(match.TournamentId);
+                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                }
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
         }
 
         /// <summary>
@@ -3934,7 +4011,7 @@ namespace GameHubz.Logic.Services
             var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
 
             var currentRound = stageMatches.Where(m => (m.RoundNumber ?? 1) == completedRound).ToList();
-            if (currentRound.Count == 0 || !currentRound.All(m => m.Status == MatchStatus.Completed))
+            if (currentRound.Count == 0 || !currentRound.All(m => IsFinished(m.Status)))
                 return;
 
             // Re-editing an old result must not pair a new round — later rounds already exist.
@@ -4668,7 +4745,7 @@ namespace GameHubz.Logic.Services
             var allGroupMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(groupStageId);
 
             if (allGroupMatches == null || !allGroupMatches.Any()) return;
-            if (!allGroupMatches.All(m => m.Status == MatchStatus.Completed)) return;
+            if (!allGroupMatches.All(m => IsFinished(m.Status))) return;
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
             if (knockoutStage == null) return;
@@ -5399,7 +5476,7 @@ namespace GameHubz.Logic.Services
             var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
 
             var currentRound = stageMatches.Where(m => m.RoundNumber == completedRound).ToList();
-            if (!currentRound.All(m => m.Status == MatchStatus.Completed)) return;
+            if (!currentRound.All(m => IsFinished(m.Status))) return;
 
             var nextRoundMatches = stageMatches.Where(m => m.RoundNumber == completedRound + 1).ToList();
             if (nextRoundMatches.Count == 0) return;
@@ -5460,6 +5537,12 @@ namespace GameHubz.Logic.Services
             || type == StageType.DoubleEliminationWinnersBracket
             || type == StageType.DoubleEliminationLosersBracket
             || type == StageType.PlayIn;
+
+        // Terminal for round/stage completeness: played (Completed) or administratively closed
+        // with no result (NoShow double forfeit). A NoShow must never block the round from
+        // unlocking / pairing / completing — that's the whole point of closing it.
+        private static bool IsFinished(MatchStatus status)
+            => status == MatchStatus.Completed || status == MatchStatus.NoShow;
 
         private string GetGroupName(int index)
         {
@@ -6057,4 +6140,5 @@ namespace GameHubz.Logic.Services
 
         #endregion 5. Private Helpers (Core Logic)
     }
-}
+
+\}
