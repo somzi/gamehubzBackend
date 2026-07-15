@@ -14,8 +14,9 @@ namespace GameHubz.Logic.Services
     /// <summary>
     /// Handles Discord interaction payloads (already signature-verified by the controller):
     /// PING → PONG, plus the /nextmatch, /matches and /profile slash commands. Text handlers reply
-    /// within Discord's 3-second window; /profile renders an image card, so it defers first and
-    /// edits the original response once the card is ready. Read-only: this service never writes.
+    /// within Discord's 3-second window; /profile and /matches render image cards, so they defer
+    /// first and edit the original response once the card is ready. Read-only: this service never
+    /// writes.
     /// </summary>
     public class DiscordInteractionsService : AppBaseService
     {
@@ -25,10 +26,6 @@ namespace GameHubz.Logic.Services
         private const int ResponseChannelMessage = 4;
         private const int FlagEphemeral = 64;
         private const int ResponseDeferredChannelMessage = 5;
-
-        // Discord caps message content at 2000 chars — cap the list well under that so long
-        // tournament/hub names can't push a busy player's response over the limit.
-        private const int MaxMatchesShown = 12;
 
         private const string NotLinkedMessage = "Link your Discord in the GameHubz app (Profile → Socials).";
 
@@ -71,17 +68,19 @@ namespace GameHubz.Logic.Services
                 string commandName = root.GetProperty("data").GetProperty("name").GetString() ?? "";
                 string? discordUserId = ReadInvokerDiscordId(root);
 
-                // /profile renders an image (QuestPDF + avatar download) that can exceed Discord's
-                // 3s window — acknowledge immediately (deferred, ephemeral) and edit the original
-                // message with the card once it's ready.
-                if (commandName == "profile")
+                // /profile and /matches render an image (QuestPDF + avatar downloads) that can
+                // exceed Discord's 3s window — acknowledge immediately (deferred, ephemeral) and
+                // edit the original message with the card once it's ready.
+                if (commandName == "profile" || commandName == "matches")
                 {
                     string? interactionToken = root.TryGetProperty("token", out var tokenElement)
                         ? tokenElement.GetString()
                         : null;
 
                     if (!string.IsNullOrEmpty(interactionToken))
-                        _ = Task.Run(() => RenderAndSendProfileCardAsync(discordUserId, interactionToken));
+                        _ = commandName == "profile"
+                            ? Task.Run(() => RenderAndSendProfileCardAsync(discordUserId, interactionToken))
+                            : Task.Run(() => RenderAndSendMatchesCardAsync(discordUserId, interactionToken));
 
                     return new { type = ResponseDeferredChannelMessage, data = new { flags = FlagEphemeral } };
                 }
@@ -89,7 +88,6 @@ namespace GameHubz.Logic.Services
                 string content = commandName switch
                 {
                     "nextmatch" => await BuildNextMatchAsync(discordUserId),
-                    "matches" => await BuildMatchesAsync(discordUserId),
                     _ => "Unknown command.",
                 };
 
@@ -144,41 +142,6 @@ namespace GameHubz.Logic.Services
                 + $"{shareLinksConfig.BaseUrl}/tournament/{next.TournamentId}";
         }
 
-        private async Task<string> BuildMatchesAsync(string? discordUserId)
-        {
-            var user = await ResolveLinkedUserAsync(discordUserId);
-            if (user == null) return NotLinkedMessage;
-
-            // GetByUser already returns only the user's active (non-completed) matches — the same
-            // source /nextmatch uses. Keep the upcoming ones, soonest first; unscheduled ones last.
-            var matches = await this.AppUnitOfWork.MatchRepository.GetByUser(user.Id!.Value);
-
-            var active = matches
-                .Where(m => m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
-                .OrderBy(m => m.ScheduledTime ?? DateTime.MaxValue)
-                .ToList();
-
-            if (active.Count == 0)
-                return "You have no active matches. 🎉";
-
-            var lines = active.Take(MaxMatchesShown).Select(m =>
-            {
-                // <t:unix:f> renders in each viewer's local timezone; ScheduledTime is stored UTC-kind-
-                // unspecified, so pin the kind before converting (same as /nextmatch).
-                string when = m.ScheduledTime.HasValue
-                    ? $"🕒 <t:{new DateTimeOffset(DateTime.SpecifyKind(m.ScheduledTime.Value, DateTimeKind.Utc)).ToUnixTimeSeconds()}:f>"
-                    : "⏳ not scheduled";
-                return $"• vs **{m.OpponentNickname ?? m.OpponentName}** — {m.TournamentName} ({m.HubName}) — {when}";
-            });
-
-            string body = string.Join("\n", lines);
-            string footer = active.Count > MaxMatchesShown
-                ? $"\n…and {active.Count - MaxMatchesShown} more — open the app."
-                : "";
-
-            return $"**Your active matches ({active.Count}):**\n{body}{footer}";
-        }
-
         // /profile is served as a rendered image card. Because generation (DB reads + avatar
         // download + QuestPDF raster) can run past Discord's 3s budget, HandleAsync replies
         // "deferred" and this runs fire-and-forget, then edits the original response. A fresh DI
@@ -223,7 +186,7 @@ namespace GameHubz.Logic.Services
                     Avatar = avatar,
                 });
 
-                await EditOriginalWithImageAsync(interactionToken, png);
+                await EditOriginalWithImageAsync(interactionToken, png, "profile.png");
             }
             catch (Exception ex)
             {
@@ -233,29 +196,103 @@ namespace GameHubz.Logic.Services
             }
         }
 
+        // /matches is served as a rendered image card — same deferred flow as /profile: fresh DI
+        // scope, render, then edit the original response.
+        private async Task RenderAndSendMatchesCardAsync(string? discordUserId, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(discordUserId))
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var user = await uow.UserRepository.GetByDiscordUserId(discordUserId);
+                if (user == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                // Same projection the mobile home screen uses — active matches with opponent,
+                // tournament and round deadline already resolved. Soonest first, unscheduled last.
+                var matches = await uow.MatchRepository.GetByUser(user.Id!.Value);
+
+                var active = matches
+                    .Where(m => m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
+                    .OrderBy(m => m.ScheduledTime ?? DateTime.MaxValue)
+                    .ToList();
+
+                // Avatars are only fetched for rows that make it onto the card; the same opponent
+                // across multiple rounds is downloaded once.
+                var avatarCache = new Dictionary<string, byte[]?>();
+                var rows = new List<MatchesCardRow>();
+
+                foreach (var match in active.Take(DiscordMatchesCard.MaxRows))
+                {
+                    byte[]? avatar = null;
+                    if (!string.IsNullOrWhiteSpace(match.OpponentAvatarUrl)
+                        && !avatarCache.TryGetValue(match.OpponentAvatarUrl, out avatar))
+                    {
+                        avatar = await TryDownloadAsync(match.OpponentAvatarUrl);
+                        avatarCache[match.OpponentAvatarUrl] = avatar;
+                    }
+
+                    rows.Add(new MatchesCardRow
+                    {
+                        Opponent = match.OpponentNickname ?? match.OpponentName,
+                        Tournament = match.TournamentName,
+                        Hub = match.HubName,
+                        ScheduledTime = match.ScheduledTime,
+                        Deadline = match.RoundDeadline,
+                        Avatar = avatar,
+                    });
+                }
+
+                byte[] png = DiscordMatchesCard.Render(new MatchesCardData
+                {
+                    Name = string.IsNullOrWhiteSpace(user.Nickname) ? user.Username : user.Nickname!,
+                    TotalActive = active.Count,
+                    Rows = rows,
+                });
+
+                await EditOriginalWithImageAsync(interactionToken, png, "matches.png");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /matches card failed for {DiscordUserId}.", discordUserId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build your matches card right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
         // Discord interaction follow-up target: the original (deferred) response. No auth header —
         // the interaction token in the URL is the authorization.
         private string OriginalResponseUrl(string interactionToken)
             => $"https://discord.com/api/v10/webhooks/{discordConfig.ApplicationId}/{interactionToken}/messages/@original";
 
-        private async Task EditOriginalWithImageAsync(string interactionToken, byte[] png)
+        private async Task EditOriginalWithImageAsync(string interactionToken, byte[] png, string filename)
         {
             var client = httpClientFactory.CreateClient();
 
             using var form = new MultipartFormDataContent();
             string payload = JsonSerializer.Serialize(new
             {
-                attachments = new[] { new { id = 0, filename = "profile.png" } }
+                attachments = new[] { new { id = 0, filename } }
             });
             form.Add(new StringContent(payload, Encoding.UTF8, "application/json"), "payload_json");
 
             var imageContent = new ByteArrayContent(png);
             imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-            form.Add(imageContent, "files[0]", "profile.png");
+            form.Add(imageContent, "files[0]", filename);
 
             using var response = await client.PatchAsync(OriginalResponseUrl(interactionToken), form);
             if (!response.IsSuccessStatusCode)
-                logger.LogWarning("Discord /profile followup returned {StatusCode}: {Body}",
+                logger.LogWarning("Discord card followup returned {StatusCode}: {Body}",
                     response.StatusCode, await response.Content.ReadAsStringAsync());
         }
 
@@ -265,7 +302,7 @@ namespace GameHubz.Logic.Services
             var body = new StringContent(JsonSerializer.Serialize(new { content }), Encoding.UTF8, "application/json");
             using var response = await client.PatchAsync(OriginalResponseUrl(interactionToken), body);
             if (!response.IsSuccessStatusCode)
-                logger.LogWarning("Discord /profile text followup returned {StatusCode}.", response.StatusCode);
+                logger.LogWarning("Discord text followup returned {StatusCode}.", response.StatusCode);
         }
 
         private async Task<byte[]?> TryDownloadAsync(string? url)

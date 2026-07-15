@@ -258,6 +258,7 @@ namespace GameHubz.Data.Repository
                     TournamentId = match.TournamentId,
                     Status = match.Status,
                     ScheduledTime = match.ScheduledStartTime,
+                    RoundDeadline = match.RoundDeadline,
                     UserNickname = me?.Nickname ?? me?.Username ?? "Unknown",
                     OpponentName = opponent?.Username ?? "Unknown",
                     OpponentNickname = opponent?.Nickname ?? opponent?.Username ?? "Unknown",
