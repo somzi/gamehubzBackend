@@ -256,8 +256,10 @@ namespace GameHubz.Logic.Services
                 byte[] png = DiscordMatchesCard.Render(new MatchesCardData
                 {
                     Name = string.IsNullOrWhiteSpace(user.Nickname) ? user.Username : user.Nickname!,
+                    Avatar = await TryDownloadAsync(user.AvatarUrl),
                     TotalActive = active.Count,
                     Rows = rows,
+                    GeneratedAtUtc = DateTime.UtcNow,
                 });
 
                 await EditOriginalWithImageAsync(interactionToken, png, "matches.png");
