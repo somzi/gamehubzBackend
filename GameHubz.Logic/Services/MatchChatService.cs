@@ -9,11 +9,17 @@ namespace GameHubz.Logic.Services
 {
     public class MatchChatService : AppBaseServiceGeneric<MatchChatEntity, MatchChatDto, MatchChatPost, MatchChatEdit>
     {
+        // Discord DM throttle for chat traffic: the first message in a match chat DMs the
+        // opponent, then that match stays quiet for this window. Push notifications are
+        // untouched — they still fire per message; only the additive Discord mirror is tamed.
+        private static readonly TimeSpan ChatDmCooldown = TimeSpan.FromMinutes(10);
+
         private readonly IHubContext<MatchChatHub> hubContext;
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly IDiscordDmService discordDmService;
+        private readonly ICacheService cacheService;
         private readonly ShareLinksConfig shareLinksConfig;
 
         public MatchChatService(
@@ -29,6 +35,7 @@ namespace GameHubz.Logic.Services
             BadgeService badgeService,
             TournamentAuthorizationService tournamentAuth,
             IDiscordDmService discordDmService,
+            ICacheService cacheService,
             IOptions<ShareLinksConfig> shareLinksOptions) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
@@ -43,6 +50,7 @@ namespace GameHubz.Logic.Services
             this.badgeService = badgeService;
             this.tournamentAuth = tournamentAuth;
             this.discordDmService = discordDmService;
+            this.cacheService = cacheService;
             this.shareLinksConfig = shareLinksOptions.Value;
         }
 
@@ -151,12 +159,20 @@ namespace GameHubz.Logic.Services
             }
 
             // Additive Discord DM (push stays the primary channel) — same trigger as the push.
+            // Throttled per match (see ChatDmCooldown); checked here in the request scope so the
+            // fire-and-forget send stays cache-free. Masked link keeps the raw URL out of the
+            // message; the <> also suppresses Discord's link-preview embed.
             if (opponent.DiscordDmEnabled)
             {
-                string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
-                this.discordDmService.SendDmInBackground(
-                    opponent.DiscordUserId,
-                    $"💬 **{user.Username}** (match chat): {body}\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}");
+                string cooldownKey = $"discord:dm_chat_cooldown:{opponentUserId.Value}:{matchId}";
+                if (await this.cacheService.GetAsync<string>(cooldownKey) == null)
+                {
+                    await this.cacheService.SetAsync(cooldownKey, "1", ChatDmCooldown);
+                    string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
+                    this.discordDmService.SendDmInBackground(
+                        opponent.DiscordUserId,
+                        $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                }
             }
         }
 

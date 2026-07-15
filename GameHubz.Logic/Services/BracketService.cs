@@ -3187,7 +3187,7 @@ namespace GameHubz.Logic.Services
             {
                 this.discordDmService.SendDmInBackground(
                     opponent.DiscordUserId,
-                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}");
+                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
             }
         }
 
@@ -3263,7 +3263,7 @@ namespace GameHubz.Logic.Services
                     });
                 }
 
-                string dmContent = $"🏆 Congratulations — you won **{title}**!\n{shareLinksConfig.BaseUrl}/tournament/{tournamentId}";
+                string dmContent = $"🏆 Congratulations — you won **{title}**!\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)";
                 foreach (var discordUserId in discordUserIds)
                 {
                     this.discordDmService.SendDmInBackground(discordUserId, dmContent);

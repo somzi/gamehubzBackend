@@ -170,7 +170,7 @@ namespace GameHubz.Api.BackgroundTasks
                         }
 
                         string dmContent = $"⏰ **{tournament.Name}** — registration closes soon, join before the deadline!\n"
-                            + $"{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}";
+                            + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}>)";
                         foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
                         {
                             await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
@@ -303,7 +303,7 @@ namespace GameHubz.Api.BackgroundTasks
                         }
 
                         string dmContent = $"⏰ **{match.TournamentName}** — {body}\n"
-                            + $"{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}";
+                            + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
                         foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
                         {
                             await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);

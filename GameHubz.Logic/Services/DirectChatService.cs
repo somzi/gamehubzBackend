@@ -5,6 +5,11 @@ namespace GameHubz.Logic.Services
 {
     public class DirectChatService : AppBaseService
     {
+        // Discord DM throttle for chat traffic: the first message of a conversation DMs the
+        // recipient, then that conversation stays quiet for this window. Push notifications are
+        // untouched — they still fire per message; only the additive Discord mirror is tamed.
+        private static readonly TimeSpan ChatDmCooldown = TimeSpan.FromMinutes(45);
+
         private readonly IHubContext<DirectChatHub> hubContext;
         private readonly INotificationService notificationService;
         private readonly FriendService friendService;
@@ -251,12 +256,18 @@ namespace GameHubz.Logic.Services
             }
 
             // Additive Discord DM (push stays the primary channel). No share link — direct
-            // chats have no public web page to point at.
+            // chats have no public web page to point at. Throttled per chat (see ChatDmCooldown);
+            // checked here in the request scope so the fire-and-forget send stays cache-free.
             if (recipient.DiscordDmEnabled)
             {
-                this.discordDmService.SendDmInBackground(
-                    recipient.DiscordUserId,
-                    $"💬 **{senderUsername}**: {body}");
+                string cooldownKey = $"discord:dm_chat_cooldown:{recipientUserId}:{chatId}";
+                if (await this.cacheService.GetAsync<string>(cooldownKey) == null)
+                {
+                    await this.cacheService.SetAsync(cooldownKey, "1", ChatDmCooldown);
+                    this.discordDmService.SendDmInBackground(
+                        recipient.DiscordUserId,
+                        $"💬 **{senderUsername}**: {body}");
+                }
             }
         }
     }

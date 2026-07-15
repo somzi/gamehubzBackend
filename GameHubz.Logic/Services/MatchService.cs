@@ -227,11 +227,13 @@ namespace GameHubz.Logic.Services
 
             // Additive Discord DM (push stays the primary channel). Same event, same data —
             // resolved here in the request scope, sent fire-and-forget by the DM service.
+            // Masked link ([label](<url>)) keeps the raw URL out of the message; the <> also
+            // suppresses Discord's link-preview embed.
             if (opponent.DiscordDmEnabled)
             {
                 string dmContent = match.Status == MatchStatus.Scheduled
-                    ? $"📅 **Match scheduled** — your match vs **{user.Username}** is confirmed.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}"
-                    : $"🕒 **{user.Username}** set their availability — add yours to confirm a time.\n{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}";
+                    ? $"📅 **Match scheduled** — your match vs **{user.Username}** is confirmed.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)"
+                    : $"🕒 **{user.Username}** set their availability — add yours to confirm a time.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
                 discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent);
             }
         }
