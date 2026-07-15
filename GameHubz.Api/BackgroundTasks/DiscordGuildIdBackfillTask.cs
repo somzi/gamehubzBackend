@@ -50,6 +50,12 @@ namespace GameHubz.Api.BackgroundTasks
                 var hubs = await uow.HubRepository.GetWithWebhookMissingGuildId();
                 logger.LogInformation("Discord guild-id backfill: {Count} hub(s) to process.", hubs.Count);
 
+                // Repository reads are AsNoTracking — the entities come back detached, so a bare
+                // SaveChangesAsync would silently persist nothing. UpdateEntity re-attaches each
+                // hub as Modified; the anonymous reader stamps ModifiedBy with the system user
+                // (there's no HTTP context in a hosted task).
+                var systemContext = new AnonymousUserContextReader();
+
                 int filled = 0;
                 foreach (var hub in hubs)
                 {
@@ -61,6 +67,7 @@ namespace GameHubz.Api.BackgroundTasks
                         continue;
 
                     hub.DiscordGuildId = guildId;
+                    await uow.HubRepository.UpdateEntity(hub, systemContext);
                     filled++;
 
                     // Save one at a time so a mid-batch failure doesn't roll back earlier hubs.

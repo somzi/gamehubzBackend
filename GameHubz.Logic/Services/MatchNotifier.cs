@@ -10,9 +10,8 @@ namespace GameHubz.Logic.Services
     {
         public MatchNotifier(
             IUnitOfWorkFactory unitOfWorkFactory,
-            IDiscordNotificationService discordNotificationService,
-            DiscordEmbedBuilder embedBuilder)
-            : base(unitOfWorkFactory, discordNotificationService, embedBuilder)
+            IDiscordNotificationService discordNotificationService)
+            : base(unitOfWorkFactory, discordNotificationService)
         {
         }
 
@@ -26,7 +25,16 @@ namespace GameHubz.Logic.Services
 
                 var (tournament, hub) = context.Value;
                 var (homeName, awayName) = await ResolveSideNamesAsync(match);
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.MatchApproved(hub.Name, tournament.Name, homeName, awayName, homeScore, awayScore));
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.MatchApproved,
+                    HubName = hub.Name,
+                    TournamentName = tournament.Name,
+                    HomeName = homeName,
+                    AwayName = awayName,
+                    HomeScore = homeScore,
+                    AwayScore = awayScore,
+                });
             }
             catch { /* notifications must never break result approval */ }
         }
@@ -41,7 +49,16 @@ namespace GameHubz.Logic.Services
 
                 var (tournament, hub) = context.Value;
                 var (homeName, awayName) = await ResolveSideNamesAsync(match);
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.MatchReverted(hub.Name, tournament.Name, homeName, awayName, homeScore, awayScore));
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.MatchReverted,
+                    HubName = hub.Name,
+                    TournamentName = tournament.Name,
+                    HomeName = homeName,
+                    AwayName = awayName,
+                    HomeScore = homeScore,
+                    AwayScore = awayScore,
+                });
             }
             catch { /* notifications must never break a result revert */ }
         }
@@ -62,7 +79,15 @@ namespace GameHubz.Logic.Services
 
                 var (tournament, hub) = context.Value;
                 var (homeName, awayName) = await ResolveSideNamesAsync(match);
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.DoubleWalkover(hub.Name, tournament.Name, homeName, awayName, opponentAdvances));
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.DoubleWalkover,
+                    HubName = hub.Name,
+                    TournamentName = tournament.Name,
+                    HomeName = homeName,
+                    AwayName = awayName,
+                    OpponentAdvances = opponentAdvances,
+                });
             }
             catch { /* notifications must never break a double walkover */ }
         }

@@ -28,6 +28,25 @@ namespace GameHubz.Logic.Services
 
         private const string NotLinkedMessage = "Link your Discord in the GameHubz app (Profile → Socials).";
 
+        // Grouped by scope so the invoker can tell at a glance what needs a linked account vs a
+        // linked server. Kept as a single const so there's one source of truth — the registration
+        // task's `commands` array is the other, and any drift will show up on the first `/help`.
+        private const string HelpMessage =
+            "**GameHubz bot commands**\n"
+            + "\n"
+            + "__Your account__ (link via Profile → Socials in the app)\n"
+            + "• `/profile` — your player card with stats, trophies and recent form\n"
+            + "• `/nextmatch` — your soonest upcoming match, face-off style\n"
+            + "• `/matches` — every active match you have across all tournaments\n"
+            + "• `/lastmatches` — your recent completed results with scores\n"
+            + "• `/vs @player` — head-to-head record vs another linked player\n"
+            + "\n"
+            + "__This server__ (works once the hub owner sets a webhook)\n"
+            + "• `/leaderboard [sort]` — top players in this server's hub (trophies / wins / winrate)\n"
+            + "• `/hubinfo` — hub profile card with members, tournaments and latest champion\n"
+            + "\n"
+            + "• `/help` — this list";
+
         private readonly ShareLinksConfig shareLinksConfig;
         private readonly DiscordConfig discordConfig;
         private readonly IServiceScopeFactory scopeFactory;
@@ -67,9 +86,14 @@ namespace GameHubz.Logic.Services
                 string commandName = root.GetProperty("data").GetProperty("name").GetString() ?? "";
                 string? discordUserId = ReadInvokerDiscordId(root);
 
-                // Every command renders an image (QuestPDF + avatar downloads) that can exceed
-                // Discord's 3s window — acknowledge immediately (deferred, ephemeral) and edit
-                // the original message with the card once it's ready.
+                // /help is a plain text listing of every command — no DB read, no render, so it
+                // replies immediately without going through the deferred flow the cards use.
+                if (commandName == "help")
+                    return EphemeralMessage(HelpMessage);
+
+                // Every other command renders an image (QuestPDF + avatar downloads) that can
+                // exceed Discord's 3s window — acknowledge immediately (deferred, ephemeral) and
+                // edit the original message with the card once it's ready.
                 string? interactionToken = root.TryGetProperty("token", out var tokenElement)
                     ? tokenElement.GetString()
                     : null;
@@ -622,10 +646,6 @@ namespace GameHubz.Logic.Services
                     return;
                 }
 
-                int champions = await uow.TournamentRepository.GetChampionsCountByHubId(hub.Id!.Value);
-                var next = await uow.TournamentRepository.GetNextTournamentByHubId(hub.Id!.Value);
-                var champion = await uow.TournamentRepository.GetLatestChampionByHubId(hub.Id!.Value);
-
                 byte[] png = DiscordHubInfoCard.Render(new HubInfoCardData
                 {
                     Name = overview.Name,
@@ -636,11 +656,7 @@ namespace GameHubz.Logic.Services
                     IsPublic = overview.IsPublic,
                     MembersCount = overview.NumberOfUsers,
                     TournamentsCount = overview.NumberOfTournaments,
-                    ChampionsCount = champions,
-                    NextTournamentName = next?.Name,
-                    NextTournamentDate = next?.StartDate,
-                    LatestChampionName = champion?.ChampionName,
-                    LatestChampionTournament = champion?.TournamentName,
+                    EstablishedOn = overview.CreatedOn,
                     GeneratedAtUtc = DateTime.UtcNow,
                 });
 

@@ -17,9 +17,8 @@ namespace GameHubz.Logic.Services
         public TournamentNotifier(
             IUnitOfWorkFactory unitOfWorkFactory,
             INotificationService notificationService,
-            IDiscordNotificationService discordNotificationService,
-            DiscordEmbedBuilder embedBuilder)
-            : base(unitOfWorkFactory, discordNotificationService, embedBuilder)
+            IDiscordNotificationService discordNotificationService)
+            : base(unitOfWorkFactory, discordNotificationService)
         {
             this.notificationService = notificationService;
         }
@@ -36,7 +35,15 @@ namespace GameHubz.Logic.Services
 
                 var hub = await GetDiscordTargetAsync(model.HubId, s => s.RegistrationOpened);
                 if (hub != null)
-                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationOpened(hub.Name, model.Name, model.MaxPlayers, model.Prize, model.PrizeCurrency));
+                    SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                    {
+                        Kind = AnnouncementKind.RegistrationOpened,
+                        HubName = hub.Name,
+                        TournamentName = model.Name,
+                        MaxPlayers = model.MaxPlayers,
+                        Prize = model.Prize,
+                        PrizeCurrency = PrizeCurrencyLabel(model.PrizeCurrency),
+                    });
             }
             catch { /* notifications must never break tournament creation */ }
         }
@@ -56,7 +63,15 @@ namespace GameHubz.Logic.Services
 
                 var hub = await GetDiscordTargetAsync(tournament.HubId, s => s.RegistrationOpened);
                 if (hub != null)
-                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationOpened(hub.Name, tournament.Name, tournament.MaxPlayers ?? 0, tournament.Prize, tournament.PrizeCurrency));
+                    SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                    {
+                        Kind = AnnouncementKind.RegistrationOpened,
+                        HubName = hub.Name,
+                        TournamentName = tournament.Name,
+                        MaxPlayers = tournament.MaxPlayers ?? 0,
+                        Prize = tournament.Prize,
+                        PrizeCurrency = PrizeCurrencyLabel(tournament.PrizeCurrency),
+                    });
             }
             catch { /* notifications must never break opening registration */ }
         }
@@ -72,7 +87,13 @@ namespace GameHubz.Logic.Services
                 if (hub == null) return;
 
                 int participantCount = tournament.TournamentParticipants?.Count ?? 0;
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.RegistrationClosed(hub.Name, tournament.Name, participantCount));
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.RegistrationClosed,
+                    HubName = hub.Name,
+                    TournamentName = tournament.Name,
+                    ParticipantCount = participantCount,
+                });
             }
             catch { /* notifications must never break closing registration */ }
         }
@@ -91,10 +112,27 @@ namespace GameHubz.Logic.Services
                 if (hub == null) return;
 
                 var championName = await ResolveChampionNameAsync(tournament);
-                SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.TournamentFinished(hub.Name, tournament.Name, championName));
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.TournamentFinished,
+                    HubName = hub.Name,
+                    TournamentName = tournament.Name,
+                    ChampionName = championName,
+                });
             }
             catch { /* never let a Discord announcement break tournament completion */ }
         }
+
+        // Mirrors the labels shown in the mobile Create Tournament form (prizeCurrencies in
+        // CreateTournamentModal.tsx) so the Discord announcement matches what the organizer picked.
+        private static string PrizeCurrencyLabel(PrizeCurrency currency) => currency switch
+        {
+            PrizeCurrency.Eur => "EUR",
+            PrizeCurrency.Dollar => "USD",
+            PrizeCurrency.StarPass => "StarPass",
+            PrizeCurrency.FCP => "FCP",
+            _ => currency.ToString(),
+        };
 
         private async Task<string?> ResolveChampionNameAsync(TournamentEntity tournament)
         {

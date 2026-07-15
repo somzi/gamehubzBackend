@@ -20,22 +20,18 @@ namespace GameHubz.Logic.Services
 
         public int MembersCount { get; set; }
         public int TournamentsCount { get; set; }
-        public int ChampionsCount { get; set; }
 
-        public string? NextTournamentName { get; set; }
-        public DateTime? NextTournamentDate { get; set; }
-
-        public string? LatestChampionName { get; set; }
-        public string? LatestChampionTournament { get; set; }
+        /// <summary>Hub creation date — the "Established" row.</summary>
+        public DateTime? EstablishedOn { get; set; }
 
         public DateTime GeneratedAtUtc { get; set; }
     }
 
     /// <summary>
-    /// Renders the /hubinfo poster card to a PNG — same compact panel style as the other Discord
-    /// cards. Big hub avatar + verification badge, description snippet, a Members/Tournaments/
-    /// Champions stats strip, and two feature cards for the next scheduled tournament and the
-    /// latest champion. Pure and static — callers pass fully resolved data.
+    /// Renders the /hubinfo card to a PNG — mirrors the mobile app's Hub → Overview screen:
+    /// avatar + name header with a verified badge, then a "General info" list (Members,
+    /// Tournaments, Access, Established, Owner), each row with a colored icon chip on the left
+    /// and the value on the right. Pure and static — callers pass fully resolved data.
     /// </summary>
     public static class DiscordHubInfoCard
     {
@@ -77,14 +73,29 @@ namespace GameHubz.Logic.Services
                                 Header(panel, d, avatar);
 
                                 if (!string.IsNullOrWhiteSpace(d.Description))
-                                    panel.Item().Text(d.Description).FontSize(10.5f).FontColor(TextLo).ClampLines(3, "…");
+                                    panel.Item().Text(d.Description).FontSize(10.5f).FontColor(TextLo).ClampLines(2, "…");
 
                                 panel.Item().Height(2).CornerRadius(1).Background(Stroke);
 
-                                StatsStrip(panel, d);
+                                // ── General info — same list the mobile Hub → Overview shows ──
+                                panel.Item().Row(r =>
+                                {
+                                    r.AutoItem().AlignMiddle().Width(13).Height(13).Svg(InfoIcon(TrophyGold));
+                                    r.AutoItem().AlignMiddle().PaddingLeft(7)
+                                        .Text("GENERAL INFO").FontSize(10).Bold().FontColor(TextLo).LetterSpacing(0.15f);
+                                });
 
-                                NextTournament(panel, d);
-                                LatestChampion(panel, d);
+                                panel.Item().Column(list =>
+                                {
+                                    list.Spacing(8);
+                                    InfoRow(list, PeopleIcon(Info), "Members", d.MembersCount.ToString(), TextHi);
+                                    InfoRow(list, TrophyIcon(TrophyGold), "Tournaments", d.TournamentsCount.ToString(), TextHi);
+                                    InfoRow(list, GlobeIcon(Accent), "Access", d.IsPublic ? "Public" : "Private", TextHi);
+                                    if (d.EstablishedOn.HasValue)
+                                        InfoRow(list, CalendarIcon(Info), "Established",
+                                            FormatUtc(d.EstablishedOn.Value, "dd MMM yyyy"), TextHi);
+                                    InfoRow(list, PersonIcon(Accent), "Owner", d.OwnerName, Accent);
+                                });
 
                                 Footer(panel, d);
                             });
@@ -102,10 +113,10 @@ namespace GameHubz.Logic.Services
             panel.Item().Row(row =>
             {
                 if (avatar != null)
-                    row.ConstantItem(72).Height(72).Image(avatar).FitArea();
+                    row.ConstantItem(64).Height(64).Image(avatar).FitArea();
                 else
-                    row.ConstantItem(72).Height(72).CornerRadius(36).Background(Cell).Border(1).BorderColor(Stroke)
-                        .AlignMiddle().AlignCenter().Text(Initial(d.Name)).FontSize(26).Bold().FontColor(Accent);
+                    row.ConstantItem(64).Height(64).CornerRadius(32).Background(Cell).Border(1).BorderColor(Stroke)
+                        .AlignMiddle().AlignCenter().Text(Initial(d.Name)).FontSize(24).Bold().FontColor(Accent);
 
                 row.RelativeItem().PaddingLeft(15).AlignMiddle().Column(c =>
                 {
@@ -117,96 +128,26 @@ namespace GameHubz.Logic.Services
                         if (d.IsVerified)
                             r.AutoItem().PaddingLeft(6).AlignMiddle().Width(15).Height(15).Svg(VerifiedIcon(Info));
                     });
-
-                    c.Item().PaddingTop(5).Inlined(chips =>
-                    {
-                        chips.Spacing(6);
-                        MetaChip(chips, PersonIcon(TextLo), d.OwnerName);
-                        MetaChip(chips, LockIcon(TextLo), d.IsPublic ? "PUBLIC" : "PRIVATE");
-                    });
                 });
             });
         }
 
-        private static void MetaChip(InlinedDescriptor chips, string icon, string text)
+        // One "General info" row: colored icon chip, label, value pushed to the right —
+        // the same layout the mobile Hub → Overview list uses.
+        private static void InfoRow(ColumnDescriptor list, string icon, string label, string value, string valueColor)
         {
-            if (string.IsNullOrWhiteSpace(text))
-                return;
-
-            chips.Item().CornerRadius(8).Background(Bg).Border(1).BorderColor(Stroke)
-                .PaddingVertical(3).PaddingHorizontal(7).Row(r =>
+            list.Item().CornerRadius(12).Background(Cell).Border(1).BorderColor(Stroke)
+                .PaddingVertical(9).PaddingHorizontal(12).Row(row =>
                 {
-                    r.AutoItem().AlignMiddle().Width(9).Height(9).Svg(icon);
-                    r.AutoItem().AlignMiddle().PaddingLeft(5)
-                        .Text(text.ToUpperInvariant()).FontSize(7.5f).Bold().FontColor(TextLo).LetterSpacing(0.08f);
+                    row.ConstantItem(26).Height(26).CornerRadius(8).Background(Bg).Border(1).BorderColor(Stroke)
+                        .AlignMiddle().AlignCenter().Width(13).Height(13).Svg(icon);
+
+                    row.RelativeItem().PaddingLeft(11).AlignMiddle()
+                        .Text(label).FontSize(11.5f).Bold().FontColor(TextHi);
+
+                    row.AutoItem().AlignMiddle()
+                        .Text(value).FontSize(12).Bold().FontColor(valueColor);
                 });
-        }
-
-        private static void StatsStrip(ColumnDescriptor panel, HubInfoCardData d)
-        {
-            panel.Item().Row(row =>
-            {
-                row.Spacing(10);
-                StatCell(row, "MEMBERS", d.MembersCount.ToString(), TextHi);
-                StatCell(row, "TOURNAMENTS", d.TournamentsCount.ToString(), Accent);
-                StatCell(row, "CHAMPIONS", d.ChampionsCount.ToString(), TrophyGold);
-            });
-        }
-
-        private static void StatCell(RowDescriptor row, string label, string value, string valueColor)
-        {
-            row.RelativeItem().CornerRadius(12).Background(Cell).Border(1).BorderColor(Stroke)
-                .PaddingVertical(12).PaddingHorizontal(4).Column(c =>
-                {
-                    c.Item().AlignCenter().Text(value).FontSize(21).Bold().FontColor(valueColor);
-                    c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(7.5f).Bold().FontColor(TextLo).LetterSpacing(0.12f);
-                });
-        }
-
-        private static void NextTournament(ColumnDescriptor panel, HubInfoCardData d)
-        {
-            panel.Item().CornerRadius(14).Background(Cell).Border(1).BorderColor(Stroke).Padding(12).Column(c =>
-            {
-                c.Item().Row(r =>
-                {
-                    r.AutoItem().AlignMiddle().Width(11).Height(11).Svg(CalendarIcon(Accent));
-                    r.AutoItem().AlignMiddle().PaddingLeft(6)
-                        .Text("NEXT TOURNAMENT").FontSize(9).Bold().FontColor(TextLo).LetterSpacing(0.14f);
-                });
-
-                if (!string.IsNullOrWhiteSpace(d.NextTournamentName))
-                {
-                    c.Item().PaddingTop(6).Text(d.NextTournamentName).FontSize(14).Bold().FontColor(TextHi).ClampLines(1, "…");
-                    if (d.NextTournamentDate.HasValue)
-                        c.Item().PaddingTop(2)
-                            .Text(FormatUtc(d.NextTournamentDate.Value, "dd MMM yyyy · HH:mm") + " UTC")
-                            .FontSize(10).Bold().FontColor(Accent);
-                }
-                else
-                    c.Item().PaddingTop(6).Text("No scheduled tournaments").FontSize(11).FontColor(TextLo);
-            });
-        }
-
-        private static void LatestChampion(ColumnDescriptor panel, HubInfoCardData d)
-        {
-            panel.Item().CornerRadius(14).Background(Cell).Border(1).BorderColor(Stroke).Padding(12).Column(c =>
-            {
-                c.Item().Row(r =>
-                {
-                    r.AutoItem().AlignMiddle().Width(11).Height(11).Svg(TrophyIcon(TrophyGold));
-                    r.AutoItem().AlignMiddle().PaddingLeft(6)
-                        .Text("LATEST CHAMPION").FontSize(9).Bold().FontColor(TextLo).LetterSpacing(0.14f);
-                });
-
-                if (!string.IsNullOrWhiteSpace(d.LatestChampionName))
-                {
-                    c.Item().PaddingTop(6).Text(d.LatestChampionName).FontSize(14).Bold().FontColor(TrophyGold).ClampLines(1, "…");
-                    if (!string.IsNullOrWhiteSpace(d.LatestChampionTournament))
-                        c.Item().PaddingTop(2).Text(d.LatestChampionTournament).FontSize(10).FontColor(TextLo).ClampLines(1, "…");
-                }
-                else
-                    c.Item().PaddingTop(6).Text("No champions crowned yet").FontSize(11).FontColor(TextLo);
-            });
         }
 
         private static void Footer(ColumnDescriptor panel, HubInfoCardData d)
@@ -233,14 +174,20 @@ namespace GameHubz.Logic.Services
         private static string TrophyIcon(string color)
             => Svg("<path d=\"M8 21h8M12 17v4M7 3h10v5a5 5 0 0 1-10 0V3z\"/><path d=\"M7 5H4c0 3 1.5 5 4 5M17 5h3c0 3-1.5 5-4 5\"/>", color);
 
+        private static string PeopleIcon(string color)
+            => Svg("<circle cx=\"9\" cy=\"8\" r=\"3.5\"/><path d=\"M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5\"/><path d=\"M16 5a3.5 3.5 0 0 1 0 6.3M18 14.8c2.1.8 3.5 2.4 3.5 5.2\"/>", color);
+
+        private static string GlobeIcon(string color)
+            => Svg("<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18M12 3c2.5 2.5 2.5 15.5 0 18M12 3c-2.5 2.5-2.5 15.5 0 18\"/>", color);
+
         private static string CalendarIcon(string color)
             => Svg("<rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M3 10h18M8 3v4M16 3v4\"/>", color);
 
         private static string PersonIcon(string color)
             => Svg("<circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c0-4 4-7 8-7s8 3 8 7\"/>", color);
 
-        private static string LockIcon(string color)
-            => Svg("<rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M8 11V8a4 4 0 0 1 8 0v3\"/>", color);
+        private static string InfoIcon(string color)
+            => Svg("<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 11v5\"/><circle cx=\"12\" cy=\"8\" r=\"0.5\"/>", color);
 
         private static string VerifiedIcon(string color)
             => Svg("<path d=\"M12 2l2.5 2.5L18 4l1 3.5L21.5 10 20 12l1.5 2-2.5 2.5L18 20l-3.5-1L12 22l-2.5-3-3.5 1-1-3.5L2.5 14 4 12 2.5 10 5 7.5 6 4l3.5 1L12 2z\"/><path d=\"m9 12 2 2 4-4\"/>", color);

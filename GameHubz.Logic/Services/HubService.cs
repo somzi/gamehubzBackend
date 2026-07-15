@@ -264,17 +264,17 @@ namespace GameHubz.Logic.Services
                     ? null
                     : request.DiscordNotificationSettings;
 
-            // Auto-detect the Discord server (guild) this hub is linked to whenever the webhook URL
-            // changes — the mapping powers server-scoped slash commands like /leaderboard. Clearing
-            // the URL also clears the guild id; setting a new one triggers a fresh GET of the
-            // webhook metadata. All best-effort: a network/uniqueness failure never blocks the save.
-            if (hub.DiscordWebhookUrl != previousWebhookUrl)
-            {
-                if (string.IsNullOrWhiteSpace(hub.DiscordWebhookUrl))
-                    hub.DiscordGuildId = null;
-                else
-                    hub.DiscordGuildId = await ResolveDiscordGuildIdAsync(hub.Id!.Value, hub.DiscordWebhookUrl);
-            }
+            // Auto-detect the Discord server (guild) this hub is linked to — the mapping powers
+            // server-scoped slash commands like /leaderboard. Clearing the URL clears the guild
+            // id; a changed URL triggers a fresh GET of the webhook metadata. Also retries when
+            // the guild id is still missing for an unchanged URL (webhooks saved before this
+            // feature existed, or a previously failed detection) — so a plain re-save self-heals.
+            // Best-effort: a network failure never blocks the save.
+            bool webhookChanged = hub.DiscordWebhookUrl != previousWebhookUrl;
+            if (string.IsNullOrWhiteSpace(hub.DiscordWebhookUrl))
+                hub.DiscordGuildId = null;
+            else if (webhookChanged || hub.DiscordGuildId == null)
+                hub.DiscordGuildId = await ResolveDiscordGuildIdAsync(hub.Id!.Value, hub.DiscordWebhookUrl);
 
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 

@@ -97,10 +97,9 @@ namespace GameHubz.Logic
 
             services.AddTransient<INotificationService, NotificationService>();
 
-            // ─── Discord webhook integration (phase 1): dumb HTTP sender + embed presentation +
-            // per-domain notifier facades that fan events out to Expo and Discord ───
+            // ─── Discord webhook integration (phase 1): dumb HTTP sender (rendered announcement
+            // cards) + per-domain notifier facades that fan events out to Expo and Discord ───
             services.AddTransient<IDiscordNotificationService, DiscordNotificationService>();
-            services.AddTransient<DiscordEmbedBuilder>();
             services.AddTransient<TournamentNotifier>();
             services.AddTransient<MatchNotifier>();
             services.AddTransient<BracketNotifier>();

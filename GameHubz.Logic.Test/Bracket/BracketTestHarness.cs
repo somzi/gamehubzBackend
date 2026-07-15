@@ -141,11 +141,10 @@ namespace GameHubz.Logic.Test.Bracket
 
             // Real notifiers over the shared store: test hubs never carry a DiscordWebhookUrl, so the
             // Discord branch resolves to "not configured" and only the mocked transport would be hit.
-            var embedBuilder = new DiscordEmbedBuilder();
             var discordNotifications = new Mock<IDiscordNotificationService>().Object;
-            var tournamentNotifier = new TournamentNotifier(factory, Notifications, discordNotifications, embedBuilder);
-            var matchNotifier = new MatchNotifier(factory, discordNotifications, embedBuilder);
-            var bracketNotifier = new BracketNotifier(factory, Notifications, discordNotifications, embedBuilder);
+            var tournamentNotifier = new TournamentNotifier(factory, Notifications, discordNotifications);
+            var matchNotifier = new MatchNotifier(factory, discordNotifications);
+            var bracketNotifier = new BracketNotifier(factory, Notifications, discordNotifications);
 
             // Personal bot DMs (phase 2): mocked transport — test users never link Discord, so the
             // DM branches no-op before ever reaching it.

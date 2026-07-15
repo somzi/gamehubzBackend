@@ -1,15 +1,17 @@
 using GameHubz.Logic.Interfaces;
 using Microsoft.Extensions.Logging;
-using System.Net.Http.Json;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace GameHubz.Logic.Services
 {
     /// <summary>
-    /// POSTs an embed payload to a Discord webhook URL. Same shape as <see cref="NotificationService"/>
-    /// (IHttpClientFactory + swallow-everything error handling): a Discord outage or a revoked webhook
-    /// must never surface into the request that triggered the notification.
+    /// POSTs a rendered announcement card to a Discord webhook URL as a multipart upload
+    /// (payload_json + files[0]) — the same wire format the slash-command followups use.
+    /// Swallow-everything error handling: a Discord outage or a revoked webhook must never
+    /// surface into the request that triggered the notification.
     /// </summary>
     public class DiscordNotificationService : IDiscordNotificationService
     {
@@ -24,7 +26,7 @@ namespace GameHubz.Logic.Services
             this.logger = logger;
         }
 
-        public async Task SendAsync(string webhookUrl, object payload)
+        public async Task SendImageAsync(string webhookUrl, byte[] png, string filename)
         {
             if (string.IsNullOrWhiteSpace(webhookUrl))
                 return;
@@ -33,11 +35,18 @@ namespace GameHubz.Logic.Services
             {
                 var client = httpClientFactory.CreateClient("DiscordWebhook");
 
-                var response = await client.PostAsJsonAsync(webhookUrl, payload, new JsonSerializerOptions
+                using var form = new MultipartFormDataContent();
+                string payload = JsonSerializer.Serialize(new
                 {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                    attachments = new[] { new { id = 0, filename } }
                 });
+                form.Add(new StringContent(payload, Encoding.UTF8, "application/json"), "payload_json");
+
+                var imageContent = new ByteArrayContent(png);
+                imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+                form.Add(imageContent, "files[0]", filename);
+
+                using var response = await client.PostAsync(webhookUrl, form);
 
                 if (!response.IsSuccessStatusCode)
                 {

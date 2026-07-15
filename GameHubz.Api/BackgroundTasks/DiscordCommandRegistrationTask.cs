@@ -91,6 +91,7 @@ namespace GameHubz.Api.BackgroundTasks
                         },
                     },
                     new { name = "hubinfo", description = "Show info about this server's GameHubz hub", type = 1 },
+                    new { name = "help", description = "List every GameHubz bot command", type = 1 },
                 };
 
                 var client = httpClientFactory.CreateClient("DiscordBot");

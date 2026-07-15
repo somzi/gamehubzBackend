@@ -3,24 +3,21 @@ namespace GameHubz.Logic.Services
     /// <summary>
     /// Shared Discord plumbing for the domain notifiers (<see cref="TournamentNotifier"/>,
     /// <see cref="MatchNotifier"/>, <see cref="BracketNotifier"/>): resolve the hub's webhook +
-    /// per-event settings, and fire-and-forget the POST. Deliberately NOT a generic notification
-    /// provider abstraction — there are exactly two channels (Expo, Discord) and the Expo side
-    /// lives directly in the concrete notifiers.
+    /// per-event settings, and fire-and-forget the announcement card. Deliberately NOT a generic
+    /// notification provider abstraction — there are exactly two channels (Expo, Discord) and the
+    /// Expo side lives directly in the concrete notifiers.
     /// </summary>
     public abstract class DiscordNotifierBase
     {
         protected readonly IAppUnitOfWork AppUnitOfWork;
-        protected readonly DiscordEmbedBuilder EmbedBuilder;
         private readonly IDiscordNotificationService discordNotificationService;
 
         protected DiscordNotifierBase(
             IUnitOfWorkFactory unitOfWorkFactory,
-            IDiscordNotificationService discordNotificationService,
-            DiscordEmbedBuilder embedBuilder)
+            IDiscordNotificationService discordNotificationService)
         {
             this.AppUnitOfWork = unitOfWorkFactory.CreateAppUnitOfWork();
             this.discordNotificationService = discordNotificationService;
-            this.EmbedBuilder = embedBuilder;
         }
 
         /// <summary>
@@ -38,17 +35,20 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
-        /// Fire-and-forget POST, mirroring the Task.Run pattern the Expo pushes use: the send runs
-        /// outside the request and must never block or fail it. All data is resolved before this
-        /// call, so the background task never touches the request-scoped DbContext (F109 discipline).
+        /// Fire-and-forget render + POST, mirroring the Task.Run pattern the Expo pushes use: the
+        /// QuestPDF raster (~100ms) and the send run outside the request and must never block or
+        /// fail it. All data is resolved into the card DTO before this call, so the background
+        /// task never touches the request-scoped DbContext (F109 discipline).
         /// </summary>
-        protected void SendToDiscord(string webhookUrl, object payload)
+        protected void SendToDiscord(string webhookUrl, AnnouncementCardData card)
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await this.discordNotificationService.SendAsync(webhookUrl, payload);
+                    card.GeneratedAtUtc = DateTime.UtcNow;
+                    byte[] png = DiscordAnnouncementCard.Render(card);
+                    await this.discordNotificationService.SendImageAsync(webhookUrl, png, "announcement.png");
                 }
                 catch { /* fire-and-forget */ }
             });

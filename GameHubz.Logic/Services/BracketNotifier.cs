@@ -11,9 +11,8 @@ namespace GameHubz.Logic.Services
         public BracketNotifier(
             IUnitOfWorkFactory unitOfWorkFactory,
             INotificationService notificationService,
-            IDiscordNotificationService discordNotificationService,
-            DiscordEmbedBuilder embedBuilder)
-            : base(unitOfWorkFactory, discordNotificationService, embedBuilder)
+            IDiscordNotificationService discordNotificationService)
+            : base(unitOfWorkFactory, discordNotificationService)
         {
             this.notificationService = notificationService;
         }
@@ -30,7 +29,12 @@ namespace GameHubz.Logic.Services
 
                 var hub = await GetDiscordTargetAsync(tournament.HubId, s => s.TournamentStarted);
                 if (hub != null)
-                    SendToDiscord(hub.DiscordWebhookUrl!, this.EmbedBuilder.TournamentStarted(hub.Name, tournament.Name));
+                    SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                    {
+                        Kind = AnnouncementKind.TournamentStarted,
+                        HubName = hub.Name,
+                        TournamentName = tournament.Name,
+                    });
             }
             catch { /* notifications must never break bracket generation */ }
         }
