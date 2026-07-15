@@ -6140,5 +6140,4 @@ namespace GameHubz.Logic.Services
 
         #endregion 5. Private Helpers (Core Logic)
     }
-
-\}
+}

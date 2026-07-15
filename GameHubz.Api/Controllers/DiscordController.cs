@@ -62,6 +62,13 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPut("show-on-profile")]
+        public async Task<IActionResult> SetShowOnProfile([FromBody] SetDiscordShowOnProfileRequest request)
+        {
+            await discordLinkService.SetShowOnProfileAsync(request.Show);
+            return Ok();
+        }
+
         /// <summary>
         /// Discord's Interactions Endpoint URL. The Ed25519 signature must be verified over the RAW
         /// body before anything is deserialized, so this action does its own body reading and skips

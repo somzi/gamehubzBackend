@@ -93,14 +93,23 @@ namespace GameHubz.Logic.Services
                 await cacheService.SetAsync(key, cachedProfile, TimeSpan.FromHours(1));
             }
 
-            // The Discord bot link is a private notification setting, not a public social — only
-            // the profile owner sees it (their Socials screen prefills from this). Safe to mutate:
-            // the cache round-trips through JSON, every read gets a fresh instance.
+            // The public Discord chip is gated on DiscordUserId (it builds the discord.com/users
+            // link). Drop it whenever the owner hasn't opted in — for EVERYONE, so the owner's own
+            // profile view matches what others see. Safe to mutate: the cache round-trips through
+            // JSON, every read gets a fresh instance.
+            if (!cachedProfile.DiscordShowOnProfile)
+            {
+                cachedProfile.DiscordUserId = null;
+            }
+
+            // Private link settings (username, DM + show-on-profile switches) never leave to other
+            // viewers — they only prefill the owner's own Socials screen.
             var caller = await this.UserContextReader.GetTokenUserInfoFromContext();
             if (caller == null || caller.UserId != userId)
             {
                 cachedProfile.DiscordUsername = null;
                 cachedProfile.DiscordDmEnabled = true;
+                cachedProfile.DiscordShowOnProfile = false;
             }
 
             return cachedProfile;

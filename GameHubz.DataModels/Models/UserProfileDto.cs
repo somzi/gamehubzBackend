@@ -25,10 +25,13 @@ namespace GameHubz.DataModels.Models
         public List<UserSocialDto>? UserSocials { get; set; } = new();
         public string? AvatarUrl { get; set; }
 
-        // Discord bot link status — populated only when the caller requests their OWN profile
-        // (the mobile Socials screen prefills from this); stripped for everyone else. Distinct
-        // from the manually-entered public Discord social in UserSocials.
+        // Discord bot link. DiscordUsername + DmEnabled + ShowOnProfile are private (owner-only —
+        // the mobile Socials screen prefills from them). DiscordUserId is the public part: it builds
+        // the discord.com/users profile link and is exposed to other viewers ONLY when the owner
+        // opted in via DiscordShowOnProfile. Distinct from the manual Discord social in UserSocials.
         public string? DiscordUsername { get; set; }
+        public string? DiscordUserId { get; set; }
         public bool DiscordDmEnabled { get; set; } = true;
+        public bool DiscordShowOnProfile { get; set; } = true;
     }
 }

@@ -146,6 +146,19 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"user_profile:{caller.UserId}");
         }
 
+        public async Task SetShowOnProfileAsync(bool show)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(caller.UserId);
+            user.DiscordShowOnProfile = show;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+            await this.SaveAsync();
+
+            await cacheService.RemoveAsync($"user_profile:{caller.UserId}");
+        }
+
         // Exchanges the authorization code and reads the Discord identity. The access/refresh
         // tokens are deliberately discarded — identify is all we ever need, and storing tokens
         // we won't use again would only widen the blast radius of a leak.
