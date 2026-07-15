@@ -79,6 +79,8 @@ namespace GameHubz.Logic.Services
                     "profile" => () => RenderAndSendProfileCardAsync(discordUserId, interactionToken!),
                     "matches" => () => RenderAndSendMatchesCardAsync(discordUserId, interactionToken!),
                     "nextmatch" => () => RenderAndSendNextMatchCardAsync(discordUserId, interactionToken!),
+                    "lastmatches" => () => RenderAndSendLastMatchesCardAsync(discordUserId, interactionToken!),
+                    "vs" => () => RenderAndSendVsCardAsync(discordUserId, ReadUserOption(root, "opponent"), interactionToken!),
                     _ => null,
                 };
 
@@ -92,6 +94,26 @@ namespace GameHubz.Logic.Services
             }
 
             return EphemeralMessage("This interaction isn't supported.");
+        }
+
+        // Reads a USER-type slash-command option (type 6) — the value is the target's Discord id
+        // as a string. `data.resolved.users` also has the full user object, but the id alone is
+        // enough to look up the linked GameHubz account.
+        private static string? ReadUserOption(JsonElement root, string optionName)
+        {
+            if (!root.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("options", out var options) ||
+                options.ValueKind != JsonValueKind.Array)
+                return null;
+
+            foreach (var option in options.EnumerateArray())
+            {
+                if (option.TryGetProperty("name", out var name) && name.GetString() == optionName
+                    && option.TryGetProperty("value", out var value))
+                    return value.GetString();
+            }
+
+            return null;
         }
 
         // In a guild the invoker is under member.user, in a bot DM directly under user.
@@ -307,6 +329,158 @@ namespace GameHubz.Logic.Services
             {
                 logger.LogWarning(ex, "Discord /nextmatch card failed for {DiscordUserId}.", discordUserId);
                 try { await EditOriginalTextAsync(interactionToken, "Couldn't build your next-match card right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
+        // /lastmatches is the completed-history mirror of /matches — same deferred flow, but the
+        // rows come from GetLastMatchesByUserId (all-time results with score + IsWin already
+        // resolved). Drives the "Profile / Upcoming / History" trio on Discord.
+        private async Task RenderAndSendLastMatchesCardAsync(string? discordUserId, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(discordUserId))
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var user = await uow.UserRepository.GetByDiscordUserId(discordUserId);
+                if (user == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                var stats = await uow.MatchRepository.GetStatsByUserId(user.Id!.Value);
+                var last = await uow.MatchRepository.GetLastMatchesByUserId(user.Id!.Value, DiscordLastMatchesCard.MaxRows, 0);
+
+                var avatarCache = new Dictionary<string, byte[]?>();
+                var rows = new List<LastMatchesCardRow>();
+
+                foreach (var m in last)
+                {
+                    byte[]? avatar = null;
+                    if (!string.IsNullOrWhiteSpace(m.OpponentAvatarUrl)
+                        && !avatarCache.TryGetValue(m.OpponentAvatarUrl, out avatar))
+                    {
+                        avatar = await TryDownloadAsync(m.OpponentAvatarUrl);
+                        avatarCache[m.OpponentAvatarUrl] = avatar;
+                    }
+
+                    // IsWin is nullable (null = draw when scores are recorded but no winner set);
+                    // GetStatsByUserId only counts non-null wins/losses, so draws show up as the
+                    // difference between total and W+L.
+                    string outcome = m.IsWin == true ? "W" : m.IsWin == false ? "L" : "D";
+
+                    rows.Add(new LastMatchesCardRow
+                    {
+                        Opponent = m.OpponentName,
+                        Tournament = m.TournamentName,
+                        Hub = m.HubName,
+                        Outcome = outcome,
+                        MyScore = m.UserScore,
+                        OpponentScore = m.OpponentScore,
+                        PlayedAt = m.ScheduledTime,
+                        Avatar = avatar,
+                    });
+                }
+
+                byte[] png = DiscordLastMatchesCard.Render(new LastMatchesCardData
+                {
+                    Name = string.IsNullOrWhiteSpace(user.Nickname) ? user.Username : user.Nickname!,
+                    Wins = stats.Wins,
+                    Losses = stats.Losses,
+                    Draws = stats.Draws,
+                    Rows = rows,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                });
+
+                await EditOriginalWithImageAsync(interactionToken, png, "lastmatches.png");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /lastmatches card failed for {DiscordUserId}.", discordUserId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build your last-matches card right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
+        // /vs @opponent renders a head-to-head card. Both sides must be linked to a GameHubz
+        // account — the invoker via their Discord id, the opponent via the USER option — otherwise
+        // the followup is a text hint telling the invoker (or the missing side) what to do. Self-
+        // targeting short-circuits with a friendly message instead of a zero-row H2H.
+        private async Task RenderAndSendVsCardAsync(string? invokerDiscordId, string? opponentDiscordId, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(invokerDiscordId))
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(opponentDiscordId))
+                {
+                    await EditOriginalTextAsync(interactionToken, "Pick an opponent — usage: /vs @player.");
+                    return;
+                }
+
+                if (invokerDiscordId == opponentDiscordId)
+                {
+                    await EditOriginalTextAsync(interactionToken, "You can't face yourself — pick another player.");
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var me = await uow.UserRepository.GetByDiscordUserId(invokerDiscordId);
+                if (me == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                var opponent = await uow.UserRepository.GetByDiscordUserId(opponentDiscordId);
+                if (opponent == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, "That player hasn't linked a GameHubz account yet.");
+                    return;
+                }
+
+                var h2h = await uow.MatchRepository.GetHeadToHead(me.Id!.Value, opponent.Id!.Value);
+
+                byte[] png = DiscordVsCard.Render(new VsCardData
+                {
+                    PlayerName = string.IsNullOrWhiteSpace(me.Nickname) ? me.Username : me.Nickname!,
+                    PlayerAvatar = await TryDownloadAsync(me.AvatarUrl),
+                    OpponentName = string.IsNullOrWhiteSpace(opponent.Nickname) ? opponent.Username : opponent.Nickname!,
+                    OpponentAvatar = await TryDownloadAsync(opponent.AvatarUrl),
+                    TotalMatches = h2h.TotalMatches,
+                    MyWins = h2h.MyWins,
+                    OpponentWins = h2h.OpponentWins,
+                    Draws = h2h.Draws,
+                    LastOutcome = h2h.LastOutcome,
+                    LastMyScore = h2h.LastMyScore,
+                    LastOpponentScore = h2h.LastOpponentScore,
+                    LastMatchTime = h2h.LastMatchTime,
+                    LastTournamentName = h2h.LastTournamentName,
+                    LastHubName = h2h.LastHubName,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                });
+
+                await EditOriginalWithImageAsync(interactionToken, png, "vs.png");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /vs card failed for {DiscordUserId} vs {OpponentDiscordId}.",
+                    invokerDiscordId, opponentDiscordId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build the head-to-head card right now — try again."); }
                 catch { /* best effort */ }
             }
         }

@@ -377,6 +377,72 @@ namespace GameHubz.Data.Repository
             return recent;
         }
 
+        // Head-to-head between two users. Filters on the same participant/team-match dual model
+        // GetLastMatchesByUserId uses, aggregates outcomes in memory (typical H2H count is small
+        // enough that the trip is cheaper than mirrored SQL branches), and snapshots the most
+        // recent match for the "Last meeting" card.
+        public async Task<HeadToHeadDto> GetHeadToHead(Guid userId, Guid opponentId)
+        {
+            var rows = await this.BaseDbSet()
+                .AsNoTracking()
+                .Where(m => m.Status == MatchStatus.Completed
+                    && ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null
+                            && ((m.HomeParticipant!.UserId == userId && m.AwayParticipant!.UserId == opponentId)
+                                || (m.HomeParticipant!.UserId == opponentId && m.AwayParticipant!.UserId == userId)))
+                        || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null
+                            && ((m.HomeUserId == userId && m.AwayUserId == opponentId)
+                                || (m.HomeUserId == opponentId && m.AwayUserId == userId)))))
+                .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
+                .Select(m => new
+                {
+                    m.WinnerParticipantId,
+                    m.HomeParticipantId,
+                    m.AwayParticipantId,
+                    m.HomeUserId,
+                    HomeUserFromParticipant = m.HomeParticipant != null ? m.HomeParticipant.UserId : (Guid?)null,
+                    m.HomeUserScore,
+                    m.AwayUserScore,
+                    m.ScheduledStartTime,
+                    m.ModifiedOn,
+                    TournamentName = m.Tournament!.Name,
+                    HubName = m.Tournament!.Hub!.Name,
+                })
+                .ToListAsync();
+
+            var dto = new HeadToHeadDto { TotalMatches = rows.Count };
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var m = rows[i];
+                Guid? homeUserId = m.HomeUserId ?? m.HomeUserFromParticipant;
+                bool iAmHome = homeUserId == userId;
+
+                if (m.WinnerParticipantId == null)
+                    dto.Draws++;
+                else
+                {
+                    Guid? myParticipant = iAmHome ? m.HomeParticipantId : m.AwayParticipantId;
+                    if (m.WinnerParticipantId == myParticipant) dto.MyWins++;
+                    else dto.OpponentWins++;
+                }
+
+                // Rows are ordered newest-first, so the 0th row is the last meeting.
+                if (i == 0)
+                {
+                    dto.LastMatchTime = m.ScheduledStartTime ?? m.ModifiedOn;
+                    dto.LastMyScore = iAmHome ? m.HomeUserScore : m.AwayUserScore;
+                    dto.LastOpponentScore = iAmHome ? m.AwayUserScore : m.HomeUserScore;
+                    dto.LastOutcome = m.WinnerParticipantId == null
+                        ? "D"
+                        : m.WinnerParticipantId == (iAmHome ? m.HomeParticipantId : m.AwayParticipantId) ? "W" : "L";
+                    dto.LastTournamentName = m.TournamentName;
+                    dto.LastHubName = m.HubName;
+                }
+            }
+
+            return dto;
+        }
+
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
             var stats = await this.BaseDbSet()

@@ -48,11 +48,25 @@ namespace GameHubz.Api.BackgroundTasks
         {
             try
             {
-                var commands = new[]
+                // Discord requires a homogeneous array shape when we mix commands with/without
+                // options — hand-build the anonymous objects as `object` so `vs` can carry its
+                // opponent option (application-command option type 6 = USER).
+                var commands = new object[]
                 {
                     new { name = "nextmatch", description = "Show your next GameHubz match", type = 1 },
                     new { name = "matches", description = "List your active GameHubz matches", type = 1 },
+                    new { name = "lastmatches", description = "Show your recent GameHubz results", type = 1 },
                     new { name = "profile", description = "Show your GameHubz profile and stats", type = 1 },
+                    new
+                    {
+                        name = "vs",
+                        description = "Head-to-head vs another linked player",
+                        type = 1,
+                        options = new[]
+                        {
+                            new { name = "opponent", description = "The player to compare against", type = 6, required = true },
+                        },
+                    },
                 };
 
                 var client = httpClientFactory.CreateClient("DiscordBot");

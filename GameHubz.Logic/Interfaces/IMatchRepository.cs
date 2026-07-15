@@ -60,5 +60,7 @@ namespace GameHubz.Logic.Interfaces
         Task<List<PerformanceDto>> GetPerformanceByUserId(Guid userId);
 
         Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId);
+
+        Task<HeadToHeadDto> GetHeadToHead(Guid userId, Guid opponentId);
     }
 }
