@@ -102,14 +102,22 @@ namespace GameHubz.Logic.Services
                     ? guildElement.GetString()
                     : null;
 
+                // CRITICAL: every value the render lambdas need must be materialized HERE, before
+                // the switch. `root` is backed by the `using var doc` above — by the time Task.Run
+                // executes the lambda, HandleAsync has returned and the document is disposed, so a
+                // lazy ReadXxxOption(root, ...) inside a lambda throws ObjectDisposedException and
+                // the deferred message hangs on "thinking…" forever.
+                string? opponentOption = ReadUserOption(root, "opponent");
+                string? sortOption = ReadStringOption(root, "sort");
+
                 Func<Task>? render = commandName switch
                 {
                     "profile" => () => RenderAndSendProfileCardAsync(discordUserId, interactionToken!),
                     "matches" => () => RenderAndSendMatchesCardAsync(discordUserId, interactionToken!),
                     "nextmatch" => () => RenderAndSendNextMatchCardAsync(discordUserId, interactionToken!),
                     "lastmatches" => () => RenderAndSendLastMatchesCardAsync(discordUserId, interactionToken!),
-                    "vs" => () => RenderAndSendVsCardAsync(discordUserId, ReadUserOption(root, "opponent"), interactionToken!),
-                    "leaderboard" => () => RenderAndSendLeaderboardCardAsync(guildId, ReadStringOption(root, "sort"), interactionToken!),
+                    "vs" => () => RenderAndSendVsCardAsync(discordUserId, opponentOption, interactionToken!),
+                    "leaderboard" => () => RenderAndSendLeaderboardCardAsync(guildId, sortOption, interactionToken!),
                     "hubinfo" => () => RenderAndSendHubInfoCardAsync(guildId, interactionToken!),
                     _ => null,
                 };
@@ -118,7 +126,17 @@ namespace GameHubz.Logic.Services
                     return EphemeralMessage("Unknown command.");
 
                 if (!string.IsNullOrEmpty(interactionToken))
-                    _ = Task.Run(render);
+                    _ = Task.Run(async () =>
+                    {
+                        // The handlers carry their own try/catch + fallback edit; this outer net
+                        // exists so anything thrown OUTSIDE them (argument evaluation, scope setup)
+                        // is at least logged instead of silently leaving the deferred "thinking…".
+                        try { await render(); }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "Discord /{Command} background handler crashed outside its own error handling.", commandName);
+                        }
+                    });
 
                 return new { type = ResponseDeferredChannelMessage, data = new { flags = FlagEphemeral } };
             }
