@@ -13,10 +13,9 @@ namespace GameHubz.Logic.Services
 {
     /// <summary>
     /// Handles Discord interaction payloads (already signature-verified by the controller):
-    /// PING → PONG, plus the /nextmatch, /matches and /profile slash commands. Text handlers reply
-    /// within Discord's 3-second window; /profile and /matches render image cards, so they defer
-    /// first and edit the original response once the card is ready. Read-only: this service never
-    /// writes.
+    /// PING → PONG, plus the /nextmatch, /matches and /profile slash commands. All three render
+    /// image cards whose generation can exceed Discord's 3-second window, so they defer first and
+    /// edit the original response once the card is ready. Read-only: this service never writes.
     /// </summary>
     public class DiscordInteractionsService : AppBaseService
     {
@@ -68,30 +67,28 @@ namespace GameHubz.Logic.Services
                 string commandName = root.GetProperty("data").GetProperty("name").GetString() ?? "";
                 string? discordUserId = ReadInvokerDiscordId(root);
 
-                // /profile and /matches render an image (QuestPDF + avatar downloads) that can
-                // exceed Discord's 3s window — acknowledge immediately (deferred, ephemeral) and
-                // edit the original message with the card once it's ready.
-                if (commandName == "profile" || commandName == "matches")
+                // Every command renders an image (QuestPDF + avatar downloads) that can exceed
+                // Discord's 3s window — acknowledge immediately (deferred, ephemeral) and edit
+                // the original message with the card once it's ready.
+                string? interactionToken = root.TryGetProperty("token", out var tokenElement)
+                    ? tokenElement.GetString()
+                    : null;
+
+                Func<Task>? render = commandName switch
                 {
-                    string? interactionToken = root.TryGetProperty("token", out var tokenElement)
-                        ? tokenElement.GetString()
-                        : null;
-
-                    if (!string.IsNullOrEmpty(interactionToken))
-                        _ = commandName == "profile"
-                            ? Task.Run(() => RenderAndSendProfileCardAsync(discordUserId, interactionToken))
-                            : Task.Run(() => RenderAndSendMatchesCardAsync(discordUserId, interactionToken));
-
-                    return new { type = ResponseDeferredChannelMessage, data = new { flags = FlagEphemeral } };
-                }
-
-                string content = commandName switch
-                {
-                    "nextmatch" => await BuildNextMatchAsync(discordUserId),
-                    _ => "Unknown command.",
+                    "profile" => () => RenderAndSendProfileCardAsync(discordUserId, interactionToken!),
+                    "matches" => () => RenderAndSendMatchesCardAsync(discordUserId, interactionToken!),
+                    "nextmatch" => () => RenderAndSendNextMatchCardAsync(discordUserId, interactionToken!),
+                    _ => null,
                 };
 
-                return EphemeralMessage(content);
+                if (render == null)
+                    return EphemeralMessage("Unknown command.");
+
+                if (!string.IsNullOrEmpty(interactionToken))
+                    _ = Task.Run(render);
+
+                return new { type = ResponseDeferredChannelMessage, data = new { flags = FlagEphemeral } };
             }
 
             return EphemeralMessage("This interaction isn't supported.");
@@ -114,33 +111,6 @@ namespace GameHubz.Logic.Services
 
         private static object EphemeralMessage(string content)
             => new { type = ResponseChannelMessage, data = new { content, flags = FlagEphemeral } };
-
-        private async Task<string> BuildNextMatchAsync(string? discordUserId)
-        {
-            var user = await ResolveLinkedUserAsync(discordUserId);
-            if (user == null) return NotLinkedMessage;
-
-            // Same projection the mobile home screen uses (GET /api/match/home/{userId}) — active
-            // matches for the user with opponent + tournament already resolved.
-            var matches = await this.AppUnitOfWork.MatchRepository.GetByUser(user.Id!.Value);
-
-            var next = matches
-                .Where(m => m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
-                .OrderBy(m => m.ScheduledTime ?? DateTime.MaxValue)
-                .FirstOrDefault();
-
-            if (next == null)
-                return "You have no upcoming matches. 🎉";
-
-            // <t:unix:F> renders in each viewer's local timezone on Discord.
-            string when = next.ScheduledTime.HasValue
-                ? $"<t:{new DateTimeOffset(DateTime.SpecifyKind(next.ScheduledTime.Value, DateTimeKind.Utc)).ToUnixTimeSeconds()}:F>"
-                : "time TBD — agree on a time in the app";
-
-            return $"**Next match:** vs **{next.OpponentNickname ?? next.OpponentName}** — {next.TournamentName} ({next.HubName})\n"
-                + $"🕒 {when}\n"
-                + $"{shareLinksConfig.BaseUrl}/tournament/{next.TournamentId}";
-        }
 
         // /profile is served as a rendered image card. Because generation (DB reads + avatar
         // download + QuestPDF raster) can run past Discord's 3s budget, HandleAsync replies
@@ -277,20 +247,84 @@ namespace GameHubz.Logic.Services
             }
         }
 
+        // /nextmatch is served as a rendered face-off card — same deferred flow as /profile. The
+        // tournament share link rides along as message content (wrapped in <> so Discord doesn't
+        // unfurl a preview embed under the card).
+        private async Task RenderAndSendNextMatchCardAsync(string? discordUserId, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(discordUserId))
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var user = await uow.UserRepository.GetByDiscordUserId(discordUserId);
+                if (user == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, NotLinkedMessage);
+                    return;
+                }
+
+                // Same projection the mobile home screen uses — the soonest active match wins,
+                // unscheduled ones last.
+                var matches = await uow.MatchRepository.GetByUser(user.Id!.Value);
+
+                var next = matches
+                    .Where(m => m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
+                    .OrderBy(m => m.ScheduledTime ?? DateTime.MaxValue)
+                    .FirstOrDefault();
+
+                var data = new NextMatchCardData
+                {
+                    PlayerName = string.IsNullOrWhiteSpace(user.Nickname) ? user.Username : user.Nickname!,
+                    PlayerAvatar = await TryDownloadAsync(user.AvatarUrl),
+                    HasMatch = next != null,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                };
+
+                string? content = null;
+                if (next != null)
+                {
+                    data.Opponent = next.OpponentNickname ?? next.OpponentName;
+                    data.OpponentAvatar = await TryDownloadAsync(next.OpponentAvatarUrl);
+                    data.Tournament = next.TournamentName;
+                    data.Hub = next.HubName;
+                    data.ScheduledTime = next.ScheduledTime;
+                    data.Deadline = next.RoundDeadline;
+                    content = $"<{shareLinksConfig.BaseUrl}/tournament/{next.TournamentId}>";
+                }
+
+                byte[] png = DiscordNextMatchCard.Render(data);
+
+                await EditOriginalWithImageAsync(interactionToken, png, "nextmatch.png", content);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /nextmatch card failed for {DiscordUserId}.", discordUserId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build your next-match card right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
         // Discord interaction follow-up target: the original (deferred) response. No auth header —
         // the interaction token in the URL is the authorization.
         private string OriginalResponseUrl(string interactionToken)
             => $"https://discord.com/api/v10/webhooks/{discordConfig.ApplicationId}/{interactionToken}/messages/@original";
 
-        private async Task EditOriginalWithImageAsync(string interactionToken, byte[] png, string filename)
+        private async Task EditOriginalWithImageAsync(string interactionToken, byte[] png, string filename, string? content = null)
         {
             var client = httpClientFactory.CreateClient();
 
             using var form = new MultipartFormDataContent();
-            string payload = JsonSerializer.Serialize(new
-            {
-                attachments = new[] { new { id = 0, filename } }
-            });
+            var attachments = new[] { new { id = 0, filename } };
+            string payload = content == null
+                ? JsonSerializer.Serialize(new { attachments })
+                : JsonSerializer.Serialize(new { content, attachments });
             form.Add(new StringContent(payload, Encoding.UTF8, "application/json"), "payload_json");
 
             var imageContent = new ByteArrayContent(png);
@@ -339,13 +373,5 @@ namespace GameHubz.Logic.Services
             RegionType.OCEANIA => "Oceania",
             _ => "Global",
         };
-
-        private async Task<UserEntity?> ResolveLinkedUserAsync(string? discordUserId)
-        {
-            if (string.IsNullOrWhiteSpace(discordUserId))
-                return null;
-
-            return await this.AppUnitOfWork.UserRepository.GetByDiscordUserId(discordUserId);
-        }
     }
 }
