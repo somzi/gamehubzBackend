@@ -372,6 +372,61 @@ namespace GameHubz.Data.Repository
                         || (t.WinnerTeamId != null && t.WinnerTeam!.Members.Any(m => m.UserId == userId)));
         }
 
+        // "Champions" = completed tournaments with a winner in this hub — one row per event, so
+        // the count matches how many crown-ceremonies happened here.
+        public Task<int> GetChampionsCountByHubId(Guid hubId)
+        {
+            return this.BaseDbSet()
+                .CountAsync(t => t.HubId == hubId
+                    && t.Status == TournamentStatus.Completed
+                    && (t.WinnerUserId != null || t.WinnerTeamId != null));
+        }
+
+        // Soonest still-upcoming tournament — anything with a start date in the future and not
+        // completed/cancelled/deleted. Null when nothing is scheduled.
+        public Task<HubNextTournamentDto?> GetNextTournamentByHubId(Guid hubId)
+        {
+            var now = DateTime.UtcNow;
+            return this.BaseDbSet()
+                .AsNoTracking()
+                .Where(t => t.HubId == hubId
+                    && t.StartDate != null && t.StartDate > now
+                    && t.Status != TournamentStatus.Completed
+                    && t.Status != TournamentStatus.Cancelled
+                    && t.Status != TournamentStatus.Deleted)
+                .OrderBy(t => t.StartDate)
+                .Select(t => new HubNextTournamentDto
+                {
+                    Name = t.Name,
+                    StartDate = t.StartDate,
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        // Most recently completed tournament that has a winner — solo or team. Team names are
+        // stored on TeamEntity, solo winners just take the user's username/nickname.
+        public Task<HubLatestChampionDto?> GetLatestChampionByHubId(Guid hubId)
+        {
+            return this.BaseDbSet()
+                .AsNoTracking()
+                .Where(t => t.HubId == hubId
+                    && t.Status == TournamentStatus.Completed
+                    && (t.WinnerUserId != null || t.WinnerTeamId != null))
+                .OrderByDescending(t => t.ModifiedOn)
+                .Select(t => new HubLatestChampionDto
+                {
+                    TournamentName = t.Name,
+                    ChampionName = t.WinnerTeamId != null
+                        ? (t.WinnerTeam != null ? t.WinnerTeam.TeamName : "—")
+                        : (t.WinnerUser != null
+                            ? (t.WinnerUser.Nickname != null && t.WinnerUser.Nickname != ""
+                                ? t.WinnerUser.Nickname
+                                : t.WinnerUser.Username)
+                            : "—"),
+                })
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId)
         {
             return await this.BaseDbSet()

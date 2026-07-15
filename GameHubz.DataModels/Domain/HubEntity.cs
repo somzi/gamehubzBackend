@@ -21,5 +21,10 @@ namespace GameHubz.DataModels.Domain
 
         /// <summary>JSON per-event toggles (e.g. { "registrationOpened": true, ... }). Null = all events on.</summary>
         public string? DiscordNotificationSettings { get; set; }
+
+        /// <summary>Discord server (guild) this hub is linked to, auto-detected from the webhook URL
+        /// on save. Enables server-scoped slash commands like /leaderboard and /hubinfo to auto-resolve
+        /// which hub the invoking server represents. Null = not detected yet.</summary>
+        public string? DiscordGuildId { get; set; }
     }
 }

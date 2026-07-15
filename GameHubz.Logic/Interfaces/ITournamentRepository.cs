@@ -22,6 +22,12 @@ namespace GameHubz.Logic.Interfaces
 
         Task<int> GetNumberOfTournamentsWonByUserId(Guid id);
 
+        Task<int> GetChampionsCountByHubId(Guid hubId);
+
+        Task<HubNextTournamentDto?> GetNextTournamentByHubId(Guid hubId);
+
+        Task<HubLatestChampionDto?> GetLatestChampionByHubId(Guid hubId);
+
         Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId);
 
         Task<TournamentEntity> GetWithHubById(Guid tournamentId);

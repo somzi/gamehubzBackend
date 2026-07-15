@@ -15,5 +15,11 @@ namespace GameHubz.Logic.Interfaces
         Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, int pageNumber, bool joined, string? search = null);
 
         Task<List<Guid>> GetHubIdsByUserId(Guid userId);
+
+        Task<HubEntity?> GetByDiscordGuildId(string guildId);
+
+        Task<List<HubEntity>> GetWithWebhookMissingGuildId();
+
+        Task<List<HubLeaderboardEntryDto>> GetHubLeaderboard(Guid hubId);
     }
 }

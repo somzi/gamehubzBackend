@@ -133,5 +133,123 @@ namespace GameHubz.Data.Repository
                 .Select(h => h.Id!.Value)
                 .ToListAsync();
         }
+
+        public Task<HubEntity?> GetByDiscordGuildId(string guildId)
+        {
+            return this.BaseDbSet()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(h => h.DiscordGuildId == guildId);
+        }
+
+        // Backfill support: hubs that already have a webhook URL configured but were saved before
+        // guild-id auto-detection existed. Returns tracked entities so the caller can update &
+        // persist in a single UnitOfWork pass.
+        public Task<List<HubEntity>> GetWithWebhookMissingGuildId()
+        {
+            return this.BaseDbSet()
+                .Where(h => h.DiscordWebhookUrl != null && h.DiscordGuildId == null)
+                .ToListAsync();
+        }
+
+        // Aggregates every completed match played inside this hub, per user. Trophies count only
+        // wins IN THIS HUB (hub-scoped), so the leaderboard stays comparable across sort modes.
+        // Done in memory because the dual participant/team-match model plus subquery for trophies
+        // makes the equivalent SQL fragile — and the row count is bounded by "distinct players in
+        // one hub", not the whole platform.
+        public async Task<List<HubLeaderboardEntryDto>> GetHubLeaderboard(Guid hubId)
+        {
+            var matches = await this.ContextBase.Set<MatchEntity>()
+                .AsNoTracking()
+                .Where(m => m.Status == MatchStatus.Completed
+                    && m.Tournament!.HubId == hubId)
+                .Include(m => m.HomeParticipant).ThenInclude(p => p!.User)
+                .Include(m => m.AwayParticipant).ThenInclude(p => p!.User)
+                .Include(m => m.HomeUser)
+                .Include(m => m.AwayUser)
+                .Select(m => new
+                {
+                    m.WinnerParticipantId,
+                    m.HomeParticipantId,
+                    m.AwayParticipantId,
+                    m.HomeUserId,
+                    m.AwayUserId,
+                    HomeParticipantUserId = m.HomeParticipant != null ? m.HomeParticipant.UserId : (Guid?)null,
+                    AwayParticipantUserId = m.AwayParticipant != null ? m.AwayParticipant.UserId : (Guid?)null,
+                    HomeUsername = m.HomeUser != null ? m.HomeUser.Username
+                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Username : null),
+                    HomeNickname = m.HomeUser != null ? m.HomeUser.Nickname
+                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Nickname : null),
+                    HomeAvatar = m.HomeUser != null ? m.HomeUser.AvatarUrl
+                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.AvatarUrl : null),
+                    AwayUsername = m.AwayUser != null ? m.AwayUser.Username
+                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Username : null),
+                    AwayNickname = m.AwayUser != null ? m.AwayUser.Nickname
+                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Nickname : null),
+                    AwayAvatar = m.AwayUser != null ? m.AwayUser.AvatarUrl
+                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.AvatarUrl : null),
+                })
+                .ToListAsync();
+
+            var trophies = await this.ContextBase.Set<TournamentEntity>()
+                .AsNoTracking()
+                .Where(t => t.HubId == hubId && t.WinnerUserId != null)
+                .GroupBy(t => t.WinnerUserId!.Value)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count);
+
+            var byUser = new Dictionary<Guid, HubLeaderboardEntryDto>();
+
+            foreach (var m in matches)
+            {
+                Guid? homeUserId = m.HomeUserId ?? m.HomeParticipantUserId;
+                Guid? awayUserId = m.AwayUserId ?? m.AwayParticipantUserId;
+
+                Accumulate(homeUserId, m.HomeUsername, m.HomeNickname, m.HomeAvatar,
+                    isDraw: m.WinnerParticipantId == null,
+                    isWin: m.WinnerParticipantId != null && m.WinnerParticipantId == m.HomeParticipantId);
+                Accumulate(awayUserId, m.AwayUsername, m.AwayNickname, m.AwayAvatar,
+                    isDraw: m.WinnerParticipantId == null,
+                    isWin: m.WinnerParticipantId != null && m.WinnerParticipantId == m.AwayParticipantId);
+            }
+
+            foreach (var kv in trophies)
+            {
+                if (byUser.TryGetValue(kv.Key, out var existing))
+                    existing.Trophies = kv.Value;
+                // A trophy without any completed matches (auto-forfeit champion?) still deserves
+                // a row — leaderboard sort by trophies would otherwise miss them.
+                else
+                    byUser[kv.Key] = new HubLeaderboardEntryDto
+                    {
+                        UserId = kv.Key,
+                        Username = "Unknown",
+                        Trophies = kv.Value,
+                    };
+            }
+
+            return byUser.Values.ToList();
+
+            void Accumulate(Guid? userId, string? username, string? nickname, string? avatar, bool isDraw, bool isWin)
+            {
+                if (userId == null) return;
+
+                if (!byUser.TryGetValue(userId.Value, out var entry))
+                {
+                    entry = new HubLeaderboardEntryDto
+                    {
+                        UserId = userId.Value,
+                        Username = username ?? "Unknown",
+                        Nickname = nickname,
+                        AvatarUrl = avatar,
+                    };
+                    byUser[userId.Value] = entry;
+                }
+
+                entry.TotalMatches++;
+                if (isDraw) entry.Draws++;
+                else if (isWin) entry.Wins++;
+                else entry.Losses++;
+            }
+        }
     }
 }

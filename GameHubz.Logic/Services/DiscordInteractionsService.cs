@@ -74,6 +74,10 @@ namespace GameHubz.Logic.Services
                     ? tokenElement.GetString()
                     : null;
 
+                string? guildId = root.TryGetProperty("guild_id", out var guildElement)
+                    ? guildElement.GetString()
+                    : null;
+
                 Func<Task>? render = commandName switch
                 {
                     "profile" => () => RenderAndSendProfileCardAsync(discordUserId, interactionToken!),
@@ -81,6 +85,8 @@ namespace GameHubz.Logic.Services
                     "nextmatch" => () => RenderAndSendNextMatchCardAsync(discordUserId, interactionToken!),
                     "lastmatches" => () => RenderAndSendLastMatchesCardAsync(discordUserId, interactionToken!),
                     "vs" => () => RenderAndSendVsCardAsync(discordUserId, ReadUserOption(root, "opponent"), interactionToken!),
+                    "leaderboard" => () => RenderAndSendLeaderboardCardAsync(guildId, ReadStringOption(root, "sort"), interactionToken!),
+                    "hubinfo" => () => RenderAndSendHubInfoCardAsync(guildId, interactionToken!),
                     _ => null,
                 };
 
@@ -100,6 +106,14 @@ namespace GameHubz.Logic.Services
         // as a string. `data.resolved.users` also has the full user object, but the id alone is
         // enough to look up the linked GameHubz account.
         private static string? ReadUserOption(JsonElement root, string optionName)
+            => ReadOptionRaw(root, optionName)?.GetString();
+
+        // Reads a STRING-type slash-command option (type 3) — used for enum-style choices (e.g.
+        // /leaderboard sort:winrate). Discord sends the choice's `value`, not the display label.
+        private static string? ReadStringOption(JsonElement root, string optionName)
+            => ReadOptionRaw(root, optionName)?.GetString();
+
+        private static JsonElement? ReadOptionRaw(JsonElement root, string optionName)
         {
             if (!root.TryGetProperty("data", out var data) ||
                 !data.TryGetProperty("options", out var options) ||
@@ -110,7 +124,7 @@ namespace GameHubz.Logic.Services
             {
                 if (option.TryGetProperty("name", out var name) && name.GetString() == optionName
                     && option.TryGetProperty("value", out var value))
-                    return value.GetString();
+                    return value;
             }
 
             return null;
@@ -483,6 +497,178 @@ namespace GameHubz.Logic.Services
                 try { await EditOriginalTextAsync(interactionToken, "Couldn't build the head-to-head card right now — try again."); }
                 catch { /* best effort */ }
             }
+        }
+
+        // /leaderboard renders a hub-scoped top-N card. The hub is auto-resolved from the invoking
+        // Discord server via Hub.DiscordGuildId (auto-detected from the webhook URL on hub save —
+        // see HubService.ResolveDiscordGuildIdAsync). Sort choices: trophies / wins / winrate;
+        // winrate filters out low-sample players so a 1-match 100% doesn't top the board.
+        private const int MinMatchesForWinRate = 5;
+
+        private async Task RenderAndSendLeaderboardCardAsync(string? guildId, string? sortRaw, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(guildId))
+                {
+                    await EditOriginalTextAsync(interactionToken, "This command only works inside a server.");
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var hub = await uow.HubRepository.GetByDiscordGuildId(guildId);
+                if (hub == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, ServerNotLinkedMessage);
+                    return;
+                }
+
+                LeaderboardSort sort = ParseSort(sortRaw);
+
+                var entries = await uow.HubRepository.GetHubLeaderboard(hub.Id!.Value);
+
+                IEnumerable<HubLeaderboardEntryDto> sorted = sort switch
+                {
+                    LeaderboardSort.Wins => entries
+                        .OrderByDescending(e => e.Wins)
+                        .ThenByDescending(e => WinRatePercent(e))
+                        .ThenBy(e => e.Losses),
+                    LeaderboardSort.WinRate => entries
+                        .Where(e => e.TotalMatches >= MinMatchesForWinRate)
+                        .OrderByDescending(e => WinRatePercent(e))
+                        .ThenByDescending(e => e.Wins),
+                    _ => entries
+                        .OrderByDescending(e => e.Trophies)
+                        .ThenByDescending(e => e.Wins)
+                        .ThenByDescending(e => WinRatePercent(e)),
+                };
+
+                var top = sorted.Take(DiscordLeaderboardCard.MaxRows).ToList();
+
+                var avatarCache = new Dictionary<string, byte[]?>();
+                var rows = new List<LeaderboardCardRow>();
+                int rank = 1;
+                foreach (var e in top)
+                {
+                    byte[]? avatar = null;
+                    if (!string.IsNullOrWhiteSpace(e.AvatarUrl)
+                        && !avatarCache.TryGetValue(e.AvatarUrl, out avatar))
+                    {
+                        avatar = await TryDownloadAsync(e.AvatarUrl);
+                        avatarCache[e.AvatarUrl] = avatar;
+                    }
+
+                    rows.Add(new LeaderboardCardRow
+                    {
+                        Rank = rank++,
+                        Name = string.IsNullOrWhiteSpace(e.Nickname) ? e.Username : e.Nickname!,
+                        Avatar = avatar,
+                        Trophies = e.Trophies,
+                        Wins = e.Wins,
+                        Losses = e.Losses,
+                        Draws = e.Draws,
+                        TotalMatches = e.TotalMatches,
+                        WinRate = WinRatePercent(e),
+                    });
+                }
+
+                byte[] png = DiscordLeaderboardCard.Render(new LeaderboardCardData
+                {
+                    HubName = hub.Name,
+                    HubAvatar = await TryDownloadAsync(hub.AvatarUrl),
+                    Sort = sort,
+                    Rows = rows,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                });
+
+                await EditOriginalWithImageAsync(interactionToken, png, "leaderboard.png");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /leaderboard card failed for guild {GuildId}.", guildId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build the leaderboard right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
+        // /hubinfo renders a poster card for the hub linked to the invoking server. Same guild
+        // resolution as /leaderboard.
+        private async Task RenderAndSendHubInfoCardAsync(string? guildId, string interactionToken)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(guildId))
+                {
+                    await EditOriginalTextAsync(interactionToken, "This command only works inside a server.");
+                    return;
+                }
+
+                using var scope = scopeFactory.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>().CreateAppUnitOfWork();
+
+                var hub = await uow.HubRepository.GetByDiscordGuildId(guildId);
+                if (hub == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, ServerNotLinkedMessage);
+                    return;
+                }
+
+                var overview = await uow.HubRepository.GetOverviewDtoById(hub.Id!.Value);
+                if (overview == null)
+                {
+                    await EditOriginalTextAsync(interactionToken, "Couldn't load hub info — try again.");
+                    return;
+                }
+
+                int champions = await uow.TournamentRepository.GetChampionsCountByHubId(hub.Id!.Value);
+                var next = await uow.TournamentRepository.GetNextTournamentByHubId(hub.Id!.Value);
+                var champion = await uow.TournamentRepository.GetLatestChampionByHubId(hub.Id!.Value);
+
+                byte[] png = DiscordHubInfoCard.Render(new HubInfoCardData
+                {
+                    Name = overview.Name,
+                    Description = overview.Description,
+                    Avatar = await TryDownloadAsync(overview.AvatarUrl),
+                    OwnerName = overview.OwnerName,
+                    IsVerified = overview.IsVerified,
+                    IsPublic = overview.IsPublic,
+                    MembersCount = overview.NumberOfUsers,
+                    TournamentsCount = overview.NumberOfTournaments,
+                    ChampionsCount = champions,
+                    NextTournamentName = next?.Name,
+                    NextTournamentDate = next?.StartDate,
+                    LatestChampionName = champion?.ChampionName,
+                    LatestChampionTournament = champion?.TournamentName,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                });
+
+                await EditOriginalWithImageAsync(interactionToken, png, "hubinfo.png");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Discord /hubinfo card failed for guild {GuildId}.", guildId);
+                try { await EditOriginalTextAsync(interactionToken, "Couldn't build the hub info card right now — try again."); }
+                catch { /* best effort */ }
+            }
+        }
+
+        private const string ServerNotLinkedMessage =
+            "This Discord server isn't linked to a GameHubz hub yet — the hub owner can link it by setting the hub's Discord webhook in the app.";
+
+        private static LeaderboardSort ParseSort(string? raw) => raw?.ToLowerInvariant() switch
+        {
+            "wins" => LeaderboardSort.Wins,
+            "winrate" => LeaderboardSort.WinRate,
+            _ => LeaderboardSort.Trophies,
+        };
+
+        private static int WinRatePercent(HubLeaderboardEntryDto e)
+        {
+            int decisive = e.Wins + e.Losses;
+            if (decisive <= 0) return 0;
+            return (int)Math.Round(e.Wins * 100.0 / decisive);
         }
 
         // Discord interaction follow-up target: the original (deferred) response. No auth header —

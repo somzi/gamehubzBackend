@@ -27,5 +27,9 @@ namespace GameHubz.DataModels.Config
 
         /// <summary>Idempotently (re-)register the slash commands on startup.</summary>
         public bool RegisterCommandsOnStartup { get; set; } = false;
+
+        /// <summary>One-shot: for hubs that already had a webhook URL when the guild-id column was
+        /// added, GET the webhook metadata and populate the new column. Turn off after one clean run.</summary>
+        public bool BackfillGuildIdsOnStartup { get; set; } = false;
     }
 }

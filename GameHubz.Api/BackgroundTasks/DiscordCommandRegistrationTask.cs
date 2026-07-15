@@ -62,11 +62,35 @@ namespace GameHubz.Api.BackgroundTasks
                         name = "vs",
                         description = "Head-to-head vs another linked player",
                         type = 1,
-                        options = new[]
+                        options = new object[]
                         {
                             new { name = "opponent", description = "The player to compare against", type = 6, required = true },
                         },
                     },
+                    // Server-scoped: needs Hub.DiscordGuildId set (auto-detected on hub save).
+                    new
+                    {
+                        name = "leaderboard",
+                        description = "Top players in this server's hub",
+                        type = 1,
+                        options = new object[]
+                        {
+                            new
+                            {
+                                name = "sort",
+                                description = "Which metric to rank by (default: trophies)",
+                                type = 3,
+                                required = false,
+                                choices = new[]
+                                {
+                                    new { name = "Trophies", value = "trophies" },
+                                    new { name = "Wins", value = "wins" },
+                                    new { name = "Win rate", value = "winrate" },
+                                },
+                            },
+                        },
+                    },
+                    new { name = "hubinfo", description = "Show info about this server's GameHubz hub", type = 1 },
                 };
 
                 var client = httpClientFactory.CreateClient("DiscordBot");

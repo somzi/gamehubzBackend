@@ -2,6 +2,9 @@
 using GameHubz.DataModels.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using System.Net.Http;
+using System.Text.Json;
 
 namespace GameHubz.Logic.Services
 {
@@ -11,6 +14,8 @@ namespace GameHubz.Logic.Services
         private readonly ICacheService cacheService;
         private readonly CloudinaryStorageService storageService;
         private readonly UserHubService userHubService;
+        private readonly IHttpClientFactory httpClientFactory;
+        private readonly ILogger<HubService> logger;
 
         public HubService(
             IUnitOfWorkFactory factory,
@@ -23,7 +28,9 @@ namespace GameHubz.Logic.Services
             TournamentService tournamentService,
             ICacheService cacheService,
             CloudinaryStorageService storageService,
-            UserHubService userHubService)
+            UserHubService userHubService,
+            IHttpClientFactory httpClientFactory,
+            ILogger<HubService> logger)
             : base(
                   factory.CreateAppUnitOfWork(),
                   userContextReader,
@@ -37,6 +44,8 @@ namespace GameHubz.Logic.Services
             this.cacheService = cacheService;
             this.storageService = storageService;
             this.userHubService = userHubService;
+            this.httpClientFactory = httpClientFactory;
+            this.logger = logger;
         }
 
         public async Task<List<HubDto>> GetAll()
@@ -145,6 +154,52 @@ namespace GameHubz.Logic.Services
             return trimmed;
         }
 
+        // Auto-detects the guild id from the webhook URL by calling GET on that URL — Discord's
+        // response body includes `guild_id`. The webhook URL contains its own token, so no bot
+        // auth is needed. Best-effort: on 4xx/5xx/timeout/duplicate we log and return null so the
+        // hub save still succeeds; owners can retry by re-saving.
+        public async Task<string?> ResolveDiscordGuildIdAsync(Guid hubId, string webhookUrl)
+        {
+            try
+            {
+                using var client = httpClientFactory.CreateClient("DiscordWebhook");
+                using var response = await client.GetAsync(webhookUrl);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logger.LogInformation("Discord webhook metadata GET returned {StatusCode} for hub {HubId} — guild id not set.",
+                        response.StatusCode, hubId);
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (!doc.RootElement.TryGetProperty("guild_id", out var guildElement))
+                    return null;
+
+                string? guildId = guildElement.GetString();
+                if (string.IsNullOrWhiteSpace(guildId))
+                    return null;
+
+                // A second hub trying to link to the same guild would violate IX_Hub_DiscordGuildId
+                // and abort the save. Reject up-front with a friendly 400 so the owner sees "this
+                // Discord server is already linked to another hub" instead of a raw db exception.
+                var existing = await this.AppUnitOfWork.HubRepository.GetByDiscordGuildId(guildId);
+                if (existing != null && existing.Id != hubId)
+                    throw new BusinessRuleException("This Discord server is already linked to another GameHubz hub.");
+
+                return guildId;
+            }
+            catch (BusinessRuleException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to resolve Discord guild id for hub {HubId}.", hubId);
+                return null;
+            }
+        }
+
         private async Task<HubOverviewDto?> GetCachedHubData(Guid hubId)
         {
             string key = $"hub_overview:{hubId}";
@@ -201,12 +256,25 @@ namespace GameHubz.Logic.Services
             // Null = field not sent (older clients / screens that only edit name & privacy) → keep the
             // stored value, same preservation rule as TournamentService.BeforeDtoMapToEntity. An empty
             // string is an explicit clear from the Discord form.
+            string? previousWebhookUrl = hub.DiscordWebhookUrl;
             if (request.DiscordWebhookUrl != null)
                 hub.DiscordWebhookUrl = NormalizeDiscordWebhookUrl(request.DiscordWebhookUrl);
             if (request.DiscordNotificationSettings != null)
                 hub.DiscordNotificationSettings = string.IsNullOrWhiteSpace(request.DiscordNotificationSettings)
                     ? null
                     : request.DiscordNotificationSettings;
+
+            // Auto-detect the Discord server (guild) this hub is linked to whenever the webhook URL
+            // changes — the mapping powers server-scoped slash commands like /leaderboard. Clearing
+            // the URL also clears the guild id; setting a new one triggers a fresh GET of the
+            // webhook metadata. All best-effort: a network/uniqueness failure never blocks the save.
+            if (hub.DiscordWebhookUrl != previousWebhookUrl)
+            {
+                if (string.IsNullOrWhiteSpace(hub.DiscordWebhookUrl))
+                    hub.DiscordGuildId = null;
+                else
+                    hub.DiscordGuildId = await ResolveDiscordGuildIdAsync(hub.Id!.Value, hub.DiscordWebhookUrl);
+            }
 
             await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
 

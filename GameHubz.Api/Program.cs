@@ -109,6 +109,9 @@ namespace GameHubz.Api
             // One-shot idempotent slash-command registration (opt-in via config).
             builder.Services.AddHostedService<DiscordCommandRegistrationTask>();
 
+            // One-shot guild-id backfill for hubs whose webhook URL predates migration 68 (opt-in).
+            builder.Services.AddHostedService<DiscordGuildIdBackfillTask>();
+
             // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
             // and the pattern-based delete path in RedisCacheService (used for invalidating
             // every page of a paginated key family at once).
