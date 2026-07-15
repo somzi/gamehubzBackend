@@ -77,23 +77,23 @@ namespace GameHubz.Logic.Services
             {
                 container.Page(page =>
                 {
-                    // Fixed width, dynamic height. The minimum height keeps the card portrait even
-                    // with few matches (Discord scales images to chat width, so tall = big); the
-                    // panel floats centered in the extra space, poster-style.
-                    page.ContinuousSize(560);
+                    // Fixed width, dynamic height — the image hugs the panel with just a slim dark
+                    // margin (no poster whitespace). Kept narrow so Discord's mobile client, which
+                    // scales images to chat width, still shows it large.
+                    page.ContinuousSize(500);
                     page.PageColor(Bg);
                     page.DefaultTextStyle(x => x.FontFamily(Font).FontSize(12).FontColor(TextHi));
 
-                    page.Content().MinHeight(780).AlignMiddle().Padding(26).Column(col =>
+                    page.Content().Padding(12).Column(col =>
                     {
                         col.Item()
-                            .CornerRadius(24)
+                            .CornerRadius(22)
                             .Background(Panel)
                             .Border(1.5f).BorderColor(Stroke)
-                            .Padding(24)
+                            .Padding(20)
                             .Column(panel =>
                             {
-                                panel.Spacing(18);
+                                panel.Spacing(16);
 
                                 Header(panel, d, avatar);
 

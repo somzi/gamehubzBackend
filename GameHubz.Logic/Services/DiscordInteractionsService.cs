@@ -169,6 +169,7 @@ namespace GameHubz.Logic.Services
 
                 var stats = await uow.MatchRepository.GetStatsByUserId(user.Id!.Value);
                 int trophies = await uow.TournamentRepository.GetNumberOfTournamentsWonByUserId(user.Id!.Value);
+                var performance = await uow.MatchRepository.GetPerformanceByUserIdV2(user.Id!.Value);
                 byte[]? avatar = await TryDownloadAsync(user.AvatarUrl);
 
                 byte[] png = DiscordProfileCard.Render(new ProfileCardData
@@ -184,6 +185,10 @@ namespace GameHubz.Logic.Services
                     Draws = stats.Draws,
                     WinRate = (int)Math.Round(stats.WinRate),
                     Avatar = avatar,
+                    // V2 returns latest-first (the mobile Recent Form source) — the card wants
+                    // oldest → latest, left to right.
+                    RecentForm = performance.Select(p => p.Outcome).Reverse().ToList(),
+                    GeneratedAtUtc = DateTime.UtcNow,
                 });
 
                 await EditOriginalWithImageAsync(interactionToken, png, "profile.png");
