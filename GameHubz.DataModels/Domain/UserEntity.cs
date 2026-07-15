@@ -82,5 +82,9 @@ namespace GameHubz.DataModels.Domain
 
         /// <summary>Per-user switch for bot DM notifications; only meaningful while linked.</summary>
         public bool DiscordDmEnabled { get; set; } = true;
+
+        /// <summary>Per-user switch for showing the linked Discord as a public profile link
+        /// (discord.com/users deep link); only meaningful while linked. Independent of DM notifications.</summary>
+        public bool DiscordShowOnProfile { get; set; } = true;
     }
 }
