@@ -51,6 +51,7 @@ namespace GameHubz.Api.BackgroundTasks
                 var commands = new[]
                 {
                     new { name = "nextmatch", description = "Show your next GameHubz match", type = 1 },
+                    new { name = "matches", description = "List your active GameHubz matches", type = 1 },
                     new { name = "profile", description = "Show your GameHubz profile and stats", type = 1 },
                 };
 

@@ -19,6 +19,10 @@ namespace GameHubz.Logic.Services
         private const int ResponseChannelMessage = 4;
         private const int FlagEphemeral = 64;
 
+        // Discord caps message content at 2000 chars — cap the list well under that so long
+        // tournament/hub names can't push a busy player's response over the limit.
+        private const int MaxMatchesShown = 12;
+
         private const string NotLinkedMessage = "Link your Discord in the GameHubz app (Profile → Socials).";
 
         private readonly ShareLinksConfig shareLinksConfig;
@@ -51,6 +55,7 @@ namespace GameHubz.Logic.Services
                 string content = commandName switch
                 {
                     "nextmatch" => await BuildNextMatchAsync(discordUserId),
+                    "matches" => await BuildMatchesAsync(discordUserId),
                     "profile" => await BuildProfileAsync(discordUserId),
                     _ => "Unknown command.",
                 };
@@ -104,6 +109,41 @@ namespace GameHubz.Logic.Services
             return $"**Next match:** vs **{next.OpponentNickname ?? next.OpponentName}** — {next.TournamentName} ({next.HubName})\n"
                 + $"🕒 {when}\n"
                 + $"{shareLinksConfig.BaseUrl}/tournament/{next.TournamentId}";
+        }
+
+        private async Task<string> BuildMatchesAsync(string? discordUserId)
+        {
+            var user = await ResolveLinkedUserAsync(discordUserId);
+            if (user == null) return NotLinkedMessage;
+
+            // GetByUser already returns only the user's active (non-completed) matches — the same
+            // source /nextmatch uses. Keep the upcoming ones, soonest first; unscheduled ones last.
+            var matches = await this.AppUnitOfWork.MatchRepository.GetByUser(user.Id!.Value);
+
+            var active = matches
+                .Where(m => m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
+                .OrderBy(m => m.ScheduledTime ?? DateTime.MaxValue)
+                .ToList();
+
+            if (active.Count == 0)
+                return "You have no active matches. 🎉";
+
+            var lines = active.Take(MaxMatchesShown).Select(m =>
+            {
+                // <t:unix:f> renders in each viewer's local timezone; ScheduledTime is stored UTC-kind-
+                // unspecified, so pin the kind before converting (same as /nextmatch).
+                string when = m.ScheduledTime.HasValue
+                    ? $"🕒 <t:{new DateTimeOffset(DateTime.SpecifyKind(m.ScheduledTime.Value, DateTimeKind.Utc)).ToUnixTimeSeconds()}:f>"
+                    : "⏳ not scheduled";
+                return $"• vs **{m.OpponentNickname ?? m.OpponentName}** — {m.TournamentName} ({m.HubName}) — {when}";
+            });
+
+            string body = string.Join("\n", lines);
+            string footer = active.Count > MaxMatchesShown
+                ? $"\n…and {active.Count - MaxMatchesShown} more — open the app."
+                : "";
+
+            return $"**Your active matches ({active.Count}):**\n{body}{footer}";
         }
 
         private async Task<string> BuildProfileAsync(string? discordUserId)
