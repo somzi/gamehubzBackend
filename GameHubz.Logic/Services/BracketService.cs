@@ -3391,6 +3391,68 @@ namespace GameHubz.Logic.Services
             if (awayUserId.HasValue) await this.badgeService.PushAsync(awayUserId.Value);
         }
 
+        // Fire-and-forget "pick your representative" push to both captains when a team tie parks in
+        // TieBreakRequired. The payload deep-links into the team-match screen where the picker lives
+        // (mobile routes type=teamTieBreak → TournamentDetails with focusTeamMatchId → team modal).
+        // Additive Discord DM for captains who linked their account. Runs on every transition into
+        // TieBreakRequired — including a re-tie after a voided tie-break game — because the captains
+        // must act again each time. Never breaks the aggregation.
+        private async Task NotifyTieBreakCaptainsAsync(TeamMatchEntity teamMatch)
+        {
+            try
+            {
+                var homeTeam = teamMatch.HomeTeamParticipant?.Team;
+                var awayTeam = teamMatch.AwayTeamParticipant?.Team;
+
+                var captainIds = new List<Guid>();
+                if (homeTeam?.CaptainUserId.HasValue == true) captainIds.Add(homeTeam.CaptainUserId.Value);
+                if (awayTeam?.CaptainUserId.HasValue == true && !captainIds.Contains(awayTeam.CaptainUserId.Value))
+                    captainIds.Add(awayTeam.CaptainUserId.Value);
+                if (captainIds.Count == 0) return;
+
+                var tournamentId = teamMatch.TournamentId;
+                var teamMatchId = teamMatch.Id!.Value;
+                var homeName = homeTeam?.TeamName ?? "Home team";
+                var awayName = awayTeam?.TeamName ?? "Away team";
+                var body = $"{homeName} vs {awayName} ended level — pick your player for the tie-break.";
+
+                // Push tokens + linked Discord accounts in one query — push is the primary channel.
+                var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(captainIds);
+
+                var pushTokens = targets
+                    .Where(t => !string.IsNullOrEmpty(t.PushToken))
+                    .Select(t => t.PushToken!)
+                    .Distinct()
+                    .ToList();
+                if (pushTokens.Count > 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        foreach (var token in pushTokens)
+                        {
+                            try
+                            {
+                                await notificationService.SendToOneAsync(
+                                    token,
+                                    "Tie-break — pick your player",
+                                    body,
+                                    new { type = "teamTieBreak", tournamentId = tournamentId.ToString(), teamMatchId = teamMatchId.ToString() });
+                            }
+                            catch { /* fire-and-forget */ }
+                        }
+                    });
+                }
+
+                foreach (var t in targets.Where(t => t.DiscordDmEnabled && t.DiscordUserId != null))
+                {
+                    this.discordDmService.SendDmInBackground(
+                        t.DiscordUserId,
+                        $"⚔️ **{homeName} vs {awayName}** ended level — pick your player for the tie-break in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)");
+                }
+            }
+            catch { /* notifications must never break team-match aggregation */ }
+        }
+
         // Fire-and-forget "you won" push to the champion (solo) or every member of the winning
         // team. Tokens are resolved here in the request scope and handed to the background send.
         private async Task NotifyTournamentWinnerAsync(TournamentEntity tournament)
@@ -4740,6 +4802,10 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+
+                // Both captains must now nominate a representative — tell them, with a deep link
+                // straight into the team-match screen where the picker lives.
+                await NotifyTieBreakCaptainsAsync(teamMatch);
                 return;
             }
 

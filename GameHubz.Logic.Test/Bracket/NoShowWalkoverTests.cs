@@ -76,19 +76,34 @@ namespace GameHubz.Logic.Test.Bracket
                 });
             }
 
+            // Round 2 pairs the two R1 winners together and the two losers together, but
+            // Matches() returns them in no guaranteed order. Deterministically play the
+            // WINNERS' match and void the losers' — the played winner then tops the table
+            // alone on 6 points. (Playing the losers' match instead leaves a three-way tie
+            // on 3 points, where the backend's Buchholz/H2H tie-break — not a plain points
+            // sort — picks the champion, and the assertion below becomes a coin flip.)
+            var winnersIds = harness.Participants(tournamentId)
+                .Where(p => p.Points == 3)
+                .Select(p => p.Id!.Value)
+                .ToHashSet();
             var round2 = harness.Matches(tournamentId).Where(m => m.RoundNumber == 2).ToList();
+            var winnersMatch = round2.Single(m =>
+                winnersIds.Contains(m.HomeParticipantId!.Value) && winnersIds.Contains(m.AwayParticipantId!.Value));
+            var losersMatch = round2.Single(m => m.Id != winnersMatch.Id);
+
             await harness.NewService().UpdateMatchResult(new MatchResultDto
             {
-                MatchId = round2[0].Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 0,
+                MatchId = winnersMatch.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 0,
             });
 
-            await harness.NewService().ApplyDoubleWalkover(round2[1].Id!.Value);
+            await harness.NewService().ApplyDoubleWalkover(losersMatch.Id!.Value);
 
             var tournament = harness.Tournament(tournamentId);
             Assert.That(tournament.Status, Is.EqualTo(TournamentStatus.Completed),
                 "the final round's no-show still lets the Swiss conclude");
 
             var top = harness.Participants(tournamentId).OrderByDescending(p => p.Points).First();
+            Assert.That(top.Points, Is.EqualTo(6), "the played winner stands alone at the top");
             Assert.That(tournament.WinnerUserId, Is.EqualTo(top.UserId), "winner from the standings");
         }
 
