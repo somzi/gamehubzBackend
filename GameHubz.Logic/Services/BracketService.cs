@@ -2208,7 +2208,32 @@ namespace GameHubz.Logic.Services
                 }
             }
 
+            // A late real result over a no-show (double-walkover) team game must reopen a parent
+            // team match the void already closed, or re-finalizing silently fails the Processing claim.
+            await ReopenVoidedTeamParentForRereportAsync(match, nextMatch, loserBracketMatch);
+
             await FinalizeMatchResult(match, nextMatch, loserBracketMatch, request.HomeScore, request.AwayScore, request.TournamentId);
+        }
+
+        // A real result landing on a NoShow (double-walkover) team game: if the closed game already
+        // finalized the parent team match (a void, a winner decided from the other games, or a
+        // tie-break), reopen the parent first — the same revert primitives the completed-sub edit
+        // path uses — so FinalizeMatchResult re-aggregates cleanly instead of silently failing the
+        // Pending→Processing claim. No-op for solo NoShow fixtures (their standings resync from the
+        // Match table) and while the parent is still open. The downstream lock refuses when the void
+        // has already settled matches onward — revert those first, like any other edit.
+        private async Task ReopenVoidedTeamParentForRereportAsync(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch)
+        {
+            if (match.Status != MatchStatus.NoShow || !match.TeamMatchId.HasValue) return;
+
+            var lockReason = await GetDownstreamLockReasonAsync(match, nextMatch, loserBracketMatch, forEdit: true);
+            if (lockReason != null)
+                throw new BusinessRuleException(lockReason);
+
+            if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage)
+                await RevertTeamLeagueMatchStats(match);
+            else if (IsElimination(match.TournamentStage?.Type))
+                await RevertTeamMatchResult(match);
         }
 
         /// <summary>
@@ -2662,6 +2687,10 @@ namespace GameHubz.Logic.Services
             int awayScore = match.ProposedAwayScore!.Value;
             var proposerId = match.ProposedByUserId!.Value;
 
+            // Approving a proposal made over a no-show (double-walkover) team game must reopen a
+            // parent team match the void already closed — mirrors UpdateMatchResult.
+            await ReopenVoidedTeamParentForRereportAsync(match, nextMatch, loserBracketMatch);
+
             await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
 
             // Discord-only announcement of the confirmed result (participants already have badges/pushes).
@@ -2723,8 +2752,10 @@ namespace GameHubz.Logic.Services
         /// round; works whether or not the sibling has been decided yet (the settle hook covers the
         /// late case). League / group / Swiss: the fixture is closed as <see cref="MatchStatus.NoShow"/>
         /// — a double forfeit awarding NOTHING to either player (deliberately not a draw), while the
-        /// round still completes, unlocks and pairs as if the match had been played. Caller must be
-        /// able to manage the tournament. Solo only — team matches are rejected; play-in matches are
+        /// round still completes, unlocks and pairs as if the match had been played. Team sub-matches
+        /// close as a NoShow game contributing nothing to the tie (see
+        /// <see cref="ApplyTeamSubMatchWalkover"/> — if NO game of the tie ends up played, the whole
+        /// team match is voided). Caller must be able to manage the tournament. Play-in matches are
         /// rejected because every play-in slot must produce a qualifier for the knockout draw.
         /// </summary>
         public async Task ApplyDoubleWalkover(Guid matchId)
@@ -2737,7 +2768,10 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException("Only the hub owner or an admin can apply a double walkover.");
 
             if (match.TeamMatchId.HasValue)
-                throw new BusinessRuleException("Double walkover isn't available for team matches.");
+            {
+                await ApplyTeamSubMatchWalkover(match);
+                return;
+            }
 
             var stageType = match.TournamentStage?.Type;
             bool isGroupMachinery = stageType == StageType.League
@@ -2872,6 +2906,91 @@ namespace GameHubz.Logic.Services
             }
         }
 
+        // Double walkover for one game of a team tie: neither player showed, so the game closes as
+        // NoShow — no winner, no score, contributing nothing to the tie's aggregation. The parent
+        // team match re-aggregates the moment every game is terminal (Completed or NoShow): with at
+        // least one game actually played the tie resolves from the played games alone (winner, draw
+        // or tie-break per the win condition); with NO game played the whole tie is voided — see
+        // ProcessTeamMatchResultInner. Undo: delete-result on the game reopens it (and the tie).
+        private async Task ApplyTeamSubMatchWalkover(MatchEntity match)
+        {
+            var stageType = match.TournamentStage?.Type;
+            bool isLeagueOrGroup = stageType == StageType.League || stageType == StageType.GroupStage;
+
+            // Team tournaments only run league / groups / elimination; refuse anything else
+            // (a hypothetical team play-in slot must always produce a qualifier, like solo).
+            if (!isLeagueOrGroup && !IsElimination(stageType))
+                throw new BusinessRuleException("Double walkover isn't available for this match.");
+
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException("This match is already completed.");
+
+            if (match.Status == MatchStatus.NoShow)
+                throw new BusinessRuleException("This match is already closed as a no-show.");
+
+            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
+                throw new BusinessRuleException("Both players must be set before a double walkover.");
+
+            // Serialised per tournament, exactly like FinalizeMatchResult: the aggregation (and the
+            // settle pass it may trigger) is check-then-act over many rows and must not race a
+            // concurrent result report.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                match.Status = MatchStatus.NoShow;
+                match.WinnerParticipantId = null;
+                match.HomeUserScore = null;
+                match.AwayUserScore = null;
+                match.ProposedHomeScore = null;
+                match.ProposedAwayScore = null;
+                match.ProposedByUserId = null;
+                match.ScheduledStartTime ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                // Mirror FinalizeMatchResult's team branches: re-aggregate the parent (a no-op until
+                // every game is terminal), and in group machinery let the round unlock / complete
+                // exactly as if the game had been played.
+                await ProcessTeamMatchResult(match);
+                if (isLeagueOrGroup)
+                    await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
+
+            // Cache / badge invalidation — sub players live on HomeUserId/AwayUserId (the participant
+            // rows belong to the teams); roster members' stats can change when the tie completes.
+            var affectedUserIds = new HashSet<Guid>();
+            if (match.HomeUserId.HasValue) affectedUserIds.Add(match.HomeUserId.Value);
+            if (match.AwayUserId.HasValue) affectedUserIds.Add(match.AwayUserId.Value);
+
+            if (match.HomeParticipant?.Team?.Members != null)
+                foreach (var m in match.HomeParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            if (match.AwayParticipant?.Team?.Members != null)
+                foreach (var m in match.AwayParticipant.Team.Members.Where(m => m.UserId.HasValue))
+                    affectedUserIds.Add(m.UserId!.Value);
+
+            foreach (var userId in affectedUserIds)
+            {
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+                await this.badgeService.PushAsync(userId);
+            }
+
+            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+            await cacheService.RemoveAsync($"tournament:{match.TournamentId}");
+
+            // Discord-only, "closed with nothing awarded" copy — a single game of a tie never
+            // advances anyone by itself (the names resolve to the two teams).
+            await this.matchNotifier.DoubleWalkover(match, opponentAdvances: false);
+        }
+
         /// <summary>
         /// Settles every elimination match whose outcome is now forced by a "dead feeder" — a
         /// Completed-with-no-winner match (a double walkover, or a void left by an upstream one).
@@ -2952,6 +3071,77 @@ namespace GameHubz.Logic.Services
             => all.Count(f => f.Id != n.Id
                 && f.Status != MatchStatus.Completed
                 && (f.NextMatchId == n.Id || f.NextMatchLoserBracketId == n.Id));
+
+        /// <summary>
+        /// Team mirror of <see cref="SettleForcedWalkovers"/>: settles every team match whose outcome
+        /// is forced by a dead feeder — a Completed team match with no winner (an all-walkover void,
+        /// or a void left by an upstream one). One team present + no live feeder for the other slot →
+        /// that team wins by walkover and advances through the shared downstream path; no team + no
+        /// live feeders → the match is itself void. Settled walkovers never get sub-matches — they
+        /// close directly, like generation-time byes. Fixpoint over freshly-committed state;
+        /// idempotent; caller holds the advancement lock.
+        /// </summary>
+        private async Task SettleForcedTeamWalkovers(Guid tournamentId)
+        {
+            // Bounded by the team-match count; each productive pass marks one more match Completed.
+            // DetachAll clears the WHOLE change tracker (matches, team matches, tournament) so each
+            // pass reloads committed state without identity collisions.
+            for (int guard = 0; guard < 1000; guard++)
+            {
+                this.AppUnitOfWork.MatchRepository.DetachAll();
+                var all = await this.AppUnitOfWork.TeamMatchRepository.GetByTournamentId(tournamentId);
+                if (!await SettleOneForcedTeamWalkover(all)) break;
+            }
+        }
+
+        // Finds and settles a single forced team match, saving the change. Returns false when none remain.
+        private async Task<bool> SettleOneForcedTeamWalkover(List<TeamMatchEntity> all)
+        {
+            foreach (var n in all)
+            {
+                if (n.Status == TeamMatchStatus.Completed) continue;
+
+                // TieBreakRequired / Processing ties always have both teams — skipped here.
+                int filled = (n.HomeTeamParticipantId.HasValue ? 1 : 0) + (n.AwayTeamParticipantId.HasValue ? 1 : 0);
+                if (filled == 2) continue;                      // a real tie still to be played
+                if (LiveTeamFeederCount(n, all) > 0) continue;  // an opponent can still arrive — wait
+
+                if (filled == 0)
+                {
+                    // No one is coming from either side → the match is void; mark it and let the
+                    // next pass propagate the emptiness onward.
+                    n.Status = TeamMatchStatus.Completed;
+                    n.WinnerTeamParticipantId = null;
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(n, this.UserContextReader);
+                    await this.SaveAsync();
+                    return true;
+                }
+
+                // Exactly one team and no opponent will ever arrive → walkover.
+                var winnerId = n.HomeTeamParticipantId ?? n.AwayTeamParticipantId!.Value;
+                n.WinnerTeamParticipantId = winnerId;
+                n.Status = TeamMatchStatus.Completed;
+                await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(n, this.UserContextReader);
+
+                // Advance through the shared path (next-slot placement, Grand Final, tournament
+                // completion). A walkover has no loser, so nothing drops to the loser bracket; the
+                // next pass picks up any match this one's missing loser now leaves forced.
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(n.TournamentId);
+                await AdvanceTeamMatchDownstream(tournament, n, winnerId);
+                await this.SaveAsync();
+                return true;
+            }
+
+            return false;
+        }
+
+        // Count of feeders that will still deliver a team into <paramref name="n"/>: any
+        // not-yet-Completed team match pointing here on its winner or loser edge. Completed feeders
+        // have already deposited (or are dead ends and never will), so they don't count.
+        private static int LiveTeamFeederCount(TeamMatchEntity n, List<TeamMatchEntity> all)
+            => all.Count(f => f.Id != n.Id
+                && f.Status != TeamMatchStatus.Completed
+                && (f.NextTeamMatchId == n.Id || f.NextTeamMatchLoserBracketId == n.Id));
 
         private async Task FinalizeMatchResult(
             MatchEntity match,
@@ -3492,30 +3682,39 @@ namespace GameHubz.Logic.Services
             if (teamMatch == null) return;
             if (teamMatch.Status != TeamMatchStatus.Completed) return;
 
-            int homeTotal = 0, awayTotal = 0;
-            foreach (var sm in teamMatch.SubMatches)
+            // A voided fixture (every game closed as a no-show double walkover) awarded NOTHING
+            // when it completed, so there is nothing to subtract — just reopen the tie below.
+            // (The game being reverted is still NoShow here; the core clears it afterwards.)
+            bool nothingPlayed = teamMatch.SubMatches.All(sm => sm.Status == MatchStatus.NoShow);
+
+            TournamentParticipantEntity? homePart = null, awayPart = null;
+            if (!nothingPlayed)
             {
-                homeTotal += sm.HomeUserScore ?? 0;
-                awayTotal += sm.AwayUserScore ?? 0;
+                int homeTotal = 0, awayTotal = 0;
+                foreach (var sm in teamMatch.SubMatches)
+                {
+                    homeTotal += sm.HomeUserScore ?? 0;
+                    awayTotal += sm.AwayUserScore ?? 0;
+                }
+
+                var winnerId = teamMatch.WinnerTeamParticipantId;
+
+                homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
+                awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
+
+                homePart.GoalsFor -= homeTotal; homePart.GoalsAgainst -= awayTotal;
+                awayPart.GoalsFor -= awayTotal; awayPart.GoalsAgainst -= homeTotal;
+
+                if (winnerId == teamMatch.HomeTeamParticipantId)
+                { homePart.Wins--; homePart.Points -= 3; awayPart.Losses--; }
+                else if (winnerId == teamMatch.AwayTeamParticipantId)
+                { awayPart.Wins--; awayPart.Points -= 3; homePart.Losses--; }
+                else
+                { homePart.Draws--; homePart.Points -= 1; awayPart.Draws--; awayPart.Points -= 1; }
+
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
             }
-
-            var winnerId = teamMatch.WinnerTeamParticipantId;
-
-            var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
-            var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
-
-            homePart.GoalsFor -= homeTotal; homePart.GoalsAgainst -= awayTotal;
-            awayPart.GoalsFor -= awayTotal; awayPart.GoalsAgainst -= homeTotal;
-
-            if (winnerId == teamMatch.HomeTeamParticipantId)
-            { homePart.Wins--; homePart.Points -= 3; awayPart.Losses--; }
-            else if (winnerId == teamMatch.AwayTeamParticipantId)
-            { awayPart.Wins--; awayPart.Points -= 3; homePart.Losses--; }
-            else
-            { homePart.Draws--; homePart.Points -= 1; awayPart.Draws--; awayPart.Points -= 1; }
-
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
 
             teamMatch.Status = TeamMatchStatus.Pending;
             teamMatch.WinnerTeamParticipantId = null;
@@ -3542,8 +3741,8 @@ namespace GameHubz.Logic.Services
             // and leaving teamMatch tracked after save crashes the downstream
             // ProcessTeamMatchResult -> ProcessTeamMatchResultInner reload+UpdateEntity at the
             // "another instance with the same key is already tracked" check.
-            await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
-            await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+            if (homePart != null) await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
+            if (awayPart != null) await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
             await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
             if (revertedTournament)
                 await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
@@ -3769,9 +3968,10 @@ namespace GameHubz.Logic.Services
 
             // Reverting any completed elimination result means the tournament is no longer fully played,
             // so roll back a previously-published winner/Completed status (covers final, third-place and
-            // semi-final cascades alike).
+            // semi-final cascades alike). Deliberately NOT gated on oldWinner: a voided third-place
+            // play-off (all games double-walkover'd, no winner) can be the match that completed the
+            // tournament, and reopening it must un-complete it too.
             bool revertedTournament = false;
-            if (oldWinner.HasValue)
             {
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(teamMatch.TournamentId);
                 if (tournament.Status == TournamentStatus.Completed)
@@ -4386,8 +4586,9 @@ namespace GameHubz.Logic.Services
 
             var subMatches = teamMatch.SubMatches;
 
-            // Check if all sub-matches are completed
-            if (!subMatches.All(sm => sm.Status == MatchStatus.Completed))
+            // Check if all sub-matches are terminal: played (Completed) or administratively voided
+            // (NoShow — a double walkover; contributes nothing to the aggregation).
+            if (!subMatches.All(sm => sm.Status == MatchStatus.Completed || sm.Status == MatchStatus.NoShow))
                 return;
 
             // Atomic CAS: only one concurrent request can flip Status from Pending to Processing.
@@ -4428,7 +4629,8 @@ namespace GameHubz.Logic.Services
             var stageType = completedSubMatch.TournamentStage?.Type;
             bool isLeagueOrGroup = stageType == StageType.League || stageType == StageType.GroupStage;
 
-            // Count wins per team and aggregate scores
+            // Count wins per team and aggregate scores. NoShow (double-walkover) games carry no
+            // winner and null scores, so they contribute nothing here by construction.
             int homeWins = 0, awayWins = 0;
             int homeTotalScore = 0, awayTotalScore = 0;
 
@@ -4442,6 +4644,11 @@ namespace GameHubz.Logic.Services
                 homeTotalScore += sm.HomeUserScore ?? 0;
                 awayTotalScore += sm.AwayUserScore ?? 0;
             }
+
+            // Every game voided as a double walkover → the whole tie is void: closed with no winner,
+            // nothing awarded. Deliberately NOT a draw (league would hand each team a point they
+            // never played for) and NOT a tie-break (there is nobody to tie-break between).
+            bool nothingPlayed = subMatches.All(sm => sm.Status == MatchStatus.NoShow);
 
             Guid? winnerTeamParticipantId = null;
 
@@ -4479,26 +4686,35 @@ namespace GameHubz.Logic.Services
                 teamMatch.Status = TeamMatchStatus.Completed;
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
-                var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
-                var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
+                // A voided fixture (all games double-walkover'd) awards NOTHING: no points, no
+                // draws, no goals — the round still completes as if it had been played.
+                if (!nothingPlayed)
+                {
+                    var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
+                    var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
 
-                homePart.GoalsFor += homeTotalScore; homePart.GoalsAgainst += awayTotalScore;
-                awayPart.GoalsFor += awayTotalScore; awayPart.GoalsAgainst += homeTotalScore;
+                    homePart.GoalsFor += homeTotalScore; homePart.GoalsAgainst += awayTotalScore;
+                    awayPart.GoalsFor += awayTotalScore; awayPart.GoalsAgainst += homeTotalScore;
 
-                if (winnerTeamParticipantId == teamMatch.HomeTeamParticipantId)
-                { homePart.Wins++; homePart.Points += 3; awayPart.Losses++; }
-                else if (winnerTeamParticipantId == teamMatch.AwayTeamParticipantId)
-                { awayPart.Wins++; awayPart.Points += 3; homePart.Losses++; }
+                    if (winnerTeamParticipantId == teamMatch.HomeTeamParticipantId)
+                    { homePart.Wins++; homePart.Points += 3; awayPart.Losses++; }
+                    else if (winnerTeamParticipantId == teamMatch.AwayTeamParticipantId)
+                    { awayPart.Wins++; awayPart.Points += 3; homePart.Losses++; }
+                    else
+                    { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
+
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+
+                    await this.SaveAsync();
+
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
+                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+                }
                 else
-                { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
-
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
-
-                await this.SaveAsync();
-
-                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
-                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+                {
+                    await this.SaveAsync();
+                }
 
                 if (stageType == StageType.GroupStage)
                     await CheckAndAdvanceGroupStage(teamMatch.TournamentId, teamMatch.TournamentStageId!.Value);
@@ -4513,7 +4729,7 @@ namespace GameHubz.Logic.Services
                 return;
             }
 
-            if (winnerTeamParticipantId == null)
+            if (winnerTeamParticipantId == null && !nothingPlayed)
             {
                 // Both primary and tiebreaker are tied
                 teamMatch.Status = TeamMatchStatus.TieBreakRequired;
@@ -4527,15 +4743,45 @@ namespace GameHubz.Logic.Services
                 return;
             }
 
-            // Winner determined
+            // Winner determined — or an all-walkover void (winner null): a Completed team match with
+            // no WinnerTeamParticipantId is the codebase's dead-feeder signal (TeamSourceProducesWinner)
+            // — both teams are out, nothing advances from here and no loser drops anywhere; the settle
+            // pass below walks the sibling opponent (and any forced chain) onward.
             teamMatch.WinnerTeamParticipantId = winnerTeamParticipantId;
             teamMatch.Status = TeamMatchStatus.Completed;
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
+            await AdvanceTeamMatchDownstream(tournament, teamMatch, winnerTeamParticipantId);
+
+            await this.SaveAsync();
+
+            // A result (or void) landing next to a slot whose feeder was earlier voided means that
+            // team now advances by walkover — no-op unless a dead feeder exists. Runs last, on
+            // committed state (it clears the change tracker). Mirrors the solo settle hook.
+            await SettleForcedTeamWalkovers(teamMatch.TournamentId);
+
+            await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
+        }
+
+        // Downstream half of a decided (or voided) elimination team match: loser drop-in routing,
+        // next-slot placement, Grand Final / reset handling and terminal tournament completion.
+        // Shared by the aggregation path (ProcessTeamMatchResultInner) and the settle pass
+        // (SettleOneForcedTeamWalkover). winnerTeamParticipantId == null means the match was voided:
+        // nothing advances and no loser drops — only the terminal completion check still runs, so a
+        // voided third-place play-off can finish a tournament whose final is already played (a voided
+        // FINAL declares no champion and deliberately leaves the tournament in progress — recoverable
+        // by delete-result on its games).
+        private async Task AdvanceTeamMatchDownstream(TournamentEntity tournament, TeamMatchEntity teamMatch, Guid? winnerTeamParticipantId)
+        {
             // Route the loser into its drop-in target: the third-place play-off (single-elim) or
             // the Losers Bracket match (double-elim). The slot override pins the DE destination
             // (a WB loser always lands in the away slot); single-elim leaves it null → MatchOrder%2.
-            if (teamMatch.NextTeamMatchLoserBracketId.HasValue)
+            // A void has no loser to route (a null winner must NOT make "the other side" a loser).
+            if (teamMatch.NextTeamMatchLoserBracketId.HasValue && winnerTeamParticipantId.HasValue)
             {
                 var loserTeamParticipantId = winnerTeamParticipantId == teamMatch.HomeTeamParticipantId
                     ? teamMatch.AwayTeamParticipantId
@@ -4564,38 +4810,47 @@ namespace GameHubz.Logic.Services
             // Advance or complete
             if (teamMatch.NextTeamMatchId.HasValue)
             {
-                var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchId.Value);
-
-                bool isHomeSlot = teamMatch.NextTeamMatchHomeAwaySlot.HasValue
-                    ? teamMatch.NextTeamMatchHomeAwaySlot.Value == 0
-                    : (teamMatch.MatchOrder % 2) == 0;
-                if (isHomeSlot)
-                    nextTeamMatch.HomeTeamParticipantId = winnerTeamParticipantId;
-                else
-                    nextTeamMatch.AwayTeamParticipantId = winnerTeamParticipantId;
-
-                await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
-
-                // If next team match now has both participants, create sub-matches for it
-                if (nextTeamMatch.HomeTeamParticipantId.HasValue && nextTeamMatch.AwayTeamParticipantId.HasValue)
+                // Void: nothing to place — the settle pass handles the now-forced downstream match.
+                if (winnerTeamParticipantId.HasValue)
                 {
-                    await CreateSubMatchesForTeamMatch(nextTeamMatch);
+                    var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(teamMatch.NextTeamMatchId.Value);
+
+                    bool isHomeSlot = teamMatch.NextTeamMatchHomeAwaySlot.HasValue
+                        ? teamMatch.NextTeamMatchHomeAwaySlot.Value == 0
+                        : (teamMatch.MatchOrder % 2) == 0;
+                    if (isHomeSlot)
+                        nextTeamMatch.HomeTeamParticipantId = winnerTeamParticipantId;
+                    else
+                        nextTeamMatch.AwayTeamParticipantId = winnerTeamParticipantId;
+
+                    await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(nextTeamMatch, this.UserContextReader);
+
+                    // If next team match now has both participants, create sub-matches for it
+                    if (nextTeamMatch.HomeTeamParticipantId.HasValue && nextTeamMatch.AwayTeamParticipantId.HasValue)
+                    {
+                        await CreateSubMatchesForTeamMatch(nextTeamMatch);
+                    }
                 }
             }
             else if (teamMatch.IsGrandFinal)
             {
                 // DE Grand Final. Home = WB champion (undefeated); away = LB champion (one loss). If
                 // the LB champion wins, both now hold one loss → a single reset final decides the title.
-                bool lbChampionWon = winnerTeamParticipantId == teamMatch.AwayTeamParticipantId;
-                if (lbChampionWon)
-                    await CreateTeamGrandFinalReset(teamMatch);
-                else
-                    await CompleteTeamTournament(tournament, winnerTeamParticipantId);
+                // A voided Grand Final declares no champion — the tournament stays in progress.
+                if (winnerTeamParticipantId.HasValue)
+                {
+                    bool lbChampionWon = winnerTeamParticipantId == teamMatch.AwayTeamParticipantId;
+                    if (lbChampionWon)
+                        await CreateTeamGrandFinalReset(teamMatch);
+                    else
+                        await CompleteTeamTournament(tournament, winnerTeamParticipantId);
+                }
             }
             else if (teamMatch.IsGrandFinalReset)
             {
-                // Reset final: its winner is the champion.
-                await CompleteTeamTournament(tournament, winnerTeamParticipantId);
+                // Reset final: its winner is the champion. (A voided reset declares none.)
+                if (winnerTeamParticipantId.HasValue)
+                    await CompleteTeamTournament(tournament, winnerTeamParticipantId);
             }
             else
             {
@@ -4615,34 +4870,32 @@ namespace GameHubz.Logic.Services
                     var championParticipantId = finalTeamMatch!.Id == teamMatch.Id
                         ? winnerTeamParticipantId
                         : finalTeamMatch.WinnerTeamParticipantId;
-                    var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(championParticipantId!.Value);
 
-                    if (winnerParticipant.TeamId.HasValue)
+                    // A voided final produces no champion — leave the tournament in progress
+                    // (mirrors the solo settle pass, which never completes a tournament off a void).
+                    if (championParticipantId.HasValue)
                     {
-                        tournament.WinnerTeamId = winnerParticipant.TeamId;
-                    }
+                        var winnerParticipant = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(championParticipantId.Value);
 
-                    bool wasCompleted = tournament.Status == TournamentStatus.Completed;
-                    tournament.Status = TournamentStatus.Completed;
-                    await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
-                    if (!wasCompleted)
-                    {
-                        await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
-                        await NotifyTournamentWinnerAsync(tournament);
-                        // Public "Tournament Finished" Discord announcement — separate from the
-                        // personal "you won" push above.
-                        await this.tournamentNotifier.TournamentFinished(tournament);
+                        if (winnerParticipant.TeamId.HasValue)
+                        {
+                            tournament.WinnerTeamId = winnerParticipant.TeamId;
+                        }
+
+                        bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+                        tournament.Status = TournamentStatus.Completed;
+                        await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                        if (!wasCompleted)
+                        {
+                            await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCompleted);
+                            await NotifyTournamentWinnerAsync(tournament);
+                            // Public "Tournament Finished" Discord announcement — separate from the
+                            // personal "you won" push above.
+                            await this.tournamentNotifier.TournamentFinished(tournament);
+                        }
                     }
                 }
             }
-
-            await this.SaveAsync();
-
-            await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
         }
 
         private async Task CompleteTeamTournament(TournamentEntity tournament, Guid? championParticipantId)
