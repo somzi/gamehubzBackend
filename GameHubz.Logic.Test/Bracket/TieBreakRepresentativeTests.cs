@@ -59,9 +59,15 @@ namespace GameHubz.Logic.Test.Bracket
         [Test]
         public async Task OnlyACaptain_MayNominate_AndOnlyARosterMember()
         {
-            var (harness, _, fixtureId, home, _) = await SeedTiedFixtureAsync();
+            var (harness, tournamentId, fixtureId, home, _) = await SeedTiedFixtureAsync();
 
-            Assert.That(async () => await harness.NewTeamMatchServiceAsUser(Guid.NewGuid())
+            // Neither caller manages the tournament — seeded so the authz check resolves without
+            // a real UserHubService (see BracketTestHarness.DenyManageFor).
+            var outsiderId = Guid.NewGuid();
+            await harness.DenyManageFor(outsiderId, tournamentId);
+            await harness.DenyManageFor(home.CaptainId, tournamentId);
+
+            Assert.That(async () => await harness.NewTeamMatchServiceAsUser(outsiderId)
                     .SubmitRepresentative(fixtureId, new SubmitRepresentativeRequest { UserId = home.MemberId }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("captain"),
                 "an outsider cannot nominate");
@@ -70,6 +76,43 @@ namespace GameHubz.Logic.Test.Bracket
                     .SubmitRepresentative(fixtureId, new SubmitRepresentativeRequest { UserId = Guid.NewGuid() }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("member"),
                 "the representative must be on the roster");
+        }
+
+        [Test]
+        public async Task AManager_MayNominateForBothTeams_WhenCaptainsGoInactive()
+        {
+            var (harness, tournamentId, fixtureId, home, away) = await SeedTiedFixtureAsync();
+
+            // The hub owner captains neither team, but manages the tournament: they nominate for
+            // each side in turn and the side follows the nominee's roster, not the caller.
+            var owner = BracketTestHarness.OwnerUserId;
+
+            var first = await harness.NewTeamMatchServiceAsUser(owner)
+                .SubmitRepresentative(fixtureId, new SubmitRepresentativeRequest { UserId = away.MemberId });
+            Assert.That(first.AwayRepresentative?.UserId, Is.EqualTo(away.MemberId), "away side taken from the roster");
+            Assert.That(first.HomeRepresentative, Is.Null, "home side untouched");
+            Assert.That(first.TieBreakMatchId, Is.Null, "waits for the second nomination");
+
+            var second = await harness.NewTeamMatchServiceAsUser(owner)
+                .SubmitRepresentative(fixtureId, new SubmitRepresentativeRequest { UserId = home.CaptainId });
+            Assert.That(second.TieBreakMatchId, Is.Not.Null, "both reps in -> tie-break spawned");
+
+            var tieBreak = harness.Match(second.TieBreakMatchId!.Value);
+            Assert.That(tieBreak.HomeUserId, Is.EqualTo(home.CaptainId));
+            Assert.That(tieBreak.AwayUserId, Is.EqualTo(away.MemberId));
+            Assert.That(harness.TeamMatches(tournamentId).Single(tm => tm.Id == fixtureId).Status,
+                Is.EqualTo(TeamMatchStatus.Pending), "fixture re-armed for the tie-break result");
+        }
+
+        [Test]
+        public async Task AManagerNominee_MustStillBeOnOneOfTheTwoRosters()
+        {
+            var (harness, _, fixtureId, _, _) = await SeedTiedFixtureAsync();
+
+            Assert.That(async () => await harness.NewTeamMatchServiceAsUser(BracketTestHarness.OwnerUserId)
+                    .SubmitRepresentative(fixtureId, new SubmitRepresentativeRequest { UserId = Guid.NewGuid() }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("either team"),
+                "a manager cannot nominate a stranger");
         }
 
         [Test]

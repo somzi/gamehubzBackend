@@ -160,14 +160,23 @@ namespace GameHubz.Logic.Test.Bracket
 
         /// <summary>
         /// TeamMatchService acting as a specific user — drives the tie-break representative flow.
-        /// Same fresh-context-per-operation rule as NewService.
+        /// Same fresh-context-per-operation rule as NewService. Pass role "Admin" to exercise the
+        /// tournament-manager path; for a non-manager caller that is not a captain picking off
+        /// their own roster, pre-seed the authz cache with <see cref="DenyManageFor"/> (same
+        /// null-UserHubService caveat as <see cref="BuildService"/>).
         /// </summary>
-        public TeamMatchService NewTeamMatchServiceAsUser(Guid userId)
-            => new TeamMatchService(
-                new TestUnitOfWorkFactory(newContext(), localization),
-                BuildReader(userId, "User"),
+        public TeamMatchService NewTeamMatchServiceAsUser(Guid userId, string role = "User")
+        {
+            var factory = new TestUnitOfWorkFactory(newContext(), localization);
+            var userContext = BuildReader(userId, role);
+
+            return new TeamMatchService(
+                factory,
+                userContext,
                 localization,
-                Cache);
+                Cache,
+                new TournamentAuthorizationService(factory, userContext, localization, Cache, userHubService: null!));
+        }
 
         private static IUserContextReader BuildReader(Guid userId, string role)
         {

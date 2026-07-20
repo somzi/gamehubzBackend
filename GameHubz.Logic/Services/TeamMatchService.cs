@@ -8,15 +8,18 @@ namespace GameHubz.Logic.Services
     public class TeamMatchService : AppBaseService
     {
         private readonly ICacheService cacheService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TeamMatchService(
             IUnitOfWorkFactory unitOfWorkFactory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            TournamentAuthorizationService tournamentAuth)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.cacheService = cacheService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<SubmitRepresentativeResponse> SubmitRepresentative(Guid teamMatchId, SubmitRepresentativeRequest request)
@@ -35,21 +38,33 @@ namespace GameHubz.Logic.Services
             bool isHomeCaptain = homeTeam?.CaptainUserId == user.UserId;
             bool isAwayCaptain = awayTeam?.CaptainUserId == user.UserId;
 
-            if (!isHomeCaptain && !isAwayCaptain)
-                throw new BusinessRuleException("Only a team captain can submit a representative.");
+            bool nomineeOnHome = homeTeam?.Members.Any(m => m.UserId == request.UserId) == true;
+            bool nomineeOnAway = awayTeam?.Members.Any(m => m.UserId == request.UserId) == true;
 
-            if (isHomeCaptain)
+            // A captain nominating off their own roster is the common path and stays exactly as it
+            // was — no authorization round-trip. Everything else (a tournament manager standing in
+            // for an inactive captain, or a captain reaching across to the other team) requires
+            // manager rights: platform admin, hub owner or hub admin of the owning hub.
+            bool captainOwnRoster = (isHomeCaptain && nomineeOnHome) || (isAwayCaptain && nomineeOnAway);
+            bool isManager = !captainOwnRoster
+                && await this.tournamentAuth.CanManageTournamentAsync(teamMatch.TournamentId, user);
+
+            if (!captainOwnRoster && !isManager)
             {
-                bool isMemberOfHomeTeam = homeTeam!.Members.Any(m => m.UserId == request.UserId);
-                if (!isMemberOfHomeTeam) throw new BusinessRuleException("Selected user is not a member of your team.");
+                if (isHomeCaptain || isAwayCaptain)
+                    throw new BusinessRuleException("Selected user is not a member of your team.");
+
+                throw new BusinessRuleException("Only a team captain or a tournament manager can submit a representative.");
+            }
+
+            // The side follows the nominee's roster, not the caller's: a captain can only land on
+            // their own team anyway, while a manager sets whichever side the nominee plays for.
+            if (nomineeOnHome)
                 teamMatch.HomeTeamRepresentativeUserId = request.UserId;
-            }
-            else
-            {
-                bool isMemberOfAwayTeam = awayTeam!.Members.Any(m => m.UserId == request.UserId);
-                if (!isMemberOfAwayTeam) throw new BusinessRuleException("Selected user is not a member of your team.");
+            else if (nomineeOnAway)
                 teamMatch.AwayTeamRepresentativeUserId = request.UserId;
-            }
+            else
+                throw new BusinessRuleException("Selected user is not a member of either team.");
 
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
