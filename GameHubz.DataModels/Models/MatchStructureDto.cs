@@ -36,5 +36,15 @@ namespace GameHubz.DataModels.Models
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }
+
+        // Live progress of a TEAM card: how many of its sub-matches are decided, and the running
+        // win tally. Deliberately separate from Home/Away.Score, which stays null until the whole
+        // fixture is settled — the client keys "already reported" (and therefore whether to offer
+        // the Report Result CTA) off Score, so a running tally must not land there.
+        // Null on solo cards.
+        public int? TeamGamesTotal { get; set; }
+        public int? TeamGamesDecided { get; set; }
+        public int? TeamLiveHomeScore { get; set; }
+        public int? TeamLiveAwayScore { get; set; }
     }
 }

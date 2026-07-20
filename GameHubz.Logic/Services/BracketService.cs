@@ -5918,10 +5918,15 @@ namespace GameHubz.Logic.Services
         {
             int round = tm.RoundNumber ?? 1;
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
+            var progress = ComputeTeamProgress(tm);
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
                 Round = round,
+                TeamGamesTotal = progress.Total,
+                TeamGamesDecided = progress.Decided,
+                TeamLiveHomeScore = progress.HomeWins,
+                TeamLiveAwayScore = progress.AwayWins,
                 Order = tm.MatchOrder ?? 0,
                 Stage = tm.IsGrandFinalReset ? MatchStage.GrandFinalReset
                     : tm.IsGrandFinal ? MatchStage.GrandFinal
@@ -5978,6 +5983,29 @@ namespace GameHubz.Logic.Services
             return (h, a);
         }
 
+        // Running progress of a team fixture, surfaced while it is still being played so the
+        // bracket card can show "1 : 0, 1/2 done" instead of a dash until the very end.
+        // Decided = played to a result OR closed as a double walkover (NoShow) — a voided game is
+        // done, it just counts for neither side, which is why the tally only follows real winners.
+        private static (int Total, int Decided, int HomeWins, int AwayWins) ComputeTeamProgress(TeamMatchEntity tm)
+        {
+            int total = 0, decided = 0, h = 0, a = 0;
+
+            foreach (var sm in tm.SubMatches ?? new List<MatchEntity>())
+            {
+                total++;
+
+                if (sm.Status == MatchStatus.NoShow) { decided++; continue; }
+                if (sm.Status != MatchStatus.Completed) continue;
+
+                decided++;
+                if (sm.WinnerParticipantId == tm.HomeTeamParticipantId) h++;
+                else if (sm.WinnerParticipantId == tm.AwayTeamParticipantId) a++;
+            }
+
+            return (total, decided, h, a);
+        }
+
         private static MatchStatus MapTeamMatchStatus(TeamMatchStatus status)
             => status switch
             {
@@ -5994,6 +6022,7 @@ namespace GameHubz.Logic.Services
             var anySub = subs.FirstOrDefault();
 
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
+            var progress = ComputeTeamProgress(tm);
 
             return new MatchStructureDto
             {
@@ -6003,6 +6032,10 @@ namespace GameHubz.Logic.Services
                 Stage = MatchStage.GroupStage,
                 Status = MapTeamMatchStatus(tm.Status),
                 TeamMatchId = tm.Id,
+                TeamGamesTotal = progress.Total,
+                TeamGamesDecided = progress.Decided,
+                TeamLiveHomeScore = progress.HomeWins,
+                TeamLiveAwayScore = progress.AwayWins,
                 StartTime = anySub?.ScheduledStartTime,
                 RoundDeadline = subs.Count > 0 ? subs.Max(s => s.RoundDeadline) : null,
                 IsRoundLocked = anySub?.RoundOpenAt.HasValue == true && anySub.RoundOpenAt!.Value > DateTime.UtcNow,
