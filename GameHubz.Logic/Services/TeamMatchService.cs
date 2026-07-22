@@ -82,6 +82,10 @@ namespace GameHubz.Logic.Services
                     MatchOrder = (teamMatch.MatchOrder ?? 0) + 1000,
                     Status = MatchStatus.Pending,
                     IsUpperBracket = true,
+                    // The decider belongs to the same round as the games that produced the tie, so
+                    // it answers to their deadline. Without this it is created with none — no
+                    // deadline in the app and no reminder pushes.
+                    RoundDeadline = teamMatch.SubMatches.Max(sm => sm.RoundDeadline),
                     TeamMatchId = teamMatch.Id,
                     HomeParticipantId = teamMatch.HomeTeamParticipantId,
                     AwayParticipantId = teamMatch.AwayTeamParticipantId,

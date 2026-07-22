@@ -5028,15 +5028,23 @@ namespace GameHubz.Logic.Services
             var homeMembers = await GetShuffledTeamMembers(teamMatch.HomeTeamParticipantId);
             var awayMembers = await GetShuffledTeamMembers(teamMatch.AwayTeamParticipantId);
 
+            // A tie's games are only created once both teams are known — normally long after the
+            // organizer set that round's deadline, and SetRoundDeadline can only stamp rows that
+            // already exist. Born with no RoundDeadline they show "no deadline" in the app and are
+            // skipped by the reminder sweep, so inherit whatever the rest of the round plays to.
+            int roundNumber = teamMatch.RoundNumber ?? 1;
+            var roundDeadline = await GetRoundDeadline(teamMatch.TournamentStageId!.Value, roundNumber);
+
             for (int j = 0; j < teamSize; j++)
             {
                 var subMatch = CreateMatch(
                     teamMatch.TournamentId,
                     teamMatch.TournamentStageId!.Value,
-                    teamMatch.RoundNumber ?? 1,
+                    roundNumber,
                     MatchStage.GroupStage,
                     (teamMatch.MatchOrder ?? 0) * teamSize + j);
                 subMatch.TeamMatchId = teamMatch.Id;
+                subMatch.RoundDeadline = roundDeadline;
                 subMatch.HomeParticipantId = teamMatch.HomeTeamParticipantId;
                 subMatch.AwayParticipantId = teamMatch.AwayTeamParticipantId;
                 subMatch.HomeUserId = j < homeMembers.Count ? homeMembers[j].UserId : null;
@@ -5044,6 +5052,14 @@ namespace GameHubz.Logic.Services
 
                 await this.AppUnitOfWork.MatchRepository.AddEntity(subMatch, this.UserContextReader);
             }
+        }
+
+        // The deadline the rest of this round is already playing to. Max ignores rows that never
+        // got one; null means the round genuinely has no deadline set.
+        private async Task<DateTime?> GetRoundDeadline(Guid stageId, int roundNumber)
+        {
+            var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId, roundNumber);
+            return roundMatches.Count == 0 ? null : roundMatches.Max(m => m.RoundDeadline);
         }
 
         private async Task<List<TournamentTeamMemberEntity>> GetShuffledTeamMembers(Guid? teamParticipantId)
