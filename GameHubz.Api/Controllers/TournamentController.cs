@@ -268,11 +268,15 @@ namespace GameHubz.Api.Controllers
 
         [AllowAnonymous]
         [HttpGet("{id}/export/pdf")]
-        public async Task<IActionResult> ExportBracketPdf(Guid id)
+        public async Task<IActionResult> ExportBracketPdf(Guid id, [FromQuery] bool includeSchedule = false)
         {
-            var (pdf, name) = await this.tournamentExportService.GenerateBracketPdfAsync(id);
+            // Additive optional flag — a request without it is byte-identical to the legacy call
+            // (standings only). includeSchedule=true adds round-by-round fixture/result pages for
+            // group-stage and league tournaments.
+            var (pdf, name) = await this.tournamentExportService.GenerateBracketPdfAsync(id, includeSchedule);
             var safeName = string.Concat(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
-            return File(pdf, "application/pdf", $"bracket-{safeName}.pdf");
+            var suffix = includeSchedule ? "-schedule" : "";
+            return File(pdf, "application/pdf", $"bracket-{safeName}{suffix}.pdf");
         }
     }
 }

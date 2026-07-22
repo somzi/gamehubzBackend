@@ -80,15 +80,26 @@ namespace GameHubz.Logic.Services
         //  PUBLIC API
         // ================================================================
 
-        public async Task<(byte[] Pdf, string TournamentName)> GenerateBracketPdfAsync(Guid tournamentId)
+        /// <param name="includeSchedule">
+        /// When true, group-stage and league exports gain round-by-round "schedule" pages after
+        /// the standings — every round's fixtures, its deadline and any recorded results. When
+        /// false (the default, and what the live client requests) the output is unchanged:
+        /// standings only for group/league, and the bracket diagram for elimination stages. Swiss
+        /// always lists its rounds regardless — it has no bracket diagram to fall back on.
+        /// </param>
+        public async Task<(byte[] Pdf, string TournamentName)> GenerateBracketPdfAsync(
+            Guid tournamentId, bool includeSchedule = false)
         {
-            string cacheKey = $"pdf:bracket:{tournamentId}";
+            // Keep the two variants under separate cache keys so a warm "standings only" entry is
+            // never served for a "with schedule" request (or vice-versa).
+            string variant = includeSchedule ? "sched" : "std";
+            string cacheKey = $"pdf:bracket:{tournamentId}:{variant}";
 
             // Check PDF cache first — avoids loading tournament structure at all when warm
             var cached = await this.cacheService.GetAsync<byte[]>(cacheKey);
             if (cached != null)
             {
-                // Still need the name; use a lightweight cache key for it
+                // Still need the name; use a lightweight cache key for it (name is variant-agnostic)
                 string nameCacheKey = $"pdf:bracket:name:{tournamentId}";
                 var cachedName = await this.cacheService.GetAsync<string>(nameCacheKey) ?? string.Empty;
                 return (cached, cachedName);
@@ -112,7 +123,7 @@ namespace GameHubz.Logic.Services
                     }
 
                     if (stage.Groups is { Count: > 0 })
-                        CreateGroupPage(doc, structure, stage);
+                        CreateGroupPage(doc, structure, stage, includeSchedule);
                 }
             });
 
@@ -595,7 +606,8 @@ namespace GameHubz.Logic.Services
         private static void CreateGroupPage(
             IDocumentContainer doc,
             TournamentStructureDto structure,
-            TournamentStageStructureDto stage)
+            TournamentStageStructureDto stage,
+            bool includeSchedule)
         {
             var groups = stage.Groups!.OrderBy(g => g.Name).ToList();
             if (groups.Count == 0) return;
@@ -614,8 +626,13 @@ namespace GameHubz.Logic.Services
             if (singleStandings)
             {
                 CreateLeaderboardPages(doc, structure, stage, groups[0], structure.QualifiersPerGroup ?? 0);
+
+                // Swiss always lists its rounds (no bracket to fall back on) — unchanged. A League
+                // only gets them when the caller opts into the schedule.
                 if (stage.Type == StageType.Swiss)
                     CreateRoundResultsPages(doc, structure, stage, groups[0]);
+                else if (includeSchedule)
+                    CreateScheduleSection(doc, structure, stage, groups[0], labelWithGroup: false);
                 return;
             }
 
@@ -638,6 +655,13 @@ namespace GameHubz.Logic.Services
                 var pageGroups = groups.Skip(start).Take(groupsPerPage).ToList();
                 RenderGroupDocPage(doc, structure, stage, pageGroups, qualifiersCount, columns);
             }
+
+            // With schedule: each group's fixtures/results, grouped by round, follow the standings.
+            // The group name goes in the header (labelWithGroup) so the multiple sections read as
+            // one per group rather than blurring together.
+            if (includeSchedule)
+                foreach (var g in groups)
+                    CreateScheduleSection(doc, structure, stage, g, labelWithGroup: true);
         }
 
         private static void RenderGroupDocPage(
@@ -1007,9 +1031,105 @@ namespace GameHubz.Logic.Services
             });
         }
 
+        // ================================================================
+        //  SCHEDULE (round-by-round fixtures + results, opt-in)
+        // ================================================================
+
+        // The "with schedule" companion to the standings: one section per group listing every
+        // round's fixtures, its deadline and any recorded results. Shares the round-results chip
+        // grid but adds the deadline caption + per-fixture kickoff times that make it a schedule
+        // rather than a bare results dump. Kept separate from CreateRoundResultsPages so the Swiss
+        // results page it feeds stays byte-for-byte unchanged.
+        private static void CreateScheduleSection(
+            IDocumentContainer doc,
+            TournamentStructureDto structure,
+            TournamentStageStructureDto stage,
+            GroupDto group,
+            bool labelWithGroup)
+        {
+            var rounds = group.Matches
+                .GroupBy(m => m.Round)
+                .OrderBy(g => g.Key)
+                .ToList();
+            if (rounds.Count == 0) return;
+
+            const float pageW = 1200;
+            const float pageH = 700;
+            const float chipW = 360;
+
+            // With one group per stage (a League) the stage name titles the section; with several
+            // (a group stage) each section is titled by its own group so they don't blur together.
+            string title = labelWithGroup ? group.Name : stage.Name;
+
+            doc.Page(page =>
+            {
+                page.Size(pageW, pageH);
+                page.Margin(25);
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily(Font));
+
+                page.Header().Column(h => ComposeHeader(
+                    h, structure, "SCHEDULE", title, "ROUNDS", rounds.Count.ToString()));
+
+                page.Content().PaddingTop(12).Column(col =>
+                {
+                    col.Spacing(16);
+
+                    foreach (var round in rounds)
+                    {
+                        int total = round.Count();
+                        int played = round.Count(m => m.Status == MatchStatus.Completed);
+                        string? deadline = FormatRoundDeadline(group, round.Key);
+
+                        col.Item().Column(section =>
+                        {
+                            section.Item().PaddingBottom(6).Row(r =>
+                            {
+                                r.RelativeItem().Column(rc =>
+                                {
+                                    rc.Item().Text($"ROUND {round.Key}")
+                                        .FontSize(10).Bold().FontColor(CGroupName).LetterSpacing(0.1f);
+                                    if (deadline != null)
+                                        rc.Item().PaddingTop(1).Text(deadline)
+                                            .FontSize(7.5f).FontColor(CMuted);
+                                });
+                                r.RelativeItem().AlignRight().Text($"{played}/{total} played")
+                                    .FontSize(8).FontColor(CMuted);
+                            });
+
+                            // Chips flow left-to-right and wrap; three per row fill the page width.
+                            section.Item().Inlined(inl =>
+                            {
+                                inl.HorizontalSpacing(14);
+                                inl.VerticalSpacing(10);
+                                foreach (var m in round.OrderBy(m => m.Order))
+                                    inl.Item().Width(chipW).Element(e =>
+                                        RenderMatchChip(e, m, structure.IsTeamTournament, showTime: true));
+                            });
+                        });
+                    }
+                });
+
+                page.Footer().Element(ComposeFooter);
+            });
+        }
+
+        // Round deadline caption for the schedule pages — "Play by MMM d, HH:mm UTC", or null when
+        // the round has no deadline. Skips the year-9999 "opens after previous round" lock sentinel
+        // that some league rounds carry, which is an open-time marker rather than a real deadline.
+        private static string? FormatRoundDeadline(GroupDto group, int round)
+        {
+            if (!group.RoundDeadlines.TryGetValue(round, out var dl) || dl is not { } deadline)
+                return null;
+            if (deadline.Year > 9000)
+                return null;
+            return $"Play by {deadline.ToString("MMM d, HH:mm 'UTC'", Inv)}";
+        }
+
         // Compact result card: home (right-aligned) · score / "vs" / "BYE" · away (left-aligned).
         // The winner's name is dark + bold; the loser muted. An unplayed match shows "vs".
-        private static void RenderMatchChip(IContainer container, MatchStructureDto m, bool isTeam)
+        // In schedule mode (showTime) an unplayed-but-scheduled fixture gains a muted kickoff-time
+        // caption under the row; passing showTime:false reproduces the original single-row chip.
+        private static void RenderMatchChip(IContainer container, MatchStructureDto m, bool isTeam, bool showTime = false)
         {
             container = container
                 .Background(CCardBg)
@@ -1049,11 +1169,33 @@ namespace GameHubz.Logic.Services
                 ? TextStyle.Default.FontSize(9).Bold().FontColor(CGroupName)
                 : TextStyle.Default.FontSize(8).FontColor(CMuted);
 
-            container.Row(r =>
+            void FixtureRow(RowDescriptor r)
             {
                 r.RelativeItem().AlignRight().Text(homeName).Style(homeStyle).ClampLines(1, "…");
                 r.ConstantItem(58).AlignCenter().Text(middle).Style(midStyle);
                 r.RelativeItem().AlignLeft().Text(awayName).Style(awayStyle).ClampLines(1, "…");
+            }
+
+            // A known kickoff for an as-yet-unplayed fixture — the "raspored" bit. A completed
+            // match shows its score instead, and a Pending placeholder has no meaningful time.
+            string? timeLine = showTime
+                && !completed
+                && m.StartTime.HasValue
+                && (m.Status == MatchStatus.Scheduled || m.Status == MatchStatus.Live)
+                    ? m.StartTime.Value.ToString("MMM d, HH:mm 'UTC'", Inv)
+                    : null;
+
+            if (timeLine == null)
+            {
+                container.Row(FixtureRow);
+                return;
+            }
+
+            container.Column(c =>
+            {
+                c.Item().Row(FixtureRow);
+                c.Item().PaddingTop(3).AlignCenter().Text(timeLine)
+                    .FontSize(7).FontColor(CMuted).LetterSpacing(0.04f);
             });
         }
 
