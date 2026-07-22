@@ -1159,9 +1159,17 @@ namespace GameHubz.Logic.Services
             bool homeWin = m.Home.IsWinner;
             bool awayWin = m.Away.IsWinner;
 
-            var homeStyle = TextStyle.Default.FontSize(9).FontColor(homeWin ? CGroupName : CRowMuted);
+            // Name colors read: winner → near-black + bold. Loser of a *decided* match → a mid
+            // gray that's dimmer than the winner but still legible. Everyone in an unplayed match
+            // or a draw → normal dark body text, so a full fixture list (every match still to be
+            // played) doesn't wash out into pale gray.
+            bool decided = completed && (homeWin || awayWin);
+            string homeCol = homeWin ? CGroupName : (decided ? CGdNeut : CRowTxt);
+            string awayCol = awayWin ? CGroupName : (decided ? CGdNeut : CRowTxt);
+
+            var homeStyle = TextStyle.Default.FontSize(9).FontColor(homeCol);
             if (homeWin) homeStyle = homeStyle.Bold();
-            var awayStyle = TextStyle.Default.FontSize(9).FontColor(awayWin ? CGroupName : CRowMuted);
+            var awayStyle = TextStyle.Default.FontSize(9).FontColor(awayCol);
             if (awayWin) awayStyle = awayStyle.Bold();
 
             string middle = completed ? $"{m.Home.Score ?? 0} – {m.Away.Score ?? 0}" : "vs";
