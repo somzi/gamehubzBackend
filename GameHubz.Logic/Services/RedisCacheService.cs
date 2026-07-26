@@ -77,6 +77,11 @@ namespace GameHubz.Logic.Services
             return value.TryParse(out long parsed) ? parsed : 0;
         }
 
+        public async Task RemoveCounterAsync(string key)
+        {
+            await _multiplexer.GetDatabase().KeyDeleteAsync(InstanceName + key);
+        }
+
         // SCAN-based pattern delete. We iterate every (non-replica) endpoint to cover cluster
         // setups, collect matching keys, then batch-delete in one round-trip per server. SCAN
         // is non-blocking on the Redis side; safe to use during normal operation.

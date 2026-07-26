@@ -100,7 +100,7 @@ namespace GameHubz.Logic.Services
         {
             await SafeAsync(async () =>
             {
-                await cacheService.RemoveAsync(LoginAccountKey(email));
+                await cacheService.RemoveCounterAsync(LoginAccountKey(email));
                 return true;
             });
         }

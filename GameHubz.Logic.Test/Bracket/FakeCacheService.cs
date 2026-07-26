@@ -58,6 +58,12 @@ namespace GameHubz.Logic.Test.Bracket
             return Task.FromResult(store.TryGetValue(key, out var value) && value is long counter ? counter : 0);
         }
 
+        public Task RemoveCounterAsync(string key)
+        {
+            store.Remove(key);
+            return Task.CompletedTask;
+        }
+
         public Task RemoveByPatternAsync(string pattern)
         {
             int star = pattern.IndexOf('*');

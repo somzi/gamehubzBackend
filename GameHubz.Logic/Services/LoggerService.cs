@@ -47,7 +47,11 @@ namespace GameHubz.Logic.Services
             stream.BaseStream.Seek(0, SeekOrigin.Begin);
             string body = await stream.ReadToEndAsync();
 
-            return body;
+            // The NLog database target this feeds is currently dead (its INSERT targets an
+            // unquoted `log`, while the table is "Log" — Postgres folds the former to lowercase and
+            // the write fails silently). Redacting anyway: the day that casing gets fixed, this
+            // becomes a live sink for every 4xx as well, and those are the common auth failures.
+            return SensitiveDataRedactor.Redact(request.Path.ToString(), body);
         }
     }
 }

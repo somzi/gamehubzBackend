@@ -20,5 +20,11 @@
 
         // Current value of an IncrementAsync counter; 0 when the key has expired or never existed.
         Task<long> GetCounterAsync(string key);
+
+        // Resets an IncrementAsync counter. Counters deliberately get their own delete rather than
+        // reusing RemoveAsync: they are written as raw Redis strings, RemoveAsync goes through
+        // IDistributedCache, and keeping both on one code path avoids relying on the two agreeing
+        // about key layout.
+        Task RemoveCounterAsync(string key);
     }
 }

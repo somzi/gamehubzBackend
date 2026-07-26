@@ -10,6 +10,7 @@ using GameHubz.Logic.Exceptions;
 using GameHubz.Logic.Exceptions.Base;
 using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
+using GameHubz.Logic.Utility;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GameHubz.Api.Middleware
@@ -217,6 +218,10 @@ namespace GameHubz.Api.Middleware
                 using var reader = new StreamReader(request.Body, leaveOpen: true);
                 string body = await reader.ReadToEndAsync();
                 request.Body.Seek(0, SeekOrigin.Begin);
+
+                // Credentials must never reach the ErrorLog row. Redact BEFORE truncating, so a
+                // body long enough to be cut mid-value can't leave a partial password behind.
+                body = SensitiveDataRedactor.Redact(request.Path.ToString(), body);
 
                 return body.Length > MaxRequestBodyLength ? body[..MaxRequestBodyLength] : body;
             }
