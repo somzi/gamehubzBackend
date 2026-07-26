@@ -47,6 +47,36 @@ namespace GameHubz.Logic.Services
             await _cache.RemoveAsync(key);
         }
 
+        // Counter keys are written as plain Redis strings through the multiplexer (INCR), not as
+        // the hash IDistributedCache uses for Get/SetAsync — so a key must be used with one pair of
+        // methods or the other, never both. The InstanceName prefix is applied by hand here to match
+        // what IDistributedCache adds, which keeps RemoveAsync able to reset these counters.
+        public async Task<long> IncrementAsync(string key, TimeSpan window)
+        {
+            var db = _multiplexer.GetDatabase();
+            string prefixedKey = InstanceName + key;
+
+            long value = await db.StringIncrementAsync(prefixedKey);
+
+            // Only the first hit sets the TTL. Refreshing it on every increment would let a steady
+            // stream of attempts push the expiry out forever, so the counter would never reset.
+            if (value == 1)
+            {
+                await db.KeyExpireAsync(prefixedKey, window);
+            }
+
+            return value;
+        }
+
+        public async Task<long> GetCounterAsync(string key)
+        {
+            var db = _multiplexer.GetDatabase();
+
+            RedisValue value = await db.StringGetAsync(InstanceName + key);
+
+            return value.TryParse(out long parsed) ? parsed : 0;
+        }
+
         // SCAN-based pattern delete. We iterate every (non-replica) endpoint to cover cluster
         // setups, collect matching keys, then batch-delete in one round-trip per server. SCAN
         // is non-blocking on the Redis side; safe to use during normal operation.

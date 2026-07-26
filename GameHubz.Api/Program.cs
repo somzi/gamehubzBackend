@@ -209,20 +209,32 @@ namespace GameHubz.Api
             // Aktiviramo CORS polisu koju smo gore definisali
             app.UseCors("AllowAll");
 
-            app.UseSwagger();
-            app.UseSwaggerUI(c =>
+            // Swagger publishes every route, body shape and auth scheme in the app — a finished map
+            // for anyone probing it — and the UI below is additionally handed the Azure client
+            // secret whenever IsAzureLoginEnabled is on, which lands in a client-side config any
+            // visitor can read. Development behaves exactly as before; production stays dark unless
+            // Swagger:EnableInProduction is explicitly set, so it can be turned back on from config
+            // alone if it's ever needed, without a code change.
+            bool exposeSwagger = app.Environment.IsDevelopment()
+                || configurationManager.GetValue<bool>("Swagger:EnableInProduction");
+
+            if (exposeSwagger)
             {
-                c.SwaggerEndpoint("/swagger/v1/swagger.json", "GameHubz API");
-
-                if (configurationManager.GetValue<bool>("IsAzureLoginEnabled"))
+                app.UseSwagger();
+                app.UseSwaggerUI(c =>
                 {
-                    var secret = configurationManager.GetValue<string>("AzureAd:ClientSecret");
-                    var clientId = configurationManager.GetValue<string>("AzureAd:ClientId");
+                    c.SwaggerEndpoint("/swagger/v1/swagger.json", "GameHubz API");
 
-                    c.OAuthClientId(clientId);
-                    c.OAuthClientSecret(secret);
-                }
-            });
+                    if (configurationManager.GetValue<bool>("IsAzureLoginEnabled"))
+                    {
+                        var secret = configurationManager.GetValue<string>("AzureAd:ClientSecret");
+                        var clientId = configurationManager.GetValue<string>("AzureAd:ClientId");
+
+                        c.OAuthClientId(clientId);
+                        c.OAuthClientSecret(secret);
+                    }
+                });
+            }
 
             // app.UseHttpsRedirection(); // Isključeno za rad preko IP adrese
 

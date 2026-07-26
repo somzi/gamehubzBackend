@@ -42,6 +42,22 @@ namespace GameHubz.Logic.Test.Bracket
             return Task.CompletedTask;
         }
 
+        // Counters live in the same store as everything else here; the real implementation keeps
+        // them as plain Redis strings so RemoveAsync resets them, and that holds in-memory too.
+        public Task<long> IncrementAsync(string key, TimeSpan window)
+        {
+            long next = (store.TryGetValue(key, out var existing) && existing is long current ? current : 0) + 1;
+
+            store[key] = next;
+
+            return Task.FromResult(next);
+        }
+
+        public Task<long> GetCounterAsync(string key)
+        {
+            return Task.FromResult(store.TryGetValue(key, out var value) && value is long counter ? counter : 0);
+        }
+
         public Task RemoveByPatternAsync(string pattern)
         {
             int star = pattern.IndexOf('*');

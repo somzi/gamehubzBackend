@@ -14,6 +14,7 @@ namespace GameHubz.Logic.Services
         private readonly DateTimeProvider dateTimeProvider;
         private readonly EmailService emailService;
         private readonly ICacheService cacheService;
+        private readonly AuthThrottleService authThrottleService;
 
         private const int ForgotPasswrodTokenExpireHours = 1;
 
@@ -32,9 +33,11 @@ namespace GameHubz.Logic.Services
             EmailQueue emailQueue,
             DateTimeProvider dateTimeProvider,
             EmailService emailService,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            AuthThrottleService authThrottleService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
+            this.authThrottleService = authThrottleService;
             this.userService = userService;
             this.configuration = configuration;
             this.passwordHasher = passwordHasher;
@@ -174,11 +177,25 @@ namespace GameHubz.Logic.Services
         {
             email = (email ?? string.Empty).Trim().ToLowerInvariant();
 
+            // Caps how often one mailbox can be targeted: unthrottled, this endpoint is an
+            // inbox-bombing primitive and lets an attacker keep churning a victim's pending OTP.
+            // Blocked sends return silently, exactly like the unknown-address case below, so the
+            // anti-enumeration property documented above (always 200, never confirms an account)
+            // holds either way.
+            if (await this.authThrottleService.IsResetSendBlockedAsync(email))
+            {
+                return;
+            }
+
             var user = await AppUnitOfWork.UserRepository.GetByEmail(email);
             if (user == null)
             {
                 return;
             }
+
+            // Counted only once we know a mail is actually going out, so probing addresses that
+            // don't exist can't burn a real user's budget.
+            await this.authThrottleService.RegisterResetSendAsync(email);
 
             int otpNumber = RandomNumberGenerator.GetInt32(100000, 1000000);
             string otpCode = otpNumber.ToString("000 000");

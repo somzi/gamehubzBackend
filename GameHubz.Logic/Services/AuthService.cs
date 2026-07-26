@@ -20,6 +20,7 @@ namespace GameHubz.Logic.Services
         private readonly AnonymousUserContextReader anonymousUserContextReader;
         private readonly IValidator<LoginRequestDto> validator;
         private readonly IPasswordHasher passwordHasher;
+        private readonly AuthThrottleService authThrottleService;
 
         public AuthService(
             IUnitOfWorkFactory factory,
@@ -34,10 +35,12 @@ namespace GameHubz.Logic.Services
             IUserContextReader userContextReader,
             AnonymousUserContextReader anonymousUserContextReader,
             IValidator<LoginRequestDto> validator,
-            IPasswordHasher passwordHasher
+            IPasswordHasher passwordHasher,
+            AuthThrottleService authThrottleService
             )
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
+            this.authThrottleService = authThrottleService;
             this.accessTokenHandler = accessTokenHandler;
             this.accessTokenFactory = accessTokenFactory;
             this.refreshTokenFactory = refreshTokenFactory;
@@ -143,6 +146,14 @@ namespace GameHubz.Logic.Services
             // Email is treated as case-insensitive: canonicalize here so "User@x.com" and "user@x.com" both resolve.
             loginRequest.Email = (loginRequest.Email ?? string.Empty).Trim().ToLowerInvariant();
 
+            // Brute-force / credential-stuffing guard. A blocked attempt answers with exactly the
+            // same response a wrong password does, so existing clients need no change and the
+            // endpoint gives nothing away about which accounts exist or are under attack.
+            if (await this.authThrottleService.IsLoginBlockedAsync(loginRequest.Email))
+            {
+                return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
+            }
+
             UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByEmail(loginRequest.Email);
 
             if (user != null && !user.IsActive)
@@ -153,8 +164,14 @@ namespace GameHubz.Logic.Services
             if (user == null
                 || this.HashPassword(loginRequest.Password, user.PasswordNonce) != user.Password)
             {
+                await this.authThrottleService.RegisterLoginFailureAsync(loginRequest.Email);
+
                 return new TokenResponse(false, null, this.LocalizationService["AuthService.InvalidUsernameOrPassword"]);
             }
+
+            // Correct credentials wipe the account's failure budget, so a few mistyped attempts
+            // before a successful sign-in never carry over.
+            await this.authThrottleService.ClearLoginFailuresAsync(loginRequest.Email);
 
             var refreshToken = await this.GenerateAndAddRefreshTokenForUser(user!.Id!.Value);
 
