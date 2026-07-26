@@ -66,6 +66,12 @@ namespace GameHubz.DataModels.Domain
         // has no team double-elimination, so this is ignored for team tournaments.
         public KnockoutEliminationType? KnockoutEliminationType { get; set; }
 
+        // How the opening fixtures were decided when the bracket was generated (random shuffle,
+        // hand-placed by the organiser, standard seeding, or a pot draw). Set once at generation
+        // time and never edited afterwards. Null on tournaments generated before the draw picker
+        // existed — those were all random.
+        public BracketSeedingMode? BracketSeedingMode { get; set; }
+
         // When true, single-elimination brackets also generate a play-off match
         // between the two semi-final losers. Default false for all existing tournaments.
         public bool HasThirdPlaceMatch { get; set; }

@@ -52,6 +52,17 @@ namespace GameHubz.Data.Repository
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, previousStatus));
         }
 
+        // Records how the bracket was drawn, right after generation succeeded. A targeted
+        // ExecuteUpdate rather than a tracked save: the tournament entity in the caller's hand was
+        // read no-tracking and still carries the pre-claim Status, so saving it would roll the
+        // InProgress claim back.
+        public async Task SetBracketSeedingMode(Guid tournamentId, BracketSeedingMode mode)
+        {
+            await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.BracketSeedingMode, mode));
+        }
+
         /// <summary>
         /// Serialises stage-advancement logic per tournament via a Postgres session advisory
         /// lock. Round-completion checks and next-round / knockout generation are check-then-act
@@ -282,7 +293,8 @@ namespace GameHubz.Data.Repository
                       IsExclusive = x.IsExclusive,
                       DoubleRoundRobin = x.DoubleRoundRobin,
                       GroupsCount = x.GroupsCount,
-                      QualifiersPerGroup = x.QualifiersPerGroup
+                      QualifiersPerGroup = x.QualifiersPerGroup,
+                      BracketSeedingMode = x.BracketSeedingMode
                   }).FirstOrDefaultAsync();
         }
 

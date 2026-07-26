@@ -37,6 +37,16 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        // Draw setup for the organiser's bracket picker: supported seeding modes, the shape to fill
+        // (bracket size / byes, or groups + pots) and the entrants. Manager-gated inside the service.
+        [HttpGet("{tournamentId}/draw/options")]
+        public async Task<IActionResult> GetBracketDrawOptions(Guid tournamentId)
+        {
+            var options = await this.bracketService.GetDrawOptions(tournamentId);
+
+            return Ok(options);
+        }
+
         [HttpPost("{tournamentId}/bracket/reset")]
         public async Task<IActionResult> ResetKnockoutBracket(Guid tournamentId)
         {

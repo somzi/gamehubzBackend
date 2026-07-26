@@ -36,6 +36,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus);
 
+        Task SetBracketSeedingMode(Guid tournamentId, BracketSeedingMode mode);
+
         Task AcquireAdvancementLock(Guid tournamentId);
 
         Task ReleaseAdvancementLock(Guid tournamentId);

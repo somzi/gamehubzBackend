@@ -8,6 +8,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<TournamentParticipantEntity>> GetEntitiesByTournamentId(Guid tournamentId);
 
+        Task<List<TournamentParticipantEntity>> GetEntitiesByTournamentIdWithNames(Guid tournamentId);
+
         Task<List<TournamentParticipantEntity>> GetByGroupIdWithNames(Guid? id);
 
         Task<List<TournamentParticipantEntity>> GetByGroupIdsWithNames(List<Guid> groupIds);

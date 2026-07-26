@@ -244,6 +244,10 @@ namespace GameHubz.Logic.Services
 
             var tournamentId = request.TournamentId;
 
+            // Seeding choice (random shuffle / hand-made / standard seeding / pot draw). Rejected up
+            // front when the format doesn't offer it, before the generation claim is taken.
+            var draw = BuildDraw(tournament, request);
+
             TimeSpan? roundDuration = tournament.RoundDurationMinutes.HasValue
                 ? TimeSpan.FromMinutes(tournament.RoundDurationMinutes.Value)
                 : null;
@@ -259,7 +263,11 @@ namespace GameHubz.Logic.Services
 
             try
             {
-                await GenerateBracketForFormat(tournament, tournamentId, roundDuration);
+                await GenerateBracketForFormat(tournament, tournamentId, roundDuration, draw);
+
+                // Only recorded once generation actually succeeded, so a tournament that failed and
+                // was retried with a different mode doesn't advertise the abandoned one.
+                await this.AppUnitOfWork.TournamentRepository.SetBracketSeedingMode(tournamentId, draw.Mode);
             }
             catch
             {
@@ -652,15 +660,326 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
-        private async Task GenerateBracketForFormat(TournamentEntity tournament, Guid tournamentId, TimeSpan? roundDuration)
+        /// <summary>
+        /// Everything the organiser's draw picker needs before the bracket exists: which seeding modes
+        /// this format offers, the shape that has to be filled (bracket size + byes, or the group /
+        /// pot counts) and the entrants to place. Manager-only — it lists the full field of a
+        /// tournament whose bracket has not been drawn yet.
+        /// </summary>
+        public async Task<BracketDrawOptionsDto> GetDrawOptions(Guid tournamentId)
+        {
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
+                throw new BusinessRuleException("Only the hub owner or an admin can set up the draw.");
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository
+                .GetEntitiesByTournamentIdWithNames(tournamentId);
+
+            var entrants = OrderByRegistration(participants)
+                .Select(p => new BracketDrawEntrantDto
+                {
+                    ParticipantId = p.Id!.Value,
+                    UserId = p.UserId,
+                    TeamId = p.TeamId,
+                    // Username, not Nickname: a persisted-empty nickname would render a blank chip.
+                    DisplayName = p.Team?.TeamName ?? p.User?.Username ?? "Unknown",
+                    AvatarUrl = p.Team?.CaptainUser?.AvatarUrl ?? p.User?.AvatarUrl,
+                    Seed = p.Seed,
+                })
+                .ToList();
+
+            var options = new BracketDrawOptionsDto
+            {
+                TournamentId = tournamentId,
+                Format = tournament.Format,
+                IsTeamTournament = tournament.IsTeamTournament,
+                EntrantCount = entrants.Count,
+                SupportedModes = SupportedSeedingModes(tournament.Format),
+                Entrants = entrants,
+            };
+
+            if (tournament.Format == TournamentFormat.SingleElimination
+                || tournament.Format == TournamentFormat.DoubleElimination)
+            {
+                int bracketSize = entrants.Count >= 2 ? GetNextPowerOfTwo(entrants.Count) : 0;
+                options.BracketSize = bracketSize;
+                options.ByeCount = Math.Max(0, bracketSize - entrants.Count);
+            }
+            else if (tournament.Format == TournamentFormat.GroupStageWithKnockout)
+            {
+                int groups = tournament.GroupsCount ?? 0;
+                options.GroupsCount = groups;
+                options.QualifiersPerGroup = tournament.QualifiersPerGroup;
+                options.PotCount = groups > 0 && entrants.Count > 0
+                    ? (int)Math.Ceiling((double)entrants.Count / groups)
+                    : null;
+            }
+
+            return options;
+        }
+
+        /// <summary>
+        /// The seeding modes each format can actually honour. Random is always available; League and
+        /// Swiss have no opening arrangement worth hand-picking (a round-robin plays every pairing
+        /// anyway, and Swiss round 1 is derived from the standings order), so they stay random-only.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="BracketSeedingMode.Seeded"/> is deliberately offered nowhere. There is no
+        /// player rating in the product yet, so "seed 1" would only ever mean "registered first" —
+        /// and that would decide the pairings, who gets a bye and how the groups are split, on
+        /// something that says nothing about strength. Manual and Pots cover the real need until a
+        /// ranking exists. The engine side (<see cref="BuildEliminationSlots"/> /
+        /// <see cref="BuildGroupAssignment"/>) still implements it and stays under test, so
+        /// re-offering it is a one-line change here once seeds mean something.
+        /// </remarks>
+        public static List<BracketSeedingMode> SupportedSeedingModes(TournamentFormat format) => format switch
+        {
+            TournamentFormat.SingleElimination or TournamentFormat.DoubleElimination =>
+                new List<BracketSeedingMode> { BracketSeedingMode.Random, BracketSeedingMode.Manual },
+
+            TournamentFormat.GroupStageWithKnockout =>
+                new List<BracketSeedingMode> { BracketSeedingMode.Random, BracketSeedingMode.Manual, BracketSeedingMode.Pots },
+
+            _ => new List<BracketSeedingMode> { BracketSeedingMode.Random },
+        };
+
+        private static BracketDraw BuildDraw(TournamentEntity tournament, CreateBracketRequest request)
+        {
+            // Old clients send no mode at all — that's a random draw, exactly as before.
+            var mode = request.SeedingMode ?? BracketSeedingMode.Random;
+
+            if (!SupportedSeedingModes(tournament.Format).Contains(mode))
+                throw new BusinessRuleException($"This tournament format does not support a {mode.ToString().ToLowerInvariant()} draw.");
+
+            if ((mode == BracketSeedingMode.Manual || mode == BracketSeedingMode.Pots) && request.DrawPlan == null)
+                throw new BusinessRuleException("The draw is missing — pick the placements again and retry.");
+
+            return new BracketDraw(mode, request.DrawPlan);
+        }
+
+        /// <summary>
+        /// Entrants in the order they joined. This is the order the Seeded modes treat as the ranking
+        /// (seed 1 = first in), and the order the draw picker shows.
+        /// </summary>
+        private static List<TournamentParticipantEntity> OrderByRegistration(List<TournamentParticipantEntity> participants)
+            => participants
+                .OrderBy(p => p.Seed ?? int.MaxValue)
+                .ThenBy(p => p.CreatedOn ?? DateTime.MaxValue)
+                .ThenBy(p => p.Id)
+                .ToList();
+
+        /// <summary>
+        /// Lays the entrants out over the first round (index 2i / 2i+1 are the two sides of match i,
+        /// null = bye) and stamps each entrant's Seed to match where it landed. Random shuffles the
+        /// field, Seeded keeps registration order, Manual takes the organiser's exact placement — in
+        /// all three cases the caller persists the participants afterwards.
+        /// </summary>
+        private static List<TournamentParticipantEntity?> BuildEliminationSlots(
+            List<TournamentParticipantEntity> participants, BracketDraw draw)
+        {
+            int bracketSize = GetNextPowerOfTwo(participants.Count);
+            var seedOrder = GetStandardSeedOrder(bracketSize);
+
+            if (draw.Mode == BracketSeedingMode.Manual)
+            {
+                var planned = draw.Plan?.Slots
+                    ?? throw new BusinessRuleException("The manual draw is missing its bracket slots.");
+
+                if (planned.Count != bracketSize)
+                    throw new BusinessRuleException(
+                        $"A bracket for {participants.Count} entrants has {bracketSize} slots ({bracketSize - participants.Count} of them byes), but {planned.Count} were sent.");
+
+                var byId = ResolvePlacedEntrants(
+                    planned.Where(s => s.HasValue).Select(s => s!.Value), participants, "bracket");
+
+                var manualSlots = new List<TournamentParticipantEntity?>(bracketSize);
+                for (int i = 0; i < bracketSize; i++)
+                {
+                    if (!planned[i].HasValue)
+                    {
+                        manualSlots.Add(null);
+                        continue;
+                    }
+
+                    // Position dictates the seed: the entrant inherits the seed the standard spread
+                    // puts in that slot, so seed labels and the swap tool still make sense on a
+                    // hand-made bracket.
+                    var participant = byId[planned[i]!.Value];
+                    participant.Seed = seedOrder[i];
+                    manualSlots.Add(participant);
+                }
+
+                // A first-round pair with nobody in it is not a bye — AutoAdvanceByes closes it with
+                // no winner, so the match it feeds keeps waiting for a side that never arrives and the
+                // bracket wedges. There are always fewer byes than matches, so spreading them out is
+                // always possible.
+                for (int i = 0; i + 1 < bracketSize; i += 2)
+                {
+                    if (manualSlots[i] == null && manualSlots[i + 1] == null)
+                        throw new BusinessRuleException(
+                            $"Match {(i / 2) + 1} has nobody in it. Spread the byes out — every first-round match needs at least one entrant.");
+                }
+
+                return manualSlots;
+            }
+
+            var ordered = draw.Mode == BracketSeedingMode.Seeded
+                ? OrderByRegistration(participants)
+                : participants.OrderBy(_ => Guid.NewGuid()).ToList();
+
+            for (int i = 0; i < ordered.Count; i++)
+                ordered[i].Seed = i + 1;
+
+            var bySeed = ordered.ToDictionary(p => p.Seed!.Value, p => p);
+
+            return seedOrder
+                .Select(seed => bySeed.TryGetValue(seed, out var participant) ? participant : null)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Splits the entrants into the group-stage groups (index 0 = Group A) and stamps their Seed.
+        /// Random shuffles, Seeded snakes them in registration order (the historic behaviour), Manual
+        /// takes the organiser's exact group sheets, and Pots draws one entrant per pot into each
+        /// group. The caller persists the participants.
+        /// </summary>
+        private static List<List<TournamentParticipantEntity>> BuildGroupAssignment(
+            List<TournamentParticipantEntity> participants, int numberOfGroups, BracketDraw draw)
+        {
+            var buckets = Enumerable.Range(0, numberOfGroups)
+                .Select(_ => new List<TournamentParticipantEntity>())
+                .ToList();
+
+            switch (draw.Mode)
+            {
+                case BracketSeedingMode.Manual:
+                {
+                    var planned = draw.Plan?.Groups
+                        ?? throw new BusinessRuleException("The manual draw is missing its groups.");
+
+                    if (planned.Count != numberOfGroups)
+                        throw new BusinessRuleException($"This tournament has {numberOfGroups} groups, but {planned.Count} were sent.");
+
+                    var byId = ResolvePlacedEntrants(planned.SelectMany(g => g), participants, "groups");
+
+                    for (int g = 0; g < numberOfGroups; g++)
+                    {
+                        // A one-entrant group generates no fixtures at all, which would leave the
+                        // group stage permanently unfinishable.
+                        if (planned[g].Count < 2)
+                            throw new BusinessRuleException($"Group {GetGroupName(g)} needs at least 2 entrants.");
+
+                        buckets[g].AddRange(planned[g].Select(id => byId[id]));
+                    }
+
+                    break;
+                }
+
+                case BracketSeedingMode.Pots:
+                {
+                    var pots = draw.Plan?.Pots
+                        ?? throw new BusinessRuleException("The pot draw is missing its pots.");
+
+                    int potCount = (int)Math.Ceiling((double)participants.Count / numberOfGroups);
+                    if (pots.Count != potCount)
+                        throw new BusinessRuleException(
+                            $"{participants.Count} entrants across {numberOfGroups} groups needs exactly {potCount} pots, but {pots.Count} were sent.");
+
+                    var byId = ResolvePlacedEntrants(pots.SelectMany(p => p), participants, "pots");
+
+                    for (int i = 0; i < pots.Count; i++)
+                    {
+                        // Every pot but the last holds one entrant per group; the last takes the
+                        // remainder. Any other shape would leave the groups unbalanced by more than one.
+                        int expected = Math.Min(numberOfGroups, participants.Count - (i * numberOfGroups));
+                        if (pots[i].Count != expected)
+                            throw new BusinessRuleException($"Pot {i + 1} must hold exactly {expected} entrant(s), but holds {pots[i].Count}.");
+                    }
+
+                    var potRand = new Random();
+                    foreach (var pot in pots)
+                    {
+                        // Groups are picked at random per pot, so pot 1's top name doesn't always land
+                        // in Group A and a short final pot doesn't always lighten the same groups.
+                        var groupOrder = Enumerable.Range(0, numberOfGroups).OrderBy(_ => potRand.Next()).ToList();
+                        var members = pot.Select(id => byId[id]).OrderBy(_ => potRand.Next()).ToList();
+
+                        for (int i = 0; i < members.Count; i++)
+                            buckets[groupOrder[i]].Add(members[i]);
+                    }
+
+                    break;
+                }
+
+                default:
+                {
+                    var ordered = draw.Mode == BracketSeedingMode.Seeded
+                        ? OrderByRegistration(participants)
+                        : participants.OrderBy(_ => Guid.NewGuid()).ToList();
+
+                    // Snake: A B C D | D C B A | A B C D … group sizes stay within one of each other
+                    // and, in Seeded mode, entrants adjacent in the order land in different groups.
+                    for (int i = 0; i < ordered.Count; i++)
+                    {
+                        int groupIndex = (i / numberOfGroups) % 2 == 0
+                            ? i % numberOfGroups
+                            : numberOfGroups - 1 - (i % numberOfGroups);
+
+                        buckets[groupIndex].Add(ordered[i]);
+                    }
+
+                    break;
+                }
+            }
+
+            // One seeding rule for every mode: reading the groups row by row (all group winners' slots
+            // first, then the second row, …) numbers the field 1..N. For a pot draw that reproduces
+            // the pots exactly; elsewhere it's just a stable, meaningful record of the draw.
+            int maxRow = buckets.Count == 0 ? 0 : buckets.Max(b => b.Count);
+            int seed = 1;
+            for (int row = 0; row < maxRow; row++)
+                for (int g = 0; g < buckets.Count; g++)
+                    if (row < buckets[g].Count)
+                        buckets[g][row].Seed = seed++;
+
+            return buckets;
+        }
+
+        /// <summary>
+        /// Checks a hand-made draw against the real field: no duplicates, no strangers, nobody left
+        /// out. Returns the entrant lookup so the caller can turn ids into the entities it loaded.
+        /// </summary>
+        private static Dictionary<Guid, TournamentParticipantEntity> ResolvePlacedEntrants(
+            IEnumerable<Guid> placedIds, List<TournamentParticipantEntity> participants, string what)
+        {
+            var byId = participants
+                .Where(p => p.Id.HasValue)
+                .ToDictionary(p => p.Id!.Value, p => p);
+
+            var placed = placedIds.ToList();
+
+            if (placed.Distinct().Count() != placed.Count)
+                throw new BusinessRuleException("The same entrant was placed twice in the draw.");
+
+            if (placed.Any(id => !byId.ContainsKey(id)))
+                throw new BusinessRuleException("The draw refers to an entrant who is no longer in this tournament. Reopen the draw and try again.");
+
+            if (placed.Count != byId.Count)
+                throw new BusinessRuleException($"Every entrant has to be placed in the {what} — {byId.Count - placed.Count} still unplaced.");
+
+            return byId;
+        }
+
+        private async Task GenerateBracketForFormat(TournamentEntity tournament, Guid tournamentId, TimeSpan? roundDuration, BracketDraw draw)
         {
             switch (tournament.Format)
             {
                 case TournamentFormat.SingleElimination:
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamSingleEliminationBracket(tournamentId);
+                        await GenerateTeamSingleEliminationBracket(tournamentId, draw);
                     else
-                        await GenerateSingleEliminationBracket(tournamentId);
+                        await GenerateSingleEliminationBracket(tournamentId, draw);
                     break;
 
                 case TournamentFormat.League:
@@ -672,18 +991,18 @@ namespace GameHubz.Logic.Services
 
                 case TournamentFormat.DoubleElimination:
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamDoubleEliminationBracket(tournamentId);
+                        await GenerateTeamDoubleEliminationBracket(tournamentId, draw);
                     else
-                        await GenerateDoubleEliminationBracket(tournamentId);
+                        await GenerateDoubleEliminationBracket(tournamentId, draw);
                     break;
 
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
                         throw new BusinessRuleException("Group count and qualifiers count are required for this format.");
                     if (tournament.IsTeamTournament)
-                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
+                        await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin, draw);
                     else
-                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin);
+                        await GenerateGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin, draw);
                     break;
 
                 case TournamentFormat.Swiss:
@@ -703,7 +1022,7 @@ namespace GameHubz.Logic.Services
 
         #region 2. Generators
 
-        public async Task GenerateSingleEliminationBracket(Guid tournamentId)
+        public async Task GenerateSingleEliminationBracket(Guid tournamentId, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
@@ -711,23 +1030,10 @@ namespace GameHubz.Logic.Services
             if (participants == null || participants.Count == 0)
                 throw new BusinessRuleException("No participants");
 
-            var shuffledParticipants = participants.OrderBy(a => Guid.NewGuid()).ToList();
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
 
-            for (int i = 0; i < shuffledParticipants.Count; i++)
-            {
-                shuffledParticipants[i].Seed = i + 1;
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffledParticipants[i], this.UserContextReader);
-            }
-
-            int bracketSize = GetNextPowerOfTwo(shuffledParticipants.Count);
-            var seedOrder = GetStandardSeedOrder(bracketSize);
-            var participantsBySeed = shuffledParticipants
-                .Where(p => p.Seed.HasValue)
-                .ToDictionary(p => p.Seed!.Value, p => p);
-
-            var bracketSlots = seedOrder
-                .Select(seed => participantsBySeed.TryGetValue(seed, out var participant) ? participant : null)
-                .ToList();
+            foreach (var participant in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
             var stage = new TournamentStageEntity
             {
@@ -795,7 +1101,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
+        public async Task GenerateGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -833,28 +1139,26 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(group, this.UserContextReader);
             }
 
-            var seededParticipants = participants.OrderBy(p => p.Seed ?? 999).ToList();
+            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw);
             var groupParticipants = groups.ToDictionary(g => g.Id!.Value, _ => new List<TournamentParticipantEntity>());
 
-            for (int i = 0; i < seededParticipants.Count; i++)
+            for (int groupIndex = 0; groupIndex < numberOfGroups; groupIndex++)
             {
-                int groupIndex = (i / numberOfGroups) % 2 == 0
-                    ? i % numberOfGroups
-                    : numberOfGroups - 1 - (i % numberOfGroups);
-
-                var participant = seededParticipants[i];
                 var targetGroup = groups[groupIndex];
 
-                participant.TournamentGroupId = targetGroup.Id;
-                participant.Points = 0;
-                participant.Wins = 0;
-                participant.Draws = 0;
-                participant.Losses = 0;
-                participant.GoalsFor = 0;
-                participant.GoalsAgainst = 0;
+                foreach (var participant in assignment[groupIndex])
+                {
+                    participant.TournamentGroupId = targetGroup.Id;
+                    participant.Points = 0;
+                    participant.Wins = 0;
+                    participant.Draws = 0;
+                    participant.Losses = 0;
+                    participant.GoalsFor = 0;
+                    participant.GoalsAgainst = 0;
 
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
-                groupParticipants[targetGroup.Id!.Value].Add(participant);
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
+                    groupParticipants[targetGroup.Id!.Value].Add(participant);
+                }
             }
 
             var allMatches = new List<MatchEntity>();
@@ -960,7 +1264,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false)
+        public async Task GenerateTeamGroupStageWithKnockout(Guid tournamentId, int numberOfGroups, int qualifiersPerGroup, TimeSpan? roundDuration = null, bool doubleRoundRobin = false, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
@@ -1004,28 +1308,26 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(g, this.UserContextReader);
             }
 
-            var seededParticipants = participants.OrderBy(p => p.Seed ?? 999).ToList();
+            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw);
             var groupParticipants = groups.ToDictionary(g => g.Id!.Value, _ => new List<TournamentParticipantEntity>());
 
-            for (int i = 0; i < seededParticipants.Count; i++)
+            for (int groupIndex = 0; groupIndex < numberOfGroups; groupIndex++)
             {
-                int groupIndex = (i / numberOfGroups) % 2 == 0
-                    ? i % numberOfGroups
-                    : numberOfGroups - 1 - (i % numberOfGroups);
-
-                var participant = seededParticipants[i];
                 var targetGroup = groups[groupIndex];
 
-                participant.TournamentGroupId = targetGroup.Id;
-                participant.Points = 0;
-                participant.Wins = 0;
-                participant.Draws = 0;
-                participant.Losses = 0;
-                participant.GoalsFor = 0;
-                participant.GoalsAgainst = 0;
+                foreach (var participant in assignment[groupIndex])
+                {
+                    participant.TournamentGroupId = targetGroup.Id;
+                    participant.Points = 0;
+                    participant.Wins = 0;
+                    participant.Draws = 0;
+                    participant.Losses = 0;
+                    participant.GoalsFor = 0;
+                    participant.GoalsAgainst = 0;
 
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
-                groupParticipants[targetGroup.Id!.Value].Add(participant);
+                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
+                    groupParticipants[targetGroup.Id!.Value].Add(participant);
+                }
             }
 
             var allTeamMatches = new List<TeamMatchEntity>();
@@ -1065,7 +1367,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
-        public async Task GenerateDoubleEliminationBracket(Guid tournamentId)
+        public async Task GenerateDoubleEliminationBracket(Guid tournamentId, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -1079,25 +1381,14 @@ namespace GameHubz.Logic.Services
             if (tournament.IsTeamTournament)
                 throw new Exception("Use GenerateTeamDoubleEliminationBracket for team tournaments.");
 
-            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
-            for (int i = 0; i < shuffled.Count; i++)
-            {
-                shuffled[i].Seed = i + 1;
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
-            }
-
             // Non-power-of-two counts are padded up to the next power of two — the standard
             // bracket-seeding spread leaves the bye slots on the top-seed side so the byes
             // get auto-advanced in WB R1 and the LB cascade below collapses any LB match
             // that would otherwise have nothing to play.
-            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
-            var seedOrder = GetStandardSeedOrder(bracketSize);
-            var participantsBySeed = shuffled
-                .Where(p => p.Seed.HasValue)
-                .ToDictionary(p => p.Seed!.Value, p => p);
-            var bracketSlots = seedOrder
-                .Select(s => participantsBySeed.TryGetValue(s, out var p) ? p : null)
-                .ToList();
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
+
+            foreach (var participant in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
             // Two stages: Winners + Losers. The Grand Final lives in the Winners Bracket stage
             // as a separate match flagged with MatchStage.GrandFinal so the structure endpoint
@@ -1136,7 +1427,7 @@ namespace GameHubz.Logic.Services
         /// bracket shape and Grand Final, but built on <see cref="TeamMatchEntity"/> with per-roster
         /// sub-matches created for every fixture that already has both teams.
         /// </summary>
-        public async Task GenerateTeamDoubleEliminationBracket(Guid tournamentId)
+        public async Task GenerateTeamDoubleEliminationBracket(Guid tournamentId, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -1149,21 +1440,10 @@ namespace GameHubz.Logic.Services
 
             int teamSize = tournament.TeamSize.Value;
 
-            var shuffled = participants.OrderBy(_ => Guid.NewGuid()).ToList();
-            for (int i = 0; i < shuffled.Count; i++)
-            {
-                shuffled[i].Seed = i + 1;
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
-            }
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
 
-            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
-            var seedOrder = GetStandardSeedOrder(bracketSize);
-            var participantsBySeed = shuffled
-                .Where(p => p.Seed.HasValue)
-                .ToDictionary(p => p.Seed!.Value, p => p);
-            var bracketSlots = seedOrder
-                .Select(s => participantsBySeed.TryGetValue(s, out var p) ? p : null)
-                .ToList();
+            foreach (var participant in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
             // Two stages mirror the solo layout: Winners + Losers. The Grand Final lives in the
             // Winners stage flagged IsGrandFinal so the structure endpoint can pull it out cleanly.
@@ -1195,7 +1475,7 @@ namespace GameHubz.Logic.Services
 
             // Sub-matches for every fixture that already has both teams (single batched member
             // lookup avoids per-match N+1) — same pattern as GenerateTeamSingleEliminationBracket.
-            var membersByParticipant = await BuildMembersByParticipantMap(shuffled);
+            var membersByParticipant = await BuildMembersByParticipantMap(participants);
             var rand = new Random();
 
             foreach (var tm in allTeamMatches)
@@ -1944,7 +2224,7 @@ namespace GameHubz.Logic.Services
             return Math.Clamp(rounds, 1, maxRounds);
         }
 
-        public async Task GenerateTeamSingleEliminationBracket(Guid tournamentId)
+        public async Task GenerateTeamSingleEliminationBracket(Guid tournamentId, BracketDraw? draw = null)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
             var participants = tournament!.TournamentParticipants?.ToList();
@@ -1957,23 +2237,10 @@ namespace GameHubz.Logic.Services
 
             int teamSize = tournament.TeamSize.Value;
 
-            // Shuffle and seed
-            var shuffled = participants.OrderBy(a => Guid.NewGuid()).ToList();
-            for (int i = 0; i < shuffled.Count; i++)
-            {
-                shuffled[i].Seed = i + 1;
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(shuffled[i], this.UserContextReader);
-            }
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
 
-            int bracketSize = GetNextPowerOfTwo(shuffled.Count);
-            var seedOrder = GetStandardSeedOrder(bracketSize);
-            var participantsBySeed = shuffled
-                .Where(p => p.Seed.HasValue)
-                .ToDictionary(p => p.Seed!.Value, p => p);
-
-            var bracketSlots = seedOrder
-                .Select(seed => participantsBySeed.TryGetValue(seed, out var participant) ? participant : null)
-                .ToList();
+            foreach (var participant in participants)
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
             var stage = new TournamentStageEntity
             {
@@ -2036,7 +2303,7 @@ namespace GameHubz.Logic.Services
             AutoAdvanceTeamByes(allTeamMatches);
 
             if (tournament.HasThirdPlaceMatch)
-                BuildThirdPlaceTeamMatchIfApplicable(allTeamMatches, totalRounds, shuffled.Count, tournamentId, stage.Id);
+                BuildThirdPlaceTeamMatchIfApplicable(allTeamMatches, totalRounds, participants.Count, tournamentId, stage.Id);
 
             // Save all TeamMatchEntities
             foreach (var tm in allTeamMatches)
@@ -2045,7 +2312,7 @@ namespace GameHubz.Logic.Services
             }
 
             // Create sub-matches with a single batched member lookup (avoids per-match N+1)
-            var membersByParticipant = await BuildMembersByParticipantMap(shuffled);
+            var membersByParticipant = await BuildMembersByParticipantMap(participants);
             var rand = new Random();
 
             foreach (var tm in allTeamMatches)
@@ -5879,7 +6146,7 @@ namespace GameHubz.Logic.Services
         private static bool IsFinished(MatchStatus status)
             => status == MatchStatus.Completed || status == MatchStatus.NoShow;
 
-        private string GetGroupName(int index)
+        private static string GetGroupName(int index)
         {
             const string l = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
             return index < l.Length ? l[index].ToString() : (index + 1).ToString();

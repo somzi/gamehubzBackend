@@ -41,6 +41,18 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Entrant list for the pre-generation draw picker: the participant rows themselves (the draw
+        // plan is expressed in participant ids) plus the User / Team rows behind them for labels.
+        public async Task<List<TournamentParticipantEntity>> GetEntitiesByTournamentIdWithNames(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Include(tp => tp.User)
+                .Include(tp => tp.Team)
+                    .ThenInclude(t => t!.CaptainUser)
+                .Where(tp => tp.TournamentId == tournamentId)
+                .ToListAsync();
+        }
+
         public async Task<List<TournamentParticipantEntity>> GetByGroupIdWithNames(Guid? id)
         {
             return await this.BaseDbSet()

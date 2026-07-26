@@ -56,6 +56,13 @@ namespace GameHubz.DataModels.Models
         public int? QualifiersPerGroup { get; set; }
 
         /// <summary>
+        /// How this tournament's bracket was drawn (random / manual / seeded / pots). Null on
+        /// tournaments generated before the draw picker shipped — all of those were random — and on
+        /// tournaments whose bracket hasn't been generated yet.
+        /// </summary>
+        public BracketSeedingMode? BracketSeedingMode { get; set; }
+
+        /// <summary>
         /// When true, the tournament is restricted to exclusive-or-higher hub members
         /// (Exclusive/Admin/Owner). False = open to all members.
         /// </summary>
