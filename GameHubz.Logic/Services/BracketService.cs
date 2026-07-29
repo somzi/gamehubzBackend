@@ -224,16 +224,18 @@ namespace GameHubz.Logic.Services
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
                 throw new BusinessRuleException("Not enough participants to start tournament.");
 
-            // Every participating team must be full: sub-matches are created per roster slot,
-            // so an under-filled team produces matches with no player that can never be played,
-            // which permanently stalls the bracket. The frontend gates this, but enforce it here too.
+            // Every participating team must field a full lineup: sub-matches are created per lineup
+            // slot, so a short side produces matches with no player that can never be played, which
+            // permanently stalls the bracket. The frontend gates this, but enforce it here too.
+            // Counted over starters, not the whole roster — bench players get no fixture, so a team
+            // of 3 starters + 2 reserves is ready while 2 starters + 3 reserves is not.
             if (tournament.IsTeamTournament && tournament.TeamSize.HasValue)
             {
                 int requiredSize = tournament.TeamSize.Value;
                 var teams = await this.AppUnitOfWork.TournamentTeamRepository.GetFinalByTournamentId(request.TournamentId);
 
                 var incompleteTeams = teams
-                    .Select(t => new { t.TeamName, MemberCount = t.Members.Count(m => m.UserId.HasValue) })
+                    .Select(t => new { t.TeamName, MemberCount = t.Members.Count(m => m.UserId.HasValue && !m.IsReserve) })
                     .Where(t => t.MemberCount < requiredSize)
                     .Select(t => $"{t.TeamName} ({t.MemberCount}/{requiredSize})")
                     .ToList();
@@ -5338,8 +5340,10 @@ namespace GameHubz.Logic.Services
             if (!participant.TeamId.HasValue)
                 return new List<TournamentTeamMemberEntity>();
 
+            // Starters only — see ShuffleMembersFromMap. A team that benched someone since the last
+            // round fields the current lineup here, which is exactly the point of the bench.
             var members = await this.AppUnitOfWork.TournamentTeamMemberRepository.GetByTeamId(participant.TeamId.Value);
-            return members.Where(m => m.UserId.HasValue).OrderBy(_ => Guid.NewGuid()).ToList();
+            return members.Where(m => m.UserId.HasValue && !m.IsReserve).OrderBy(_ => Guid.NewGuid()).ToList();
         }
 
         private async Task CheckAndAdvanceGroupStage(Guid tournamentId, Guid groupStageId)
@@ -5880,6 +5884,10 @@ namespace GameHubz.Logic.Services
             return list;
         }
 
+        // Starters only: reserves are on the roster but out of the lineup, so they must never be
+        // drawn into a sub-match. The shuffle over the remaining starters is what randomizes who
+        // faces whom, and it is deliberately the only thing that decides the pairing — a captain's
+        // later substitution takes the outgoing starter's exact slot rather than choosing one.
         private static List<TournamentTeamMemberEntity> ShuffleMembersFromMap(
             Guid? participantId,
             Dictionary<Guid, List<TournamentTeamMemberEntity>> map,
@@ -5887,7 +5895,7 @@ namespace GameHubz.Logic.Services
         {
             if (!participantId.HasValue) return new List<TournamentTeamMemberEntity>();
             return map.TryGetValue(participantId.Value, out var members)
-                ? members.Where(m => m.UserId.HasValue).OrderBy(_ => rand.Next()).ToList()
+                ? members.Where(m => m.UserId.HasValue && !m.IsReserve).OrderBy(_ => rand.Next()).ToList()
                 : new List<TournamentTeamMemberEntity>();
         }
 

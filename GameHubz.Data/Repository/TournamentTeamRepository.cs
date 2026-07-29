@@ -42,12 +42,17 @@ namespace GameHubz.Data.Repository
                     CaptainUserId = t.CaptainUserId!.Value,
                     TeamSize = t.Tournament!.TeamSize,
                     MemberCount = t.Members.Count,
+                    AllowReserves = t.Tournament.AllowReserves,
+                    MaxReserves = t.Tournament.MaxReserves,
+                    StarterCount = t.Members.Count(m => !m.IsReserve),
+                    ReserveCount = t.Members.Count(m => m.IsReserve),
                     RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
                         Username = m.User!.Username,
-                        AvatarUrl = m.User.AvatarUrl
+                        AvatarUrl = m.User.AvatarUrl,
+                        IsReserve = m.IsReserve
                     }).ToList()
                 })
                 .ToListAsync();
@@ -65,12 +70,17 @@ namespace GameHubz.Data.Repository
                     CaptainUserId = t.CaptainUserId!.Value,
                     TeamSize = t.Tournament!.TeamSize,
                     MemberCount = t.Members.Count,
+                    AllowReserves = t.Tournament.AllowReserves,
+                    MaxReserves = t.Tournament.MaxReserves,
+                    StarterCount = t.Members.Count(m => !m.IsReserve),
+                    ReserveCount = t.Members.Count(m => m.IsReserve),
                     RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
                         Username = m.User!.Username,
-                        AvatarUrl = m.User.AvatarUrl
+                        AvatarUrl = m.User.AvatarUrl,
+                        IsReserve = m.IsReserve
                     }).ToList(),
                     UserRequestStatus = t.JoinRequests
                         .Where(r => r.UserId == userId)
@@ -80,9 +90,11 @@ namespace GameHubz.Data.Repository
                 })
                 .ToListAsync();
 
-            // Teams that still need players come first so they're easy to find and fill.
+            // Teams that still need players come first so they're easy to find and fill. Keyed on the
+            // LINEUP being short, not the roster: a team with a full lineup and an empty bench is
+            // ready to play and shouldn't jump the queue ahead of one that can't field a side yet.
             return teams
-                .OrderBy(t => t.TeamSize.HasValue && t.MemberCount >= t.TeamSize.Value ? 1 : 0)
+                .OrderBy(t => t.TeamSize.HasValue && t.StarterCount >= t.TeamSize.Value ? 1 : 0)
                 .ThenBy(t => t.TeamName)
                 .ToList();
         }
@@ -134,12 +146,17 @@ namespace GameHubz.Data.Repository
                     CaptainUserId = t.CaptainUserId!.Value,
                     MemberCount = t.Members.Count,
                     TeamSize = t.Tournament!.TeamSize,
+                    AllowReserves = t.Tournament.AllowReserves,
+                    MaxReserves = t.Tournament.MaxReserves,
+                    StarterCount = t.Members.Count(m => !m.IsReserve),
+                    ReserveCount = t.Members.Count(m => m.IsReserve),
                     RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
                         Username = m.User!.Username,
-                        AvatarUrl = m.User.AvatarUrl
+                        AvatarUrl = m.User.AvatarUrl,
+                        IsReserve = m.IsReserve
                     }).ToList(),
                     IsAlreadyRegistred = t.Tournament.TournamentRegistrations!.Any(r =>
                         r.TeamId == t.Id && r.Status == TournamentRegistrationStatus.Pending),
@@ -163,12 +180,16 @@ namespace GameHubz.Data.Repository
                     TeamName = t.TeamName,
                     TeamSize = t.Tournament!.TeamSize,
                     CurrentMemberCount = t.Members.Count,
+                    CurrentStarterCount = t.Members.Count(m => !m.IsReserve),
+                    AllowReserves = t.Tournament.AllowReserves,
+                    MaxReserves = t.Tournament.MaxReserves,
                     RequiresApproval = t.RequiresApproval,
                     Members = t.Members.Select(m => new TeamMemberDto
                     {
                         UserId = m.UserId!.Value,
                         Username = m.User!.Username,
-                        AvatarUrl = m.User.AvatarUrl
+                        AvatarUrl = m.User.AvatarUrl,
+                        IsReserve = m.IsReserve
                     }).ToList(),
                     UserAlreadyInTournament = membersQuery.Any(m => m.UserId == userId && m.Team!.TournamentId == t.TournamentId)
                 })

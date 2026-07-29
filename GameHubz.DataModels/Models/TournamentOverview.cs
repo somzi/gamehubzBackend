@@ -49,6 +49,23 @@ namespace GameHubz.DataModels.Models
         public bool? IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
         public TeamWinCondition? TeamWinCondition { get; set; }
+
+        /// <summary>
+        /// Team tournaments: whether a roster may carry bench players beyond <see cref="TeamSize"/>,
+        /// with the captain free to trade a starter for a reserve between games. False on every
+        /// tournament created before reserves shipped. Omitted from JSON when false (and MaxReserves
+        /// when null) so the payload of every existing tournament stays exactly as it was — clients
+        /// treat an absent field as "no bench", same as false.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool AllowReserves { get; set; }
+
+        /// <summary>
+        /// Bench slots each team gets while <see cref="AllowReserves"/> is on; a team may fill 0..N.
+        /// Null means no bench.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? MaxReserves { get; set; }
         public bool HasThirdPlaceMatch { get; set; }
         public bool RequireResultApproval { get; set; }
         public bool DoubleRoundRobin { get; set; }

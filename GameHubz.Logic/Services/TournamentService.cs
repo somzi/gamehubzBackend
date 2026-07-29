@@ -411,6 +411,8 @@ namespace GameHubz.Logic.Services
 
             inputDto.TeamSize = existing.TeamSize;
             inputDto.TeamWinCondition = existing.TeamWinCondition;
+            inputDto.AllowReserves = existing.AllowReserves;
+            inputDto.MaxReserves = existing.MaxReserves;
             inputDto.IsExclusive = existing.IsExclusive;
             inputDto.Countries = existing.Countries == null ? null : new List<string>(existing.Countries);
             inputDto.DoubleRoundRobin = existing.DoubleRoundRobin;

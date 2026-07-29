@@ -288,6 +288,8 @@ namespace GameHubz.Data.Repository
                       IsTeamTournament = x.IsTeamTournament,
                       TeamSize = x.TeamSize,
                       TeamWinCondition = x.TeamWinCondition,
+                      AllowReserves = x.AllowReserves,
+                      MaxReserves = x.MaxReserves,
                       HasThirdPlaceMatch = x.HasThirdPlaceMatch,
                       RequireResultApproval = x.RequireResultApproval,
                       IsExclusive = x.IsExclusive,

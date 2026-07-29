@@ -98,7 +98,8 @@ namespace GameHubz.Data.Repository
                        {
                            UserId = m.UserId!.Value,
                            Username = m.User!.Username,
-                           AvatarUrl = m.User.AvatarUrl
+                           AvatarUrl = m.User.AvatarUrl,
+                           IsReserve = m.IsReserve
                        }).ToList()
                        : new List<TeamMemberDto>()
                })

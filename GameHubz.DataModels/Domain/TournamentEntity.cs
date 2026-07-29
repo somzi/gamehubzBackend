@@ -35,8 +35,19 @@ namespace GameHubz.DataModels.Domain
         public UserEntity? WinnerUser { get; set; }
 
         public bool IsTeamTournament { get; set; }
+
+        // The LINEUP size — how many players each team fields, i.e. how many sub-matches a tie has.
+        // Unaffected by reserves.
         public int? TeamSize { get; set; }
         public TeamWinCondition TeamWinCondition { get; set; }
+
+        // When true, a roster may carry bench players on top of its TeamSize starters, and the
+        // captain can trade a starter for a reserve between games. False = roster is the lineup.
+        public bool AllowReserves { get; set; }
+
+        // How many bench slots each team gets while AllowReserves is on. A team may fill 0..N of
+        // them — the bench is optional. Null (or AllowReserves off) means no bench at all.
+        public int? MaxReserves { get; set; }
         public Guid? WinnerTeamId { get; set; }
         public TournamentTeamEntity? WinnerTeam { get; set; }
 

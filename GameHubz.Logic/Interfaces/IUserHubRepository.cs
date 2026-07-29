@@ -19,5 +19,13 @@ namespace GameHubz.Logic.Interfaces
         Task<List<UserHubOverview>> GetUsersByHub(Guid hubId);
 
         Task<List<UserHubOverview>> GetUsersByHubPaged(Guid hubId, int pageNumber, int pageSize, string? search);
+
+        Task<List<UserHubOverview>> GetSwapCandidatesPaged(
+            Guid hubId,
+            int pageNumber,
+            int pageSize,
+            string? search,
+            List<Guid> excludeUserIds,
+            bool exclusiveAccessOnly);
     }
 }

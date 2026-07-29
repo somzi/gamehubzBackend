@@ -58,6 +58,18 @@ namespace GameHubz.DataModels.Models
         public int? TeamSize { get; set; }
         public TeamWinCondition TeamWinCondition { get; set; }
 
+        /// <summary>
+        /// Team tournaments: let rosters carry bench players on top of <see cref="TeamSize"/>.
+        /// Structural — only applied when <see cref="AllowStructuralEdits"/> is set on an edit.
+        /// </summary>
+        public bool AllowReserves { get; set; }
+
+        /// <summary>
+        /// Bench slots per team when <see cref="AllowReserves"/> is on. Teams may fill 0..N of them.
+        /// Null/0 with the flag on means the organizer opened the option but granted no slots yet.
+        /// </summary>
+        public int? MaxReserves { get; set; }
+
         public DateTime? RegistrationDeadline { get; set; }
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }

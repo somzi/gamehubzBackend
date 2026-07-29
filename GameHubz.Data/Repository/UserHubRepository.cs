@@ -130,5 +130,54 @@ namespace GameHubz.Data.Repository
                 })
                 .ToListAsync();
         }
+
+        // Hub members offered as a replacement for a tournament participant. The exclusion of the
+        // current entrants happens in SQL rather than on the returned page: filtering client-side
+        // would punch holes into every page (a page of 10 could come back with 3 usable rows) and
+        // the "load more" offset would drift. Deleted users drop out via the global User query
+        // filter, and the null guard keeps rows whose user row is gone from crashing the projection
+        // (same reason GetByTournamentId screens them).
+        public async Task<List<UserHubOverview>> GetSwapCandidatesPaged(
+            Guid hubId,
+            int pageNumber,
+            int pageSize,
+            string? search,
+            List<Guid> excludeUserIds,
+            bool exclusiveAccessOnly)
+        {
+            var query = this.BaseDbSet()
+                .Where(uh => uh.HubId == hubId
+                    && uh.UserId != null
+                    && uh.User != null
+                    && !excludeUserIds.Contains(uh.UserId!.Value));
+
+            // An exclusive tournament is invisible to plain members, so they can't be swapped into
+            // it either — mirrors UserHubRepository.GetHubIdsWithExclusiveAccess.
+            if (exclusiveAccessOnly)
+            {
+                query = query.Where(uh => uh.HubRole == HubRole.HubOwner
+                    || uh.HubRole == HubRole.HubAdmin
+                    || uh.HubRole == HubRole.HubExclusive);
+            }
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim().ToLower();
+                query = query.Where(uh => uh.User!.Username.ToLower().Contains(term));
+            }
+
+            return await query
+                .OrderBy(uh => uh.User!.Username)
+                .Skip(pageNumber * pageSize)
+                .Take(pageSize)
+                .Select(x => new UserHubOverview
+                {
+                    UserId = x.UserId!.Value,
+                    Username = x.User!.Username,
+                    AvatarUrl = x.User!.AvatarUrl,
+                    HubRole = x.HubRole
+                })
+                .ToListAsync();
+        }
     }
 }

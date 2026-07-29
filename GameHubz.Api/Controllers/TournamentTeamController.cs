@@ -67,6 +67,15 @@ namespace GameHubz.Api.Controllers
             return NoContent();
         }
 
+        // Captain-only lineup change: the reserve takes the starter's exact game, so a substitution
+        // can never rearrange the randomly-drawn match-ups. New route — nothing existing changes shape.
+        [HttpPut("{teamId}/lineup")]
+        public async Task<IActionResult> SwapLineupMember(Guid teamId, [FromBody] SwapLineupMemberRequest request)
+        {
+            var team = await this.tournamentTeamService.SwapLineupMember(teamId, request);
+            return Ok(team);
+        }
+
         [HttpDelete("{teamId}/leave")]
         public async Task<IActionResult> LeaveTeam(Guid teamId)
         {

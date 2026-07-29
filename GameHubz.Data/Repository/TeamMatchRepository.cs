@@ -92,13 +92,16 @@ namespace GameHubz.Data.Repository
                             TeamId = tm.HomeTeamParticipant.Team.Id!.Value,
                             TeamName = tm.HomeTeamParticipant.Team.TeamName,
                             CaptainUserId = tm.HomeTeamParticipant.Team.CaptainUserId,
+                            // Whole roster, bench included: the tie-break representative may be any
+                            // squad member, and IsReserve lets the picker label who is benched.
                             Members = tm.HomeTeamParticipant.Team.Members
                                 .Where(m => m.UserId.HasValue)
                                 .Select(m => new TeamMemberDto
                                 {
                                     UserId = m.UserId!.Value,
                                     Username = m.User != null ? m.User.Username : "Unknown",
-                                    AvatarUrl = m.User != null ? m.User.AvatarUrl : null
+                                    AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
+                                    IsReserve = m.IsReserve
                                 }).ToList()
                         }
                         : null,
@@ -114,7 +117,8 @@ namespace GameHubz.Data.Repository
                                 {
                                     UserId = m.UserId!.Value,
                                     Username = m.User != null ? m.User.Username : "Unknown",
-                                    AvatarUrl = m.User != null ? m.User.AvatarUrl : null
+                                    AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
+                                    IsReserve = m.IsReserve
                                 }).ToList()
                         }
                         : null,

@@ -48,5 +48,33 @@ namespace GameHubz.Api.Controllers
 
             return Ok();
         }
+
+        // ── Participant swap ─────────────────────────────────────────────────────────────────────
+        // New routes, so no /vN is needed: nothing an already-published app calls changes shape.
+        // All three are manager-gated inside the service (TournamentAuthorizationService).
+
+        /// <summary>Whether this participant may still be replaced, plus the played/total numbers behind it.</summary>
+        [HttpGet("tournament/{tournamentId}/user/{userId}/swap-eligibility")]
+        public async Task<ParticipantSwapEligibilityDto> GetSwapEligibility(Guid tournamentId, Guid userId)
+        {
+            return await this.Service.GetSwapEligibility(tournamentId, userId);
+        }
+
+        /// <summary>Hub members who can take over a spot, minus everyone already in the tournament.</summary>
+        [HttpGet("tournament/{tournamentId}/swap-candidates")]
+        public async Task<List<ParticipantSwapCandidateDto>> GetSwapCandidates(
+            Guid tournamentId,
+            [FromQuery] string? search = null,
+            [FromQuery] int pageNumber = 0)
+        {
+            return await this.Service.GetSwapCandidates(tournamentId, search, pageNumber);
+        }
+
+        /// <summary>Hands a participant's spot — seed, group, standings and played matches — to another member.</summary>
+        [HttpPost("tournament/{tournamentId}/swap")]
+        public async Task<ParticipantSwapResultDto> Swap(Guid tournamentId, [FromBody] ParticipantSwapRequest request)
+        {
+            return await this.Service.SwapParticipant(tournamentId, request);
+        }
     }
 }
