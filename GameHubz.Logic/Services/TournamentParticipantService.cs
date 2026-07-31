@@ -211,7 +211,11 @@ namespace GameHubz.Logic.Services
                 SwapCandidatePageSize,
                 search,
                 takenUserIds,
-                tournament.IsExclusive);
+                tournament.IsExclusive,
+                // Country / region scope, so the picker never offers someone the swap would then
+                // refuse — same rule the sign-up path applies (see EnsureIncomingUserCanJoin).
+                tournament.Countries,
+                tournament.Region);
 
             return members.Select(m => new ParticipantSwapCandidateDto
             {
@@ -473,6 +477,16 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException($"{incomingUser.Username} is not a member of this hub.");
             }
 
+            // The tournament's own scope. A manager may hand the spot to any hub member, but not to
+            // someone the sign-up path would have turned away: a country-scoped tournament must not
+            // end up with a player from outside its country list.
+            if (!IsWithinTournamentScope(tournament, incomingUser))
+            {
+                throw new BusinessRuleException(tournament.Countries != null && tournament.Countries.Count > 0
+                    ? $"{incomingUser.Username} can't enter this tournament — it only accepts players from {string.Join(", ", tournament.Countries)}."
+                    : $"{incomingUser.Username} can't enter this tournament — it's restricted to a different region.");
+            }
+
             // Same access rule the feed uses (UserHubRepository.GetHubIdsWithExclusiveAccess): a
             // plain member can't even see an exclusive tournament, so they can't be placed into one.
             if (tournament.IsExclusive
@@ -482,6 +496,22 @@ namespace GameHubz.Logic.Services
             {
                 throw new BusinessRuleException($"{incomingUser.Username} needs exclusive access to this hub to enter this tournament.");
             }
+        }
+
+        /// <summary>
+        /// Mirrors TournamentRegistrationService.IsEligibleToJoin (and the tournament-feed visibility
+        /// rules): a country-scoped tournament takes only players from its country list, everything
+        /// else is region-scoped, and a GLOBAL tournament takes everyone. Kept here as a copy rather
+        /// than shared, exactly like the registration and feed paths keep their own.
+        /// </summary>
+        private static bool IsWithinTournamentScope(TournamentEntity tournament, UserEntity user)
+        {
+            if (tournament.Countries != null && tournament.Countries.Count > 0)
+            {
+                return !string.IsNullOrEmpty(user.Country) && tournament.Countries.Contains(user.Country!);
+            }
+
+            return tournament.Region == RegionType.GLOBAL || tournament.Region == user.Region;
         }
 
         /// <summary>

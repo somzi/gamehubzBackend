@@ -143,7 +143,9 @@ namespace GameHubz.Data.Repository
             int pageSize,
             string? search,
             List<Guid> excludeUserIds,
-            bool exclusiveAccessOnly)
+            bool exclusiveAccessOnly,
+            List<string>? countries,
+            RegionType region)
         {
             var query = this.BaseDbSet()
                 .Where(uh => uh.HubId == hubId
@@ -158,6 +160,19 @@ namespace GameHubz.Data.Repository
                 query = query.Where(uh => uh.HubRole == HubRole.HubOwner
                     || uh.HubRole == HubRole.HubAdmin
                     || uh.HubRole == HubRole.HubExclusive);
+            }
+
+            // The tournament's own scope, filtered here rather than after paging for the same reason
+            // the participant exclusion is: a client-side pass would leave holes in every page.
+            // Mirrors TournamentParticipantService.IsWithinTournamentScope — the country list wins
+            // when present, otherwise the region has to match unless the tournament is GLOBAL.
+            if (countries != null && countries.Count > 0)
+            {
+                query = query.Where(uh => uh.User!.Country != null && countries.Contains(uh.User!.Country!));
+            }
+            else if (region != RegionType.GLOBAL)
+            {
+                query = query.Where(uh => uh.User!.Region == region);
             }
 
             if (!string.IsNullOrWhiteSpace(search))

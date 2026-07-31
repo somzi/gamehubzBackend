@@ -26,6 +26,8 @@ namespace GameHubz.Logic.Interfaces
             int pageSize,
             string? search,
             List<Guid> excludeUserIds,
-            bool exclusiveAccessOnly);
+            bool exclusiveAccessOnly,
+            List<string>? countries,
+            RegionType region);
     }
 }
