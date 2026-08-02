@@ -41,6 +41,8 @@ namespace GameHubz.DataModels.Models
         public Guid? AwayUserId { get; set; }
         public string? HomeUsername { get; set; }
         public string? AwayUsername { get; set; }
+        public string? HomeNickname { get; set; }
+        public string? AwayNickname { get; set; }
         public string? HomeAvatarUrl { get; set; }
         public string? AwayAvatarUrl { get; set; }
         public List<string> Evidences { get; set; } = [];

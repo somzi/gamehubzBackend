@@ -484,6 +484,16 @@ namespace GameHubz.Data.Repository
                     HomeUser = string.IsNullOrWhiteSpace(x.HomeParticipant!.User!.Nickname)
                         ? x.HomeParticipant!.User!.Username
                         : x.HomeParticipant!.User!.Nickname!,
+                    // Both identities separately, so the client can label which is which. Same
+                    // blank-nickname normalization as above, here surfacing as null.
+                    HomeUsername = x.HomeParticipant!.User!.Username,
+                    AwayUsername = x.AwayParticipant!.User!.Username,
+                    HomeNickname = string.IsNullOrWhiteSpace(x.HomeParticipant!.User!.Nickname)
+                        ? null
+                        : x.HomeParticipant!.User!.Nickname,
+                    AwayNickname = string.IsNullOrWhiteSpace(x.AwayParticipant!.User!.Nickname)
+                        ? null
+                        : x.AwayParticipant!.User!.Nickname,
                     AwayUserId = x.AwayParticipant!.UserId,
                     HomeUserId = x.HomeParticipant!.UserId,
                     AwayUserScore = x.AwayUserScore ?? 0,

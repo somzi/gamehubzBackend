@@ -176,13 +176,13 @@ namespace GameHubz.Logic.Services
 
                 TeamMemberDto? homePlayer = null;
                 if (sm.HomeUserId.HasValue && sm.HomeUsername != null)
-                    homePlayer = new TeamMemberDto { UserId = sm.HomeUserId.Value, Username = sm.HomeUsername, AvatarUrl = sm.HomeAvatarUrl };
+                    homePlayer = new TeamMemberDto { UserId = sm.HomeUserId.Value, Username = sm.HomeUsername, Nickname = sm.HomeNickname, AvatarUrl = sm.HomeAvatarUrl };
                 else if (sm.HomeUserId.HasValue)
                     homePlayer = homeTeamMembers.FirstOrDefault(m => m.UserId == sm.HomeUserId.Value);
 
                 TeamMemberDto? awayPlayer = null;
                 if (sm.AwayUserId.HasValue && sm.AwayUsername != null)
-                    awayPlayer = new TeamMemberDto { UserId = sm.AwayUserId.Value, Username = sm.AwayUsername, AvatarUrl = sm.AwayAvatarUrl };
+                    awayPlayer = new TeamMemberDto { UserId = sm.AwayUserId.Value, Username = sm.AwayUsername, Nickname = sm.AwayNickname, AvatarUrl = sm.AwayAvatarUrl };
                 else if (sm.AwayUserId.HasValue)
                     awayPlayer = awayTeamMembers.FirstOrDefault(m => m.UserId == sm.AwayUserId.Value);
 
@@ -281,7 +281,8 @@ namespace GameHubz.Logic.Services
             return new TeamMemberDto
             {
                 UserId = userId,
-                Username = user?.Username ?? "Unknown"
+                Username = user?.Username ?? "Unknown",
+                Nickname = string.IsNullOrWhiteSpace(user?.Nickname) ? null : user!.Nickname
             };
         }
     }

@@ -100,6 +100,7 @@ namespace GameHubz.Data.Repository
                                 {
                                     UserId = m.UserId!.Value,
                                     Username = m.User != null ? m.User.Username : "Unknown",
+                                    Nickname = m.User != null && !string.IsNullOrWhiteSpace(m.User.Nickname) ? m.User.Nickname : null,
                                     AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
                                     IsReserve = m.IsReserve
                                 }).ToList()
@@ -117,6 +118,7 @@ namespace GameHubz.Data.Repository
                                 {
                                     UserId = m.UserId!.Value,
                                     Username = m.User != null ? m.User.Username : "Unknown",
+                                    Nickname = m.User != null && !string.IsNullOrWhiteSpace(m.User.Nickname) ? m.User.Nickname : null,
                                     AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
                                     IsReserve = m.IsReserve
                                 }).ToList()
@@ -143,6 +145,18 @@ namespace GameHubz.Data.Repository
                             ? sm.AwayUser.Username
                             : (sm.AwayParticipant != null && sm.AwayParticipant.User != null
                                 ? sm.AwayParticipant.User.Username
+                                : null),
+                        // Blank nicknames (entity default "") come back as null so the client can
+                        // just check for presence before rendering the in-game name.
+                        HomeNickname = sm.HomeUser != null
+                            ? (string.IsNullOrWhiteSpace(sm.HomeUser.Nickname) ? null : sm.HomeUser.Nickname)
+                            : (sm.HomeParticipant != null && sm.HomeParticipant.User != null
+                                ? (string.IsNullOrWhiteSpace(sm.HomeParticipant.User.Nickname) ? null : sm.HomeParticipant.User.Nickname)
+                                : null),
+                        AwayNickname = sm.AwayUser != null
+                            ? (string.IsNullOrWhiteSpace(sm.AwayUser.Nickname) ? null : sm.AwayUser.Nickname)
+                            : (sm.AwayParticipant != null && sm.AwayParticipant.User != null
+                                ? (string.IsNullOrWhiteSpace(sm.AwayParticipant.User.Nickname) ? null : sm.AwayParticipant.User.Nickname)
                                 : null),
                         HomeAvatarUrl = sm.HomeUser != null
                             ? sm.HomeUser.AvatarUrl

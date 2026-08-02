@@ -35,6 +35,14 @@ namespace GameHubz.DataModels.Models
     {
         public Guid UserId { get; set; }
         public string Username { get; set; } = "";
+
+        /// <summary>
+        /// In-game nickname, or null when the user never set one (it is persisted as "" by the
+        /// entity default, which the projections normalize away). Lets a client show the account
+        /// name and the in-game name side by side instead of one ambiguous label.
+        /// </summary>
+        public string? Nickname { get; set; }
+
         public string? AvatarUrl { get; set; }
 
         /// <summary>
