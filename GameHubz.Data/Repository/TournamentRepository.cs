@@ -276,7 +276,7 @@ namespace GameHubz.Data.Repository
                       Description = x.Description ?? string.Empty,
                       Rules = x.Rules ?? string.Empty,
                       CreatedBy = x.CreatedBy!.Value,
-                      RegistrationDeadLine = x.RegistrationDeadline,
+                      RegistrationDeadline = x.RegistrationDeadline,
                       HubId = x.HubId!.Value,
                       Format = x.Format,
                       RoundDurationMinutes = x.RoundDurationMinutes,

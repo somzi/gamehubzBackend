@@ -37,7 +37,7 @@ namespace GameHubz.DataModels.Models
         public string Description { get; set; } = string.Empty;
         public string Rules { get; set; } = string.Empty;
         public Guid CreatedBy { get; set; }
-        public DateTime? RegistrationDeadLine { get; set; }
+        public DateTime? RegistrationDeadline { get; set; }
         public string HubName { get; set; } = string.Empty;
         public string? HubAvatarUrl { get; set; }
         public TournamentFormat? Format { get; set; }
