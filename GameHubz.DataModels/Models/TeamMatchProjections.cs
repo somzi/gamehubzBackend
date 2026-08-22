@@ -14,6 +14,13 @@ namespace GameHubz.DataModels.Models
         public int? MatchOrder { get; set; }
         public bool RequireResultApproval { get; set; }
         public TeamWinCondition WinCondition { get; set; }
+
+        /// <summary>
+        /// How each individual sub-match series is settled. Distinct from <see cref="WinCondition"/>,
+        /// which settles the tie itself over those sub-matches.
+        /// </summary>
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
         public TeamMatchTeamProjection? HomeTeam { get; set; }
         public TeamMatchTeamProjection? AwayTeam { get; set; }
         public List<SubMatchProjection> SubMatches { get; set; } = [];
@@ -51,6 +58,20 @@ namespace GameHubz.DataModels.Models
         public Guid? ProposedByUserId { get; set; }
         public bool AdminHelpRequested { get; set; }
         public Guid? AdminHelpRequestedByUserId { get; set; }
+
+        // Series format for this individual game, already resolved against the tournament default.
+        public int BestOf { get; set; } = 1;
+        public int? TiebreakBestOf { get; set; }
+
+        // Real goals across the whole series. The tie's aggregate score is built from these, not
+        // from HomeUserScore, which under MatchWins is a games-won tally.
+        public int? HomeGoalsTotal { get; set; }
+        public int? AwayGoalsTotal { get; set; }
+
+        // Raw JSON straight off the column — EF can't deserialize in-query, so the service parses
+        // these into the DTO's Games / ProposedGames lists after materialization.
+        public string? GamesJson { get; set; }
+        public string? ProposedGamesJson { get; set; }
     }
 
     public class TieBreakProjection

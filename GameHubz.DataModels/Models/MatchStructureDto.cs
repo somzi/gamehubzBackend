@@ -36,6 +36,15 @@ namespace GameHubz.DataModels.Models
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }
+        public List<SeriesGame>? ProposedGames { get; set; }
+
+        // Series format in force for THIS match (tournament default, or a round / match override),
+        // plus the games played so far. BestOf 1 with no games is the pre-series shape every old
+        // tournament reports, so clients that ignore these fields keep rendering exactly as before.
+        public int BestOf { get; set; } = 1;
+        public int? TiebreakBestOf { get; set; }
+        public TeamWinCondition SeriesWinCondition { get; set; }
+        public List<SeriesGame>? Games { get; set; }
 
         // Live progress of a TEAM card: how many of its sub-matches are decided, and the running
         // win tally. Deliberately separate from Home/Away.Score, which stays null until the whole

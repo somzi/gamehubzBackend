@@ -88,6 +88,12 @@ namespace GameHubz.Data.Repository
                     AwayParticipantId = m.AwayParticipantId,
                     HomeScore = m.HomeUserScore ?? 0,
                     AwayScore = m.AwayUserScore ?? 0,
+                    // Goal difference must count real goals, not the headline. Under MatchWins the
+                    // headline is the games-won tally, so a Bo3 won 2–1 would otherwise post 2 GF
+                    // instead of the goals actually scored. Null on pre-series rows, where the
+                    // headline IS the score — hence the fallback.
+                    HomeGoals = m.HomeGoalsTotal ?? m.HomeUserScore ?? 0,
+                    AwayGoals = m.AwayGoalsTotal ?? m.AwayUserScore ?? 0,
                     WinnerParticipantId = m.WinnerParticipantId
                 })
                 .ToListAsync();
@@ -117,7 +123,11 @@ namespace GameHubz.Data.Repository
         private static System.Linq.Expressions.Expression<Func<MatchEntity, bool>> ActiveForUserPredicate(Guid userId, DateTime now)
             => x =>
                 x.Tournament!.Status == TournamentStatus.InProgress &&
-                (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled) &&
+                // TieBreakRequired is still an active match: the series was reported but finished
+                // level, so the players owe a tiebreak. Leaving it out would drop the match off
+                // "My Matches" (and the badge) exactly when the players need to act on it.
+                (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled
+                    || x.Status == MatchStatus.TieBreakRequired) &&
                 // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
                 (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
                 (
@@ -262,7 +272,11 @@ namespace GameHubz.Data.Repository
                     UserNickname = me?.Nickname ?? me?.Username ?? "Unknown",
                     OpponentName = opponent?.Username ?? "Unknown",
                     OpponentNickname = opponent?.Nickname ?? opponent?.Username ?? "Unknown",
-                    OpponentAvatarUrl = opponent?.AvatarUrl
+                    OpponentAvatarUrl = opponent?.AvatarUrl,
+                    // Match override wins over the tournament default, matching how the result
+                    // path resolves it — the card must name the format the match will be played in.
+                    BestOf = match.BestOf ?? match.Tournament!.BestOf,
+                    SeriesWinCondition = match.Tournament!.SeriesWinCondition
                 });
             }
 
@@ -509,6 +523,21 @@ namespace GameHubz.Data.Repository
                     HubOwnerUserId = x.Tournament!.Hub!.UserId,
                     AdminHelpRequested = x.AdminHelpRequested,
                     AdminHelpRequestedByUserId = x.AdminHelpRequestedByUserId,
+                    // Series format, already resolved: the match override wins, else the tournament
+                    // default — so the caller never has to coalesce the two.
+                    BestOf = x.BestOf ?? x.Tournament!.BestOf,
+                    TiebreakBestOf = x.TiebreakBestOf ?? x.Tournament!.TiebreakBestOf,
+                    SeriesWinCondition = x.Tournament!.SeriesWinCondition,
+                    GamesJson = x.GamesJson,
+                    ProposedGamesJson = x.ProposedGamesJson,
+                    // Mirrors BracketService.IsPendingSoloTieBreak so the client only offers a
+                    // tiebreak where the server would accept one.
+                    AllowsTieBreak = x.TeamMatchId == null
+                        && x.TournamentStage != null
+                        && (x.TournamentStage.Type == StageType.SingleEliminationBracket
+                            || x.TournamentStage.Type == StageType.DoubleEliminationWinnersBracket
+                            || x.TournamentStage.Type == StageType.DoubleEliminationLosersBracket
+                            || x.TournamentStage.Type == StageType.PlayIn),
                 })
                 .FirstOrDefaultAsync();
         }

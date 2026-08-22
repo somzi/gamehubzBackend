@@ -33,6 +33,15 @@ namespace GameHubz.DataModels.Models
 
         public TeamWinCondition TeamWinCondition { get; set; }
 
+        /// <summary>Games a single match is played over. 1 = one game decides it.</summary>
+        public int BestOf { get; set; } = 1;
+
+        /// <summary>How a multi-game series is settled: games won, or total score across the games.</summary>
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
+        /// <summary>Games in the tiebreak replay of a level knockout series. Null = same format as the match.</summary>
+        public int? TiebreakBestOf { get; set; }
+
         public bool HasThirdPlaceMatch { get; set; }
 
         public bool RequireResultApproval { get; set; }

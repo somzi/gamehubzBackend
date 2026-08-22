@@ -428,7 +428,10 @@ namespace GameHubz.Data.Repository
                 .Select(t => new TournamentApprovalContext
                 {
                     HubOwnerUserId = t.Hub!.UserId,
-                    RequireResultApproval = t.RequireResultApproval
+                    RequireResultApproval = t.RequireResultApproval,
+                    BestOf = t.BestOf,
+                    SeriesWinCondition = t.SeriesWinCondition,
+                    TiebreakBestOf = t.TiebreakBestOf
                 })
                 .FirstOrDefaultAsync();
         }

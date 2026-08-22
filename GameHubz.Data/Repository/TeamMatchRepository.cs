@@ -175,8 +175,18 @@ namespace GameHubz.Data.Repository
                         ProposedAwayScore = sm.ProposedAwayScore,
                         ProposedByUserId = sm.ProposedByUserId,
                         AdminHelpRequested = sm.AdminHelpRequested,
-                        AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId
-                    }).ToList()
+                        AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId,
+                        // Each individual game of the tie is its own series. Resolved here (match
+                        // override, else the tournament default) so the client can render the
+                        // per-game entry form without a second lookup.
+                        BestOf = sm.BestOf ?? tm.Tournament!.BestOf,
+                        TiebreakBestOf = sm.TiebreakBestOf ?? tm.Tournament!.TiebreakBestOf,
+                        GamesJson = sm.GamesJson,
+                        ProposedGamesJson = sm.ProposedGamesJson,
+                        HomeGoalsTotal = sm.HomeGoalsTotal,
+                        AwayGoalsTotal = sm.AwayGoalsTotal
+                    }).ToList(),
+                    SeriesWinCondition = tm.Tournament!.SeriesWinCondition
                 })
                 .FirstOrDefaultAsync();
         }

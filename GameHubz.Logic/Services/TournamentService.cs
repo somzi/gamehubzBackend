@@ -293,6 +293,85 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
+        /// <summary>
+        /// Sets the series format for one round, the format sibling of <see cref="SetRoundDeadline"/>.
+        /// </summary>
+        /// <remarks>
+        /// A match that already has a recorded game keeps the format it was played under — status
+        /// alone is not the test, because a match can sit in Scheduled with games already reported
+        /// (a level series awaiting its tiebreak), and re-formatting that mid-series would silently
+        /// re-interpret the games already played. A pending result proposal counts as reported for
+        /// the same reason: approving it must validate against the format it was submitted under.
+        /// Skipped matches are counted, not refused, so changing a partly-played round still works
+        /// for the fixtures it can legitimately touch.
+        /// </remarks>
+        public async Task<SetRoundBestOfResult> SetRoundBestOf(
+            Guid tournamentId,
+            int roundNumber,
+            int? bestOf,
+            int? tiebreakBestOf,
+            Guid? stageId = null,
+            bool clearBestOf = false)
+        {
+            if (roundNumber < 1)
+                throw new BusinessRuleException("Round number must be greater than 0.");
+
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+                throw new BusinessRuleException("Only the hub owner or a hub admin can manage the round format.");
+
+            if (!clearBestOf)
+            {
+                if (bestOf == null)
+                    throw new BusinessRuleException("Choose how many games this round is played over.");
+                if (bestOf < 1 || bestOf > SeriesEvaluator.MaxBestOf)
+                    throw new BusinessRuleException($"Best-of must be between 1 and {SeriesEvaluator.MaxBestOf}.");
+                if (tiebreakBestOf != null && (tiebreakBestOf < 1 || tiebreakBestOf > SeriesEvaluator.MaxBestOf))
+                    throw new BusinessRuleException($"Tiebreak best-of must be between 1 and {SeriesEvaluator.MaxBestOf}.");
+            }
+
+            var roundMatches = stageId.HasValue
+                ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
+                : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
+            if (roundMatches.Count == 0)
+                throw new BusinessRuleException("Round not found.");
+
+            var result = new SetRoundBestOfResult();
+
+            foreach (var match in roundMatches)
+            {
+                if (!string.IsNullOrEmpty(match.GamesJson) || match.ProposedByUserId != null)
+                {
+                    result.SkippedLockedMatches++;
+                    continue;
+                }
+
+                if (clearBestOf)
+                {
+                    match.BestOf = null;
+                    match.TiebreakBestOf = null;
+                }
+                else
+                {
+                    match.BestOf = bestOf;
+                    match.TiebreakBestOf = tiebreakBestOf;
+                }
+
+                result.UpdatedMatches++;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            }
+
+            if (result.UpdatedMatches == 0)
+                throw new BusinessRuleException("Every match in this round has already been reported, so its format is locked.");
+
+            await this.SaveAsync();
+            await cacheService.RemoveAsync($"bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+
+            return result;
+        }
+
         public async Task CancelTournament(Guid id)
         {
             var tournament = await ChangeTournamentStatus(
@@ -405,6 +484,22 @@ namespace GameHubz.Logic.Services
 
             inputDto.IsTeamTournament = existing.IsTeamTournament;
 
+            // The series format stays editable for the whole life of a tournament, unlike the
+            // structural fields below: a match freezes its own format the moment a result lands on
+            // it, so a change here can only ever reach fixtures still to be played.
+            //
+            // Absence of BestOf — not AllowStructuralEdits — is what marks an old client here. The
+            // client shipped before this feature already sets that flag, so gating on it would let
+            // its edits (which carry no series fields at all) silently reset a Bo3 tournament to
+            // Bo1. TiebreakBestOf and SeriesWinCondition always travel with BestOf, so one check
+            // covers all three.
+            if (inputDto.BestOf == null)
+            {
+                inputDto.BestOf = existing.BestOf;
+                inputDto.SeriesWinCondition = existing.SeriesWinCondition;
+                inputDto.TiebreakBestOf = existing.TiebreakBestOf;
+            }
+
             bool canEditStructural = inputDto.AllowStructuralEdits
                 && existing.Status < TournamentStatus.InProgress;
             if (canEditStructural) return;
@@ -452,6 +547,13 @@ namespace GameHubz.Logic.Services
                     throw new UnauthorizedAccessToServiceException(this.LocalizationService);
                 }
             }
+
+            // Clamp rather than reject: Best-of arrives from a picker with a fixed set of options,
+            // so an out-of-range value is a malformed client, not a user mistake worth a 400.
+            // A create that omits it maps to 0, which normalizes to the Bo1 default.
+            entity.BestOf = SeriesEvaluator.Normalize(entity.BestOf);
+            if (entity.TiebreakBestOf != null)
+                entity.TiebreakBestOf = SeriesEvaluator.Normalize(entity.TiebreakBestOf);
 
             var codes = inputDto.Countries?
                 .Where(c => !string.IsNullOrWhiteSpace(c))

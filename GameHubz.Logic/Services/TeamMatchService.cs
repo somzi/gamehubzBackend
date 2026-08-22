@@ -164,8 +164,11 @@ namespace GameHubz.Logic.Services
                     else if (sm.WinnerParticipantId == projection.AwayTeamParticipantId)
                         awayWins++;
                 }
-                homeTotalScore += sm.HomeUserScore ?? 0;
-                awayTotalScore += sm.AwayUserScore ?? 0;
+                // Real goals across the series, not the headline: under MatchWins a Bo3 won 2–1
+                // reports a headline of 2, which would turn the tie's aggregate into a second win
+                // tally. Null on pre-series sub-matches, where the headline IS the score.
+                homeTotalScore += sm.HomeGoalsTotal ?? sm.HomeUserScore ?? 0;
+                awayTotalScore += sm.AwayGoalsTotal ?? sm.AwayUserScore ?? 0;
             }
 
             int baseTieBreakOrder = (projection.MatchOrder ?? 0) + 1000;
@@ -217,7 +220,11 @@ namespace GameHubz.Logic.Services
                     ProposedAwayScore = sm.ProposedAwayScore,
                     ProposedByUserId = sm.ProposedByUserId,
                     AdminHelpRequested = sm.AdminHelpRequested,
-                    AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId
+                    AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId,
+                    BestOf = sm.BestOf,
+                    TiebreakBestOf = sm.TiebreakBestOf,
+                    Games = DeserializeGames(sm.GamesJson),
+                    ProposedGames = DeserializeGames(sm.ProposedGamesJson)
                 };
             }).ToList();
 
@@ -243,6 +250,7 @@ namespace GameHubz.Logic.Services
                 HomeTeamParticipantId = projection.HomeTeamParticipantId,
                 AwayTeamParticipantId = projection.AwayTeamParticipantId,
                 WinCondition = projection.WinCondition,
+                SeriesWinCondition = projection.SeriesWinCondition,
                 HomeTeam = projection.HomeTeam == null ? null : new TeamMatchTeamInfoDto
                 {
                     TeamId = projection.HomeTeam.TeamId,
@@ -273,6 +281,15 @@ namespace GameHubz.Logic.Services
                 },
                 RequireResultApproval = projection.RequireResultApproval
             };
+        }
+
+        // The projection carries the games as raw JSON (EF can't deserialize mid-query). A malformed
+        // blob degrades to "no per-game breakdown" rather than failing the whole team-match screen.
+        private static List<SeriesGame>? DeserializeGames(string? json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+            try { return System.Text.Json.JsonSerializer.Deserialize<List<SeriesGame>>(json); }
+            catch { return null; }
         }
 
         private async Task<TeamMemberDto> GetUserAsTeamMember(Guid userId)
