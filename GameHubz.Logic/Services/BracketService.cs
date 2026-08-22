@@ -169,7 +169,11 @@ namespace GameHubz.Logic.Services
                 Status = tournament.Status,
                 IsTeamTournament = tournament.IsTeamTournament,
                 Stages = new List<TournamentStageStructureDto>(),
-                HubOwnerId = tournament.Hub!.UserId,
+                // Hub can be null here even though HubId is set: HubEntity has a soft-delete
+                // query filter, so an Include of a soft-deleted hub resolves to null (and HubId
+                // itself is nullable). Fall back to Empty so an orphaned tournament still renders
+                // instead of 500-ing the whole structure endpoint.
+                HubOwnerId = tournament.Hub?.UserId ?? Guid.Empty,
                 QualifiersPerGroup = tournament.QualifiersPerGroup,
                 RequireResultApproval = tournament.RequireResultApproval
             };
