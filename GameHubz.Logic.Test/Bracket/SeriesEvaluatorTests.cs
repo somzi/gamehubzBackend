@@ -232,6 +232,51 @@ namespace GameHubz.Logic.Test.Bracket
                 () => SeriesEvaluator.ValidateAndEvaluate(tooMany, TeamWinCondition.MatchWins, 3, null));
         }
 
+        // ── phase defaults ─────────────────────────────────────────────────────
+
+        [Test]
+        public void KnockoutBestOf_AppliesOnlyToTheBracketPhaseOfATwoPhaseTournament()
+        {
+            // Groups played as Bo1, knockout as Bo3.
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.GroupsThenSingleElimination, StageType.GroupStage, 1, 3),
+                    Is.EqualTo(1), "the group stage keeps the tournament default");
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.GroupsThenSingleElimination, StageType.SingleEliminationBracket, 1, 3),
+                    Is.EqualTo(3), "the bracket that follows it plays the knockout format");
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.Swiss, StageType.PlayIn, 1, 3),
+                    Is.EqualTo(3), "a play-in is part of the knockout phase");
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.Swiss, StageType.Swiss, 1, 3),
+                    Is.EqualTo(1), "the Swiss rounds themselves are not");
+            });
+        }
+
+        [Test]
+        public void KnockoutBestOf_IsIgnoredWhereThereIsNoSeparateKnockoutPhase()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.SingleElimination, StageType.SingleEliminationBracket, 2, 5),
+                    Is.EqualTo(2), "a plain bracket is one phase — BestOf already describes every match");
+                Assert.That(
+                    SeriesEvaluator.DefaultBestOfFor(TournamentFormat.League, StageType.League, 2, 5),
+                    Is.EqualTo(2), "a league never plays a knockout match");
+            });
+        }
+
+        [Test]
+        public void NoKnockoutBestOf_MeansTheBracketPlaysLikeThePhaseBeforeIt()
+        {
+            Assert.That(
+                SeriesEvaluator.DefaultBestOfFor(TournamentFormat.GroupsThenSingleElimination, StageType.SingleEliminationBracket, 3, null),
+                Is.EqualTo(3), "every tournament created before the option behaves exactly as it did");
+        }
+
         [Test]
         public void Validate_RejectsADeadRubberAfterTheClinch()
         {

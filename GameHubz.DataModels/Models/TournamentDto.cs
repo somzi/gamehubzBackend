@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
 {
@@ -41,6 +41,12 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>Games in the tiebreak replay of a level knockout series. Null = same format as the match.</summary>
         public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Games a knockout match is played over when a bracket follows a group stage or Swiss.
+        /// Null = the knockout is played under the same <see cref="BestOf"/> as the phase before it.
+        /// </summary>
+        public int? KnockoutBestOf { get; set; }
 
         public bool HasThirdPlaceMatch { get; set; }
 

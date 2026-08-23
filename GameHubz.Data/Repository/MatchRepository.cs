@@ -1,9 +1,10 @@
-using GameHubz.Data.Base;
+﻿using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Interfaces;
+using GameHubz.Logic.Services;
 using GameHubz.Logic.Utility;
 using Microsoft.EntityFrameworkCore;
 
@@ -233,6 +234,9 @@ namespace GameHubz.Data.Repository
                 .AsNoTracking()
                 .Where(ActiveForUserPredicate(userId, now))
                 .Include(x => x.Tournament).ThenInclude(t => t!.Hub)
+                // Needed to tell a knockout match from a group one — they can be played over
+                // different lengths in a two-phase tournament.
+                .Include(x => x.TournamentStage)
                 .Include(x => x.HomeParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.AwayParticipant).ThenInclude(p => p!.User)
                 .Include(x => x.HomeUser)
@@ -275,7 +279,9 @@ namespace GameHubz.Data.Repository
                     OpponentAvatarUrl = opponent?.AvatarUrl,
                     // Match override wins over the tournament default, matching how the result
                     // path resolves it — the card must name the format the match will be played in.
-                    BestOf = match.BestOf ?? match.Tournament!.BestOf,
+                    BestOf = match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
+                        match.Tournament!.Format, match.TournamentStage?.Type,
+                        match.Tournament.BestOf, match.Tournament.KnockoutBestOf),
                     SeriesWinCondition = match.Tournament!.SeriesWinCondition
                 });
             }
@@ -525,7 +531,22 @@ namespace GameHubz.Data.Repository
                     AdminHelpRequestedByUserId = x.AdminHelpRequestedByUserId,
                     // Series format, already resolved: the match override wins, else the tournament
                     // default — so the caller never has to coalesce the two.
-                    BestOf = x.BestOf ?? x.Tournament!.BestOf,
+                    // Inherits the PHASE default: a two-phase tournament (groups or Swiss, then a
+                    // bracket) can run its knockout over a different length. Spelled out inline
+                    // because this has to translate to SQL.
+                    BestOf = x.BestOf ?? (
+                        x.Tournament!.KnockoutBestOf != null
+                        && (x.Tournament.Format == TournamentFormat.GroupsThenSingleElimination
+                            || x.Tournament.Format == TournamentFormat.GroupsThenDoubleElimination
+                            || x.Tournament.Format == TournamentFormat.GroupStageWithKnockout
+                            || x.Tournament.Format == TournamentFormat.Swiss)
+                        && x.TournamentStage != null
+                        && (x.TournamentStage.Type == StageType.SingleEliminationBracket
+                            || x.TournamentStage.Type == StageType.DoubleEliminationWinnersBracket
+                            || x.TournamentStage.Type == StageType.DoubleEliminationLosersBracket
+                            || x.TournamentStage.Type == StageType.PlayIn)
+                            ? x.Tournament.KnockoutBestOf!.Value
+                            : x.Tournament.BestOf),
                     TiebreakBestOf = x.TiebreakBestOf ?? x.Tournament!.TiebreakBestOf,
                     SeriesWinCondition = x.Tournament!.SeriesWinCondition,
                     GamesJson = x.GamesJson,

@@ -431,7 +431,9 @@ namespace GameHubz.Data.Repository
                     RequireResultApproval = t.RequireResultApproval,
                     BestOf = t.BestOf,
                     SeriesWinCondition = t.SeriesWinCondition,
-                    TiebreakBestOf = t.TiebreakBestOf
+                    TiebreakBestOf = t.TiebreakBestOf,
+                    KnockoutBestOf = t.KnockoutBestOf,
+                    Format = t.Format
                 })
                 .FirstOrDefaultAsync();
         }

@@ -178,7 +178,10 @@ namespace GameHubz.Logic.Services
                 RequireResultApproval = tournament.RequireResultApproval,
                 BestOf = SeriesEvaluator.Normalize(tournament.BestOf),
                 SeriesWinCondition = tournament.SeriesWinCondition,
-                TiebreakBestOf = tournament.TiebreakBestOf
+                TiebreakBestOf = tournament.TiebreakBestOf,
+                KnockoutBestOf = SeriesEvaluator.PlaysKnockoutAfterAnotherPhase(tournament.Format)
+                    ? tournament.KnockoutBestOf
+                    : null
             };
 
             foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
@@ -217,7 +220,7 @@ namespace GameHubz.Logic.Services
             // Cards are mapped without tournament context, so they carry only their own override.
             // Resolve every one against the tournament default here, in one pass, so the client
             // never has to coalesce — and so the resolved format is what gets cached.
-            ResolveSeriesFormat(response);
+            ResolveSeriesFormat(response, tournament);
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
 
@@ -228,15 +231,24 @@ namespace GameHubz.Logic.Services
         /// Fills each card's effective series format. Mapped cards leave <c>BestOf</c> at 0 to mean
         /// "no override — inherit"; a real Best-of is always ≥ 1, so 0 is unambiguous.
         /// </summary>
-        private static void ResolveSeriesFormat(TournamentStructureDto response)
+        /// <remarks>
+        /// Resolved per stage, not per tournament: a two-phase tournament can run its knockout over
+        /// a different Best-of than the group stage or Swiss rounds that fed it.
+        /// </remarks>
+        private static void ResolveSeriesFormat(TournamentStructureDto response, TournamentEntity tournament)
         {
-            foreach (var match in response.Stages
-                .SelectMany(s => (s.Rounds ?? Enumerable.Empty<BracketRoundDto>()).SelectMany(r => r.Matches)
-                    .Concat((s.Groups ?? Enumerable.Empty<GroupDto>()).SelectMany(g => g.Matches))))
+            foreach (var stage in response.Stages)
             {
-                if (match.BestOf <= 0) match.BestOf = response.BestOf;
-                match.TiebreakBestOf ??= response.TiebreakBestOf;
-                match.SeriesWinCondition = response.SeriesWinCondition;
+                var stageDefault = SeriesEvaluator.DefaultBestOfFor(
+                    tournament.Format, stage.Type, tournament.BestOf, tournament.KnockoutBestOf);
+
+                foreach (var match in (stage.Rounds ?? Enumerable.Empty<BracketRoundDto>()).SelectMany(r => r.Matches)
+                    .Concat((stage.Groups ?? Enumerable.Empty<GroupDto>()).SelectMany(g => g.Matches)))
+                {
+                    if (match.BestOf <= 0) match.BestOf = stageDefault;
+                    match.TiebreakBestOf ??= response.TiebreakBestOf;
+                    match.SeriesWinCondition = response.SeriesWinCondition;
+                }
             }
         }
 
@@ -2599,7 +2611,11 @@ namespace GameHubz.Logic.Services
             List<SeriesGame>? submittedGames)
         {
             var condition = approvalCtx.SeriesWinCondition;
-            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? approvalCtx.BestOf);
+            // The match's own override wins; without one it inherits its PHASE default, so the
+            // knockout of a groups/Swiss tournament can be played over a different length than the
+            // phase that fed it.
+            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
+                approvalCtx.Format, match.TournamentStage?.Type, approvalCtx.BestOf, approvalCtx.KnockoutBestOf));
             var tiebreakBestOf = match.TiebreakBestOf ?? approvalCtx.TiebreakBestOf;
 
             if (submittedGames == null)

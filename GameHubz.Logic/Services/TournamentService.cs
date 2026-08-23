@@ -1,4 +1,4 @@
-using FluentValidation;
+﻿using FluentValidation;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
@@ -491,13 +491,14 @@ namespace GameHubz.Logic.Services
             // Absence of BestOf — not AllowStructuralEdits — is what marks an old client here. The
             // client shipped before this feature already sets that flag, so gating on it would let
             // its edits (which carry no series fields at all) silently reset a Bo3 tournament to
-            // Bo1. TiebreakBestOf and SeriesWinCondition always travel with BestOf, so one check
-            // covers all three.
+            // Bo1. TiebreakBestOf, SeriesWinCondition and KnockoutBestOf always travel with
+            // BestOf, so one check covers all four.
             if (inputDto.BestOf == null)
             {
                 inputDto.BestOf = existing.BestOf;
                 inputDto.SeriesWinCondition = existing.SeriesWinCondition;
                 inputDto.TiebreakBestOf = existing.TiebreakBestOf;
+                inputDto.KnockoutBestOf = existing.KnockoutBestOf;
             }
 
             bool canEditStructural = inputDto.AllowStructuralEdits
@@ -554,6 +555,13 @@ namespace GameHubz.Logic.Services
             entity.BestOf = SeriesEvaluator.Normalize(entity.BestOf);
             if (entity.TiebreakBestOf != null)
                 entity.TiebreakBestOf = SeriesEvaluator.Normalize(entity.TiebreakBestOf);
+
+            // A knockout length only means something where a bracket follows another phase; on a
+            // plain bracket or a league it would be a second number describing the same matches,
+            // so it is dropped rather than stored to confuse a later read.
+            entity.KnockoutBestOf = SeriesEvaluator.PlaysKnockoutAfterAnotherPhase(entity.Format) && entity.KnockoutBestOf != null
+                ? SeriesEvaluator.Normalize(entity.KnockoutBestOf)
+                : null;
 
             var codes = inputDto.Countries?
                 .Where(c => !string.IsNullOrWhiteSpace(c))

@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
 {
@@ -19,5 +19,14 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>Tiebreak replay format. Null = replay the match's own Best-of.</summary>
         public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Best-of for knockout matches of a two-phase tournament. Null = the knockout inherits
+        /// <see cref="BestOf"/> like everything else.
+        /// </summary>
+        public int? KnockoutBestOf { get; set; }
+
+        /// <summary>Needed to tell a two-phase tournament from a plain bracket, where the knockout override does not apply.</summary>
+        public TournamentFormat Format { get; set; }
     }
 }

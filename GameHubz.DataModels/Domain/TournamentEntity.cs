@@ -1,4 +1,4 @@
-using GameHubz.Common;
+﻿using GameHubz.Common;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
@@ -48,6 +48,12 @@ namespace GameHubz.DataModels.Domain
         // Games in the replay series when a knockout series finishes level. Null = replay the same
         // format as the match itself (a drawn Bo3 is settled by another Bo3).
         public int? TiebreakBestOf { get; set; }
+
+        // Best-of for the knockout phase of a two-phase tournament (groups or Swiss, then a
+        // bracket). Null = the knockout is played under the same BestOf as the phase before it,
+        // which is what every tournament created before this option did. Meaningless — and ignored
+        // — for formats that are a single phase, where BestOf already describes every match.
+        public int? KnockoutBestOf { get; set; }
 
         public bool IsTeamTournament { get; set; }
 

@@ -76,6 +76,35 @@ namespace GameHubz.Logic.Services
                 ? Normalize(matchBestOf)
                 : Normalize(tiebreakBestOf ?? matchBestOf);
 
+        /// <summary>
+        /// True for the formats that play a bracket AFTER another phase — the only ones where a
+        /// separate knockout Best-of means anything. A plain Single/Double elimination tournament
+        /// is one phase: its BestOf already describes every match it plays.
+        /// </summary>
+        public static bool PlaysKnockoutAfterAnotherPhase(TournamentFormat format)
+            => format == TournamentFormat.GroupsThenSingleElimination
+            || format == TournamentFormat.GroupsThenDoubleElimination
+            || format == TournamentFormat.GroupStageWithKnockout
+            || format == TournamentFormat.Swiss;
+
+        /// <summary>Stages whose matches are knockout matches (a play-in is one too).</summary>
+        public static bool IsKnockoutStage(StageType? stageType)
+            => stageType == StageType.SingleEliminationBracket
+            || stageType == StageType.DoubleEliminationWinnersBracket
+            || stageType == StageType.DoubleEliminationLosersBracket
+            || stageType == StageType.PlayIn;
+
+        /// <summary>
+        /// The tournament-level Best-of a match of this stage inherits when it carries no override
+        /// of its own: the knockout format for the bracket phase of a two-phase tournament, the
+        /// plain default everywhere else. Null KnockoutBestOf — every tournament created before the
+        /// option existed — means the knockout is played exactly like the phase before it.
+        /// </summary>
+        public static int DefaultBestOfFor(TournamentFormat format, StageType? stageType, int bestOf, int? knockoutBestOf)
+            => knockoutBestOf.HasValue && PlaysKnockoutAfterAnotherPhase(format) && IsKnockoutStage(stageType)
+                ? Normalize(knockoutBestOf)
+                : Normalize(bestOf);
+
         /// <summary>Clamps an organizer-supplied Best-of into the supported range.</summary>
         public static int Normalize(int? bestOf)
         {

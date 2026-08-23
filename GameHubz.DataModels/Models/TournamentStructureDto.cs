@@ -31,6 +31,9 @@ namespace GameHubz.DataModels.Models
 
         public int? TiebreakBestOf { get; set; }
 
+        /// <summary>Knockout-phase Best-of of a two-phase tournament. Null = same as <see cref="BestOf"/>.</summary>
+        public int? KnockoutBestOf { get; set; }
+
         /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or
         /// platform admin). Only populated by the v2 structure endpoint; omitted from the v1 payload

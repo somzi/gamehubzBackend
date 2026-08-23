@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
 namespace GameHubz.DataModels.Models
@@ -79,6 +79,14 @@ namespace GameHubz.DataModels.Models
         /// <see cref="BestOf"/>, so it is preserved whenever that one is absent.
         /// </summary>
         public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Best-of for the knockout phase when the tournament plays one after a group stage or
+        /// Swiss. Null = the knockout is played under the same <see cref="BestOf"/> as the phase
+        /// before it. Travels with <see cref="BestOf"/> (see the note there), so an old client that
+        /// omits the format block preserves whatever is stored.
+        /// </summary>
+        public int? KnockoutBestOf { get; set; }
 
         public bool IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }
