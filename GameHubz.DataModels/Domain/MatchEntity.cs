@@ -1,5 +1,6 @@
 using GameHubz.Common;
 using GameHubz.DataModels.Enums;
+using GameHubz.DataModels.Models;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 
@@ -59,6 +60,46 @@ namespace GameHubz.DataModels.Domain
                 : JsonSerializer.Deserialize<List<DateTime>>(AwaySlotsJson)!
                     .Select(d => DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToList();
             set => AwaySlotsJson = JsonSerializer.Serialize(value);
+        }
+
+        // Per-match series format. Null falls back to the tournament default, so the organizer can
+        // override a whole round (SetRoundBestOf stamps every unplayed match in it) or a single
+        // fixture. Locked the moment the match has any recorded game — see GamesJson.
+        public int? BestOf { get; set; }
+        public int? TiebreakBestOf { get; set; }
+
+        // The played games, as a JSON list of SeriesGame ({HomeScore, AwayScore, SeriesNumber}).
+        // Null / empty means nothing has been reported, which is also what makes it the format lock:
+        // once a game exists, BestOf for this match can no longer change.
+        public string? GamesJson { get; set; }
+
+        // The same list carried by a pending proposal in result-approval tournaments, so approving
+        // replays the exact series the participant reported rather than just its headline score.
+        public string? ProposedGamesJson { get; set; }
+
+        // Real goals across every game of every series, denormalised at write time. HomeUserScore
+        // holds the *headline* (games won under MatchWins), which must not drive goal difference —
+        // standings read these instead. Null on matches reported before the series feature, where
+        // the headline is the score, so readers fall back to HomeUserScore/AwayUserScore.
+        public int? HomeGoalsTotal { get; set; }
+        public int? AwayGoalsTotal { get; set; }
+
+        [NotMapped]
+        public List<SeriesGame> Games
+        {
+            get => string.IsNullOrEmpty(GamesJson)
+                ? new List<SeriesGame>()
+                : JsonSerializer.Deserialize<List<SeriesGame>>(GamesJson)!;
+            set => GamesJson = value == null || value.Count == 0 ? null : JsonSerializer.Serialize(value);
+        }
+
+        [NotMapped]
+        public List<SeriesGame> ProposedGames
+        {
+            get => string.IsNullOrEmpty(ProposedGamesJson)
+                ? new List<SeriesGame>()
+                : JsonSerializer.Deserialize<List<SeriesGame>>(ProposedGamesJson)!;
+            set => ProposedGamesJson = value == null || value.Count == 0 ? null : JsonSerializer.Serialize(value);
         }
 
         public List<MatchEvidenceEntity>? MatchEvidences { get; set; } = new();

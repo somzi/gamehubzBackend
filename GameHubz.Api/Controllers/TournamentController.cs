@@ -109,6 +109,22 @@ namespace GameHubz.Api.Controllers
             return Ok(new { structure });
         }
 
+        /// <summary>
+        /// v2 of the result report: the whole best-of series, game by game. v1 stays as it is —
+        /// it can only describe one game, and it cannot render the TieBreakRequired state a level
+        /// knockout series produces, so series tournaments are reported exclusively through here.
+        /// </summary>
+        [HttpPost("v2/matchResult")]
+        public async Task<IActionResult> UpdateMatchSeriesResult([FromBody] MatchSeriesResultDto request)
+        {
+            await this.bracketService.UpdateMatchSeriesResult(request);
+
+            // Same contract as v1: hand back the recomputed bracket so the client doesn't need a
+            // follow-up GET to reflect the result it just reported.
+            var structure = await this.bracketService.GetTournamentStructureV3(request.TournamentId);
+            return Ok(new { structure });
+        }
+
         [HttpPost("matchResult/approve")]
         public async Task<IActionResult> ApproveMatchResult([FromBody] MatchResultDecisionRequest request)
         {
@@ -227,6 +243,20 @@ namespace GameHubz.Api.Controllers
             await this.Service.SetRoundDeadline(id, request.RoundNumber, request.Deadline, request.RoundStart, request.StageId, request.ClearRoundStart, request.ClearDeadline);
 
             return Ok();
+        }
+
+        /// <summary>
+        /// Per-round series format, the format sibling of <c>PUT {id}/roundSchedule</c>. Matches in
+        /// the round that already carry a reported result keep the format they were played under;
+        /// the response says how many were skipped for that reason.
+        /// </summary>
+        [HttpPut("{id}/roundBestOf")]
+        public async Task<IActionResult> SetRoundBestOf([FromRoute] Guid id, [FromBody] SetRoundBestOfRequest request)
+        {
+            var result = await this.Service.SetRoundBestOf(
+                id, request.RoundNumber, request.BestOf, request.TiebreakBestOf, request.StageId, request.ClearBestOf);
+
+            return Ok(result);
         }
 
         [HttpPost("{id}/cancel")]

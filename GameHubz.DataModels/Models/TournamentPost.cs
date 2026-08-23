@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Interfaces;
 
 namespace GameHubz.DataModels.Models
@@ -53,6 +53,40 @@ namespace GameHubz.DataModels.Models
         /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
         /// </summary>
         public bool IsExclusive { get; set; }
+
+        /// <summary>
+        /// Games a single match is played over (1 = one game decides it). Applies to solo matches
+        /// and, in team tournaments, to each individual sub-match — the team tie itself is still
+        /// settled by <see cref="TeamWinCondition"/> over those sub-matches.
+        /// Null means "not sent" and preserves the persisted value on an edit — the currently
+        /// shipped client already sets <see cref="AllowStructuralEdits"/> but predates these fields,
+        /// so that flag cannot tell us whether the format was actually chosen. Null on create
+        /// defaults to 1.
+        /// </summary>
+        public int? BestOf { get; set; }
+
+        /// <summary>
+        /// How a multi-game series is settled: <see cref="TeamWinCondition.MatchWins"/> (games won)
+        /// or <see cref="TeamWinCondition.AggregateScore"/> (total score across the games).
+        /// Tournament-wide — per-round criteria would make goal difference incoherent.
+        /// Nullable for the same reason as <see cref="BestOf"/>: absence means "not sent".
+        /// </summary>
+        public TeamWinCondition? SeriesWinCondition { get; set; }
+
+        /// <summary>
+        /// Games in the replay series when a knockout series finishes level. Null = replay the same
+        /// format as the match (a drawn Bo3 is settled by another Bo3). Travels with
+        /// <see cref="BestOf"/>, so it is preserved whenever that one is absent.
+        /// </summary>
+        public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Best-of for the knockout phase when the tournament plays one after a group stage or
+        /// Swiss. Null = the knockout is played under the same <see cref="BestOf"/> as the phase
+        /// before it. Travels with <see cref="BestOf"/> (see the note there), so an old client that
+        /// omits the format block preserves whatever is stored.
+        /// </summary>
+        public int? KnockoutBestOf { get; set; }
 
         public bool IsTeamTournament { get; set; }
         public int? TeamSize { get; set; }

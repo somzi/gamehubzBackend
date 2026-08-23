@@ -29,5 +29,11 @@ namespace GameHubz.DataModels.Models
         // Unread chat messages in this match for the requesting user (drives the
         // per-match chat badge in "My Matches").
         public int UnreadMessages { get; set; }
+
+        // Series format, resolved against the tournament default, so the card can label how the
+        // match is played before it is opened. 1 = a single game decides it.
+        public int BestOf { get; set; } = 1;
+
+        public TeamWinCondition SeriesWinCondition { get; set; }
     }
 }

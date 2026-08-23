@@ -231,12 +231,16 @@ namespace GameHubz.Logic.Test.Bracket
             KnockoutEliminationType? knockoutEliminationType = null,
             int? swissRoundsCount = null,
             int? swissKnockoutQualifiers = null,
-            int? swissDirectQualifiers = null)
+            int? swissDirectQualifiers = null,
+            int bestOf = 1,
+            TeamWinCondition seriesWinCondition = TeamWinCondition.MatchWins,
+            int? tiebreakBestOf = null)
             => SeedTournamentAsync(
                 format, participantCount, isTeam: false, teamSize: null,
                 hasThirdPlaceMatch, requireResultApproval, doubleRoundRobin,
                 qualifiersPerGroup, groupsCount, knockoutEliminationType,
-                swissRoundsCount, swissKnockoutQualifiers, swissDirectQualifiers);
+                swissRoundsCount, swissKnockoutQualifiers, swissDirectQualifiers,
+                bestOf, seriesWinCondition, tiebreakBestOf);
 
         /// <summary>
         /// Seeds a team tournament. Participants stand in for team entries (no roster rows are
@@ -251,12 +255,16 @@ namespace GameHubz.Logic.Test.Bracket
             bool requireResultApproval = false,
             bool doubleRoundRobin = false,
             int? qualifiersPerGroup = null,
-            int? groupsCount = null)
+            int? groupsCount = null,
+            int bestOf = 1,
+            TeamWinCondition seriesWinCondition = TeamWinCondition.MatchWins,
+            int? tiebreakBestOf = null)
             => SeedTournamentAsync(
                 format, teamCount, isTeam: true, teamSize,
                 hasThirdPlaceMatch, requireResultApproval, doubleRoundRobin,
                 qualifiersPerGroup, groupsCount, knockoutEliminationType: null,
-                swissRoundsCount: null, swissKnockoutQualifiers: null, swissDirectQualifiers: null);
+                swissRoundsCount: null, swissKnockoutQualifiers: null, swissDirectQualifiers: null,
+                bestOf, seriesWinCondition, tiebreakBestOf);
 
         private async Task<Guid> SeedTournamentAsync(
             TournamentFormat format,
@@ -271,7 +279,10 @@ namespace GameHubz.Logic.Test.Bracket
             KnockoutEliminationType? knockoutEliminationType,
             int? swissRoundsCount,
             int? swissKnockoutQualifiers,
-            int? swissDirectQualifiers)
+            int? swissDirectQualifiers,
+            int bestOf,
+            TeamWinCondition seriesWinCondition,
+            int? tiebreakBestOf)
         {
             var hubId = Guid.NewGuid();
             var tournamentId = Guid.NewGuid();
@@ -298,6 +309,9 @@ namespace GameHubz.Logic.Test.Bracket
                 SwissRoundsCount = swissRoundsCount,
                 SwissKnockoutQualifiers = swissKnockoutQualifiers,
                 SwissDirectQualifiers = swissDirectQualifiers,
+                BestOf = bestOf,
+                SeriesWinCondition = seriesWinCondition,
+                TiebreakBestOf = tiebreakBestOf,
                 IsDeleted = false,
             });
 

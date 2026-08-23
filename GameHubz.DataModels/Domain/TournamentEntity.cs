@@ -1,4 +1,4 @@
-using GameHubz.Common;
+﻿using GameHubz.Common;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
@@ -33,6 +33,27 @@ namespace GameHubz.DataModels.Domain
         public List<string>? Countries { get; set; }
         public Guid? WinnerUserId { get; set; }
         public UserEntity? WinnerUser { get; set; }
+
+        // Default number of games a single match is played over. 1 (every pre-existing tournament)
+        // means one game decides it, exactly as before the series feature existed. Individual
+        // matches may override it — see MatchEntity.BestOf.
+        public int BestOf { get; set; } = 1;
+
+        // How a multi-game series is settled: by games won, or by the total score across the games.
+        // Reuses TeamWinCondition — the same two criteria the team engine has always offered — so
+        // solo series and team ties speak one language. Tournament-wide on purpose: letting rounds
+        // disagree would make a league's goal difference incoherent.
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
+        // Games in the replay series when a knockout series finishes level. Null = replay the same
+        // format as the match itself (a drawn Bo3 is settled by another Bo3).
+        public int? TiebreakBestOf { get; set; }
+
+        // Best-of for the knockout phase of a two-phase tournament (groups or Swiss, then a
+        // bracket). Null = the knockout is played under the same BestOf as the phase before it,
+        // which is what every tournament created before this option did. Meaningless — and ignored
+        // — for formats that are a single phase, where BestOf already describes every match.
+        public int? KnockoutBestOf { get; set; }
 
         public bool IsTeamTournament { get; set; }
 

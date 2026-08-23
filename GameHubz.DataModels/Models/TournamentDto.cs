@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
 {
@@ -32,6 +32,21 @@ namespace GameHubz.DataModels.Models
         public PrizeCurrency PrizeCurrency { get; set; }
 
         public TeamWinCondition TeamWinCondition { get; set; }
+
+        /// <summary>Games a single match is played over. 1 = one game decides it.</summary>
+        public int BestOf { get; set; } = 1;
+
+        /// <summary>How a multi-game series is settled: games won, or total score across the games.</summary>
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
+        /// <summary>Games in the tiebreak replay of a level knockout series. Null = same format as the match.</summary>
+        public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Games a knockout match is played over when a bracket follows a group stage or Swiss.
+        /// Null = the knockout is played under the same <see cref="BestOf"/> as the phase before it.
+        /// </summary>
+        public int? KnockoutBestOf { get; set; }
 
         public bool HasThirdPlaceMatch { get; set; }
 

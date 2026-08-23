@@ -10,6 +10,13 @@ namespace GameHubz.DataModels.Models
         public Guid? HomeTeamParticipantId { get; set; }
         public Guid? AwayTeamParticipantId { get; set; }
         public TeamWinCondition WinCondition { get; set; }
+
+        /// <summary>
+        /// How each individual sub-match series is settled — separate from <see cref="WinCondition"/>,
+        /// which settles the tie itself over those sub-matches.
+        /// </summary>
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
         public TeamMatchTeamInfoDto? HomeTeam { get; set; }
         public TeamMatchTeamInfoDto? AwayTeam { get; set; }
         public List<TeamSubMatchDto> SubMatches { get; set; } = new();
@@ -42,6 +49,16 @@ namespace GameHubz.DataModels.Models
         public Guid? ProposedByUserId { get; set; }
         public bool AdminHelpRequested { get; set; }
         public Guid? AdminHelpRequestedByUserId { get; set; }
+
+        /// <summary>Series format for this individual game, resolved against the tournament default.</summary>
+        public int BestOf { get; set; } = 1;
+
+        public int? TiebreakBestOf { get; set; }
+
+        /// <summary>Games played in this individual match, main series first, then tiebreaks.</summary>
+        public List<SeriesGame>? Games { get; set; }
+
+        public List<SeriesGame>? ProposedGames { get; set; }
     }
 
     public class TeamAggregateScoreDto

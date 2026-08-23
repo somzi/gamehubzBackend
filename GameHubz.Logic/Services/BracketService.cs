@@ -175,7 +175,13 @@ namespace GameHubz.Logic.Services
                 // instead of 500-ing the whole structure endpoint.
                 HubOwnerId = tournament.Hub?.UserId ?? Guid.Empty,
                 QualifiersPerGroup = tournament.QualifiersPerGroup,
-                RequireResultApproval = tournament.RequireResultApproval
+                RequireResultApproval = tournament.RequireResultApproval,
+                BestOf = SeriesEvaluator.Normalize(tournament.BestOf),
+                SeriesWinCondition = tournament.SeriesWinCondition,
+                TiebreakBestOf = tournament.TiebreakBestOf,
+                KnockoutBestOf = SeriesEvaluator.PlaysKnockoutAfterAnotherPhase(tournament.Format)
+                    ? tournament.KnockoutBestOf
+                    : null
             };
 
             foreach (var stageEntity in (tournament.TournamentStages ?? []).OrderBy(s => s.Order))
@@ -211,9 +217,39 @@ namespace GameHubz.Logic.Services
                 response.Stages.Add(stageDto);
             }
 
+            // Cards are mapped without tournament context, so they carry only their own override.
+            // Resolve every one against the tournament default here, in one pass, so the client
+            // never has to coalesce — and so the resolved format is what gets cached.
+            ResolveSeriesFormat(response, tournament);
+
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
 
             return response;
+        }
+
+        /// <summary>
+        /// Fills each card's effective series format. Mapped cards leave <c>BestOf</c> at 0 to mean
+        /// "no override — inherit"; a real Best-of is always ≥ 1, so 0 is unambiguous.
+        /// </summary>
+        /// <remarks>
+        /// Resolved per stage, not per tournament: a two-phase tournament can run its knockout over
+        /// a different Best-of than the group stage or Swiss rounds that fed it.
+        /// </remarks>
+        private static void ResolveSeriesFormat(TournamentStructureDto response, TournamentEntity tournament)
+        {
+            foreach (var stage in response.Stages)
+            {
+                var stageDefault = SeriesEvaluator.DefaultBestOfFor(
+                    tournament.Format, stage.Type, tournament.BestOf, tournament.KnockoutBestOf);
+
+                foreach (var match in (stage.Rounds ?? Enumerable.Empty<BracketRoundDto>()).SelectMany(r => r.Matches)
+                    .Concat((stage.Groups ?? Enumerable.Empty<GroupDto>()).SelectMany(g => g.Matches)))
+                {
+                    if (match.BestOf <= 0) match.BestOf = stageDefault;
+                    match.TiebreakBestOf ??= response.TiebreakBestOf;
+                    match.SeriesWinCondition = response.SeriesWinCondition;
+                }
+            }
         }
 
         #region 1. Tournament Generation Entry Points
@@ -2375,7 +2411,30 @@ namespace GameHubz.Logic.Services
 
         #region 3. Result Processing & Updates
 
-        public async Task UpdateMatchResult(MatchResultDto request)
+        /// <summary>
+        /// v1 result path: one score line for one game. Unchanged for every tournament that runs at
+        /// the default Best-of 1, which is all of them until an organizer opts into a series.
+        /// A series match is refused here rather than half-reported — see the guard in the core.
+        /// </summary>
+        public Task UpdateMatchResult(MatchResultDto request)
+            => UpdateMatchResultCore(request, submittedGames: null);
+
+        /// <summary>
+        /// v2 result path: the whole series, game by game. The headline score, the goal totals and
+        /// the winner are all re-derived here from <paramref name="request"/>.Games — the client's
+        /// local clinch calculation is only there to keep the entry form responsive, never trusted.
+        /// </summary>
+        public Task UpdateMatchSeriesResult(MatchSeriesResultDto request)
+            => UpdateMatchResultCore(
+                new MatchResultDto
+                {
+                    MatchId = request.MatchId,
+                    TournamentId = request.TournamentId,
+                    Cascade = request.Cascade
+                },
+                request.Games ?? new List<SeriesGame>());
+
+        private async Task UpdateMatchResultCore(MatchResultDto request, List<SeriesGame>? submittedGames)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId);
 
@@ -2411,6 +2470,11 @@ namespace GameHubz.Logic.Services
                 ?? throw new BusinessRuleException("Tournament not found");
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
+            // Resolve the series format in force for this match and read the submission through it.
+            // Everything downstream works off `series` instead of the raw request scores, so the v1
+            // and v2 paths converge here and only differ in what they were allowed to send.
+            var series = ResolveSubmittedSeries(match, approvalCtx, request, submittedGames);
+
             // When the tournament requires result approval and the caller is a participant
             // (not a tournament manager — platform admin, hub owner, or hub admin),
             // persist a proposal instead of completing the match.
@@ -2424,7 +2488,7 @@ namespace GameHubz.Logic.Services
                 if (match.Status == MatchStatus.Completed)
                     throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to amend it.");
 
-                await SaveProposal(match, request.HomeScore, request.AwayScore, currentUser);
+                await SaveProposal(match, series, currentUser);
                 return;
             }
 
@@ -2437,9 +2501,9 @@ namespace GameHubz.Logic.Services
                 // wrong score" fix; a cascade here would needlessly wipe already-played downstream results.
                 if (!match.TeamMatchId.HasValue
                     && IsElimination(match.TournamentStage?.Type)
-                    && WinnerSideUnchanged(match, request.HomeScore, request.AwayScore))
+                    && WinnerSideUnchanged(match, series.HomeScore, series.AwayScore))
                 {
-                    await UpdateScoreInPlaceAsync(match, request.HomeScore, request.AwayScore);
+                    await UpdateScoreInPlaceAsync(match, series);
                     return;
                 }
 
@@ -2485,7 +2549,196 @@ namespace GameHubz.Logic.Services
             // team match the void already closed, or re-finalizing silently fails the Processing claim.
             await ReopenVoidedTeamParentForRereportAsync(match, nextMatch, loserBracketMatch);
 
-            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, request.HomeScore, request.AwayScore, request.TournamentId);
+            // A solo knockout series that finished level is reported but undecided: park it in
+            // TieBreakRequired instead of completing it, and wait for the tiebreak series to be
+            // appended. Nothing advances, so there is nothing downstream to keep consistent.
+            if (IsPendingSoloTieBreak(match, series))
+            {
+                await SaveSoloTieBreakPendingAsync(match, series);
+                return;
+            }
+
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, series, request.TournamentId);
+        }
+
+        /// <summary>
+        /// True when a level series must wait for a tiebreak rather than stand as a draw: solo
+        /// knockout only. League / group / Swiss keep a level series as a genuine draw, and a level
+        /// team sub-match is simply worth no win to either side — the tie is settled one level up by
+        /// <see cref="TeamMatchStatus.TieBreakRequired"/>.
+        /// </summary>
+        private bool IsPendingSoloTieBreak(MatchEntity match, SubmittedSeries series)
+            => series.AllowsTieBreak
+            && series.Outcome.IsLevel
+            && !match.TeamMatchId.HasValue
+            && IsElimination(match.TournamentStage?.Type);
+
+        /// <summary>
+        /// A reported submission, read through the series format that applies to the match: the games
+        /// themselves, the derived outcome, and the format to freeze onto the match.
+        /// </summary>
+        private sealed class SubmittedSeries
+        {
+            public required List<SeriesGame> Games { get; init; }
+            public required SeriesEvaluator.SeriesOutcome Outcome { get; init; }
+
+            /// <summary>Effective Best-of, resolved from the match override or the tournament default.</summary>
+            public required int BestOf { get; init; }
+
+            public required int? TiebreakBestOf { get; init; }
+
+            /// <summary>
+            /// False for legacy single-score submissions. v1 clients cannot render
+            /// <see cref="MatchStatus.TieBreakRequired"/>, so a level knockout result from them keeps
+            /// the original "draws not allowed" refusal instead of parking the match in a state they
+            /// would show as blank.
+            /// </summary>
+            public required bool AllowsTieBreak { get; init; }
+
+            public int HomeScore => Outcome.HomeHeadline;
+            public int AwayScore => Outcome.AwayHeadline;
+        }
+
+        /// <summary>
+        /// Reads a submission through the match's effective series format. The match override wins
+        /// over the tournament default, which is what makes a round-level (or single-match) Best-of
+        /// possible — and what keeps an already-played match on the format it was played under.
+        /// </summary>
+        private static SubmittedSeries ResolveSubmittedSeries(
+            MatchEntity match,
+            TournamentApprovalContext approvalCtx,
+            MatchResultDto request,
+            List<SeriesGame>? submittedGames)
+        {
+            var condition = approvalCtx.SeriesWinCondition;
+            // The match's own override wins; without one it inherits its PHASE default, so the
+            // knockout of a groups/Swiss tournament can be played over a different length than the
+            // phase that fed it.
+            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
+                approvalCtx.Format, match.TournamentStage?.Type, approvalCtx.BestOf, approvalCtx.KnockoutBestOf));
+            var tiebreakBestOf = match.TiebreakBestOf ?? approvalCtx.TiebreakBestOf;
+
+            if (submittedGames == null)
+            {
+                // Legacy single-score submission. It cannot describe a multi-game series, so rather
+                // than silently record a Bo3 as one game, refuse and tell the client to update.
+                if (bestOf > 1)
+                    throw new BusinessRuleException("This match is played as a best-of series. Update the app to report it game by game.");
+
+                var single = new List<SeriesGame>
+                {
+                    new() { HomeScore = request.HomeScore, AwayScore = request.AwayScore, SeriesNumber = 1 }
+                };
+
+                return new SubmittedSeries
+                {
+                    Games = single,
+                    Outcome = SeriesEvaluator.Evaluate(single, condition, 1, null),
+                    BestOf = 1,
+                    TiebreakBestOf = tiebreakBestOf,
+                    AllowsTieBreak = false,
+                };
+            }
+
+            return new SubmittedSeries
+            {
+                // Copied, never aliased: the caller's list is request-bound and the entity keeps this one.
+                Games = submittedGames
+                    .Select(g => new SeriesGame { HomeScore = g.HomeScore, AwayScore = g.AwayScore, SeriesNumber = g.SeriesNumber })
+                    .ToList(),
+                Outcome = SeriesEvaluator.ValidateAndEvaluate(submittedGames, condition, bestOf, tiebreakBestOf),
+                BestOf = bestOf,
+                TiebreakBestOf = tiebreakBestOf,
+                AllowsTieBreak = true,
+            };
+        }
+
+        /// <summary>
+        /// Writes a resolved series onto the match: the games, the headline score the whole app
+        /// already reads, and the real goal totals standings are built from.
+        /// </summary>
+        /// <remarks>
+        /// The inherited format is frozen onto the match here. Once a match has a recorded game its
+        /// Best-of can no longer move — editing the tournament (or round) default later re-formats
+        /// only matches that have not been played, never one already in progress.
+        /// </remarks>
+        private static void ApplySeriesToMatch(MatchEntity match, SubmittedSeries series)
+        {
+            match.Games = series.Games;
+            match.HomeUserScore = series.HomeScore;
+            match.AwayUserScore = series.AwayScore;
+            match.HomeGoalsTotal = series.Outcome.HomeGoals;
+            match.AwayGoalsTotal = series.Outcome.AwayGoals;
+
+            match.BestOf ??= series.BestOf;
+            match.TiebreakBestOf ??= series.TiebreakBestOf;
+        }
+
+        /// <summary>
+        /// Rebuilds the series a pending proposal carries. Proposals saved before the series feature
+        /// (and any Bo1 proposal from a v1 client) hold only a score line, so they read back as the
+        /// one game they describe.
+        /// </summary>
+        private static SubmittedSeries ResolveProposedSeries(MatchEntity match, TournamentApprovalContext approvalCtx)
+        {
+            var proposedGames = match.ProposedGames;
+
+            if (proposedGames.Count > 0)
+                return ResolveSubmittedSeries(match, approvalCtx, new MatchResultDto(), proposedGames);
+
+            return ResolveSubmittedSeries(
+                match,
+                approvalCtx,
+                new MatchResultDto
+                {
+                    HomeScore = match.ProposedHomeScore!.Value,
+                    AwayScore = match.ProposedAwayScore!.Value
+                },
+                submittedGames: null);
+        }
+
+        private static void ClearProposal(MatchEntity match)
+        {
+            match.ProposedHomeScore = null;
+            match.ProposedAwayScore = null;
+            match.ProposedGamesJson = null;
+            match.ProposedByUserId = null;
+        }
+
+        /// <summary>
+        /// Wipes everything a reported result left on the match — headline score, goal totals, the
+        /// played games and the winner — plus any pending proposal. Clearing the games also lifts the
+        /// format lock, so the round editor can re-format a reopened match before it is replayed; the
+        /// frozen BestOf itself is kept as the default it will be replayed under.
+        /// The caller sets the status it wants the match reopened (or closed) in.
+        /// </summary>
+        private static void ClearSeriesResult(MatchEntity match)
+        {
+            match.HomeUserScore = null;
+            match.AwayUserScore = null;
+            match.HomeGoalsTotal = null;
+            match.AwayGoalsTotal = null;
+            match.GamesJson = null;
+            match.WinnerParticipantId = null;
+            ClearProposal(match);
+        }
+
+        /// <summary>
+        /// Records a level knockout series without deciding the match: the games stand, the winner
+        /// stays open, and the match waits in <see cref="MatchStatus.TieBreakRequired"/> until the
+        /// tiebreak series is appended and the whole list is re-reported.
+        /// </summary>
+        private async Task SaveSoloTieBreakPendingAsync(MatchEntity match, SubmittedSeries series)
+        {
+            ApplySeriesToMatch(match, series);
+            match.WinnerParticipantId = null;
+            match.Status = MatchStatus.TieBreakRequired;
+            match.ScheduledStartTime ??= DateTime.UtcNow;
+            ClearProposal(match);
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+            await InvalidateMatchCachesAsync(match);
         }
 
         // A real result landing on a NoShow (double-walkover) team game: if the closed game already
@@ -2526,8 +2779,11 @@ namespace GameHubz.Logic.Services
 
             // NoShow is deletable too — that's the undo for a mistakenly applied group/league/Swiss
             // double walkover (the core reopens the match to Scheduled; standings are unaffected
-            // since a NoShow never contributed to them).
-            if (match.Status != MatchStatus.Completed && match.Status != MatchStatus.NoShow)
+            // since a NoShow never contributed to them). TieBreakRequired likewise: the series was
+            // reported but decided nothing, so deleting it just discards the games played so far.
+            if (match.Status != MatchStatus.Completed
+                && match.Status != MatchStatus.NoShow
+                && match.Status != MatchStatus.TieBreakRequired)
                 throw new BusinessRuleException("This match has no result to delete.");
 
             // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
@@ -2630,12 +2886,8 @@ namespace GameHubz.Logic.Services
             //    team-match detail screen shows them as "awaiting result" again (and re-aggregates
             //    the parent team match on the next report).
             match.Status = match.TeamMatchId.HasValue ? MatchStatus.Pending : MatchStatus.Scheduled;
-            match.HomeUserScore = null;
-            match.AwayUserScore = null;
-            match.WinnerParticipantId = null;
-            match.ProposedHomeScore = null;
-            match.ProposedAwayScore = null;
-            match.ProposedByUserId = null;
+            ClearSeriesResult(match);
+            await ApplyRoundFormatToReopenedMatchAsync(match);
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
 
             if (reSyncSoloStats)
@@ -2676,6 +2928,48 @@ namespace GameHubz.Logic.Services
             }
 
             await InvalidateMatchCachesAsync(match);
+        }
+
+        /// <summary>
+        /// Puts a reopened match back on the format its round is played under now.
+        /// </summary>
+        /// <remarks>
+        /// A match freezes its Best-of the moment a result lands (see ApplySeriesToMatch), and the
+        /// round editor deliberately skips matches that already have games. Between those two rules
+        /// a fixture played as a Bo3 would be replayed as a Bo3 forever, even after the organizer
+        /// moved the round to Bo5 — nothing else ever revisits it. Deleting the result is exactly
+        /// the moment that lock should lift, so the match rejoins its round.
+        ///
+        /// A round stores nothing of its own (it is just matches sharing a RoundNumber), so the
+        /// live format is read off the siblings that are still unreported — the same set
+        /// SetRoundBestOf writes to. With no open sibling to read there is nothing better than the
+        /// frozen value, and it stays.
+        /// </remarks>
+        private async Task ApplyRoundFormatToReopenedMatchAsync(MatchEntity match)
+        {
+            if (match.RoundNumber == null) return;
+
+            // Stage-scoped where possible: winners and losers rounds share RoundNumber, and team
+            // sub-matches inherit their parent's stage, so this is the same scoping the round
+            // editor uses.
+            var siblings = match.TournamentStageId.HasValue
+                ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(match.TournamentStageId.Value, match.RoundNumber.Value)
+                : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(match.TournamentId, match.RoundNumber.Value);
+
+            var open = siblings
+                .Where(m => m.Id != match.Id && string.IsNullOrEmpty(m.GamesJson) && m.ProposedByUserId == null)
+                .ToList();
+            if (open.Count == 0) return;
+
+            // Open siblings are uniform in practice (every write covers the whole round); the
+            // grouping only decides a round left mixed by older data.
+            var format = open
+                .GroupBy(m => new { m.BestOf, m.TiebreakBestOf })
+                .OrderByDescending(g => g.Count())
+                .First().Key;
+
+            match.BestOf = format.BestOf;
+            match.TiebreakBestOf = format.TiebreakBestOf;
         }
 
         // Drop the caches a result change touches (mirrors FinalizeMatchResult): per-player stats for
@@ -2789,14 +3083,11 @@ namespace GameHubz.Logic.Services
 
         // Applies a same-winner score correction without touching the bracket: only the score line and
         // any stale proposal are updated; the winner (and everything that advanced from it) is left as-is.
-        private async Task UpdateScoreInPlaceAsync(MatchEntity match, int homeScore, int awayScore)
+        private async Task UpdateScoreInPlaceAsync(MatchEntity match, SubmittedSeries series)
         {
-            match.HomeUserScore = homeScore;
-            match.AwayUserScore = awayScore;
+            ApplySeriesToMatch(match, series);
             match.ScheduledStartTime ??= DateTime.UtcNow;
-            match.ProposedHomeScore = null;
-            match.ProposedAwayScore = null;
-            match.ProposedByUserId = null;
+            ClearProposal(match);
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
             await InvalidateMatchCachesAsync(match);
@@ -2956,15 +3247,28 @@ namespace GameHubz.Logic.Services
             if (match.NextMatchLoserBracketId.HasValue)
                 loserBracketMatch = match.NextMatchLoserBracket ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
 
-            int homeScore = match.ProposedHomeScore!.Value;
-            int awayScore = match.ProposedAwayScore!.Value;
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new BusinessRuleException("Tournament not found");
+
+            var series = ResolveProposedSeries(match, approvalCtx);
+            int homeScore = series.HomeScore;
+            int awayScore = series.AwayScore;
             var proposerId = match.ProposedByUserId!.Value;
 
             // Approving a proposal made over a no-show (double-walkover) team game must reopen a
             // parent team match the void already closed — mirrors UpdateMatchResult.
             await ReopenVoidedTeamParentForRereportAsync(match, nextMatch, loserBracketMatch);
 
-            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, homeScore, awayScore, match.TournamentId);
+            // A confirmed but level knockout series is still undecided — park it for the tiebreak
+            // exactly as the direct-report path does, rather than completing it without a winner.
+            if (IsPendingSoloTieBreak(match, series))
+            {
+                await SaveSoloTieBreakPendingAsync(match, series);
+                await BumpMatchBadgesAsync(match);
+                return;
+            }
+
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, series, match.TournamentId);
 
             // Discord-only announcement of the confirmed result (participants already have badges/pushes).
             await this.matchNotifier.MatchApproved(match, homeScore, awayScore);
@@ -2998,9 +3302,7 @@ namespace GameHubz.Logic.Services
                     throw new BusinessRuleException("You can't reject your own proposal — submit a corrected result instead.");
             }
 
-            match.ProposedHomeScore = null;
-            match.ProposedAwayScore = null;
-            match.ProposedByUserId = null;
+            ClearProposal(match);
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
@@ -3087,12 +3389,7 @@ namespace GameHubz.Logic.Services
                     // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
                     // SourceProducesWinner) — both players are out, nothing advances from here.
                     match.Status = MatchStatus.Completed;
-                    match.WinnerParticipantId = null;
-                    match.HomeUserScore = null;
-                    match.AwayUserScore = null;
-                    match.ProposedHomeScore = null;
-                    match.ProposedAwayScore = null;
-                    match.ProposedByUserId = null;
+                    ClearSeriesResult(match);
                     match.ScheduledStartTime ??= DateTime.UtcNow;
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
                     await this.SaveAsync();
@@ -3144,12 +3441,7 @@ namespace GameHubz.Logic.Services
             try
             {
                 match.Status = MatchStatus.NoShow;
-                match.WinnerParticipantId = null;
-                match.HomeUserScore = null;
-                match.AwayUserScore = null;
-                match.ProposedHomeScore = null;
-                match.ProposedAwayScore = null;
-                match.ProposedByUserId = null;
+                ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
                 await this.SaveAsync();
@@ -3211,12 +3503,7 @@ namespace GameHubz.Logic.Services
             try
             {
                 match.Status = MatchStatus.NoShow;
-                match.WinnerParticipantId = null;
-                match.HomeUserScore = null;
-                match.AwayUserScore = null;
-                match.ProposedHomeScore = null;
-                match.ProposedAwayScore = null;
-                match.ProposedByUserId = null;
+                ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
                 await this.SaveAsync();
@@ -3420,16 +3707,17 @@ namespace GameHubz.Logic.Services
             MatchEntity match,
             MatchEntity? nextMatch,
             MatchEntity? loserBracketMatch,
-            int homeScore,
-            int awayScore,
+            SubmittedSeries series,
             Guid tournamentId)
         {
             // Captured before the proposal fields are cleared below: a consumed proposal was part
             // of the tournament managers' pending-approvals badge, so they need a push at the end.
             bool hadProposal = match.ProposedByUserId != null;
 
-            match.HomeUserScore = homeScore;
-            match.AwayUserScore = awayScore;
+            int homeScore = series.HomeScore;
+            int awayScore = series.AwayScore;
+
+            ApplySeriesToMatch(match, series);
             match.Status = MatchStatus.Completed;
 
             // Result entered straight through the bracket without ever scheduling — stamp the
@@ -3437,9 +3725,7 @@ namespace GameHubz.Logic.Services
             match.ScheduledStartTime ??= DateTime.UtcNow;
 
             // Clear any proposal — the result is now official.
-            match.ProposedHomeScore = null;
-            match.ProposedAwayScore = null;
-            match.ProposedByUserId = null;
+            ClearProposal(match);
 
             // 3. Determine Winner
             Guid? winnerParticipientId = null;
@@ -3586,10 +3872,13 @@ namespace GameHubz.Logic.Services
                 await this.badgeService.PushToTournamentManagersAsync(tournamentId);
         }
 
-        private async Task SaveProposal(MatchEntity match, int homeScore, int awayScore, TokenUserInfo currentUser)
+        private async Task SaveProposal(MatchEntity match, SubmittedSeries series, TokenUserInfo currentUser)
         {
-            match.ProposedHomeScore = homeScore;
-            match.ProposedAwayScore = awayScore;
+            match.ProposedHomeScore = series.HomeScore;
+            match.ProposedAwayScore = series.AwayScore;
+            // The whole series travels with the proposal, so approving replays exactly what the
+            // participant reported instead of re-deriving a headline score into a single game.
+            match.ProposedGames = series.Games;
             match.ProposedByUserId = currentUser.UserId;
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
@@ -3962,7 +4251,7 @@ namespace GameHubz.Logic.Services
             }
 
             foreach (var m in otherMatchStats)
-                ApplyMatchStats(byId, m.HomeParticipantId, m.AwayParticipantId, m.HomeScore, m.AwayScore, m.WinnerParticipantId);
+                ApplyMatchStats(byId, m.HomeParticipantId, m.AwayParticipantId, m.HomeGoals, m.AwayGoals, m.WinnerParticipantId);
 
             // Fold in the current match using its in-memory state — fresher than the DB.
             if (match.Status == MatchStatus.Completed
@@ -3974,8 +4263,11 @@ namespace GameHubz.Logic.Services
                     byId,
                     match.HomeParticipantId.Value,
                     match.AwayParticipantId.Value,
-                    match.HomeUserScore ?? 0,
-                    match.AwayUserScore ?? 0,
+                    // Goal difference counts goals, not the headline: a Bo3 won 2–1 under MatchWins
+                    // posts the goals from all three games, not "2". Null on pre-series matches,
+                    // where the headline is the score.
+                    match.HomeGoalsTotal ?? match.HomeUserScore ?? 0,
+                    match.AwayGoalsTotal ?? match.AwayUserScore ?? 0,
                     match.WinnerParticipantId);
             }
 
@@ -3983,12 +4275,16 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
         }
 
+        // homeGoals/awayGoals are REAL goals across every game of the series, never the headline
+        // score — under MatchWins the headline is a games-won tally, which would make goal
+        // difference meaningless. Win/draw/loss and points come from winnerId, which the series
+        // evaluator already derived under whichever criterion the tournament uses.
         private static void ApplyMatchStats(
             Dictionary<Guid, TournamentParticipantEntity> byId,
             Guid homeId,
             Guid? awayId,
-            int homeScore,
-            int awayScore,
+            int homeGoals,
+            int awayGoals,
             Guid? winnerId)
         {
             if (!byId.TryGetValue(homeId, out var home)) return;
@@ -4003,8 +4299,8 @@ namespace GameHubz.Logic.Services
 
             if (!byId.TryGetValue(awayId.Value, out var away)) return;
 
-            home.GoalsFor += homeScore; home.GoalsAgainst += awayScore;
-            away.GoalsFor += awayScore; away.GoalsAgainst += homeScore;
+            home.GoalsFor += homeGoals; home.GoalsAgainst += awayGoals;
+            away.GoalsFor += awayGoals; away.GoalsAgainst += homeGoals;
 
             if (winnerId == home.Id) { home.Wins++; home.Points += 3; away.Losses++; }
             else if (winnerId == away.Id) { away.Wins++; away.Points += 3; home.Losses++; }
@@ -4028,8 +4324,10 @@ namespace GameHubz.Logic.Services
                 int homeTotal = 0, awayTotal = 0;
                 foreach (var sm in teamMatch.SubMatches)
                 {
-                    homeTotal += sm.HomeUserScore ?? 0;
-                    awayTotal += sm.AwayUserScore ?? 0;
+                    // Mirrors the goals ProcessTeamMatchResult credited — subtracting the headline
+                    // instead would leave a Bo-series tie's GF/GA drifting on every revert.
+                    homeTotal += sm.HomeGoalsTotal ?? sm.HomeUserScore ?? 0;
+                    awayTotal += sm.AwayGoalsTotal ?? sm.AwayUserScore ?? 0;
                 }
 
                 var winnerId = teamMatch.WinnerTeamParticipantId;
@@ -4976,8 +5274,11 @@ namespace GameHubz.Logic.Services
                 else if (sm.WinnerParticipantId == sm.AwayParticipantId)
                     awayWins++;
 
-                homeTotalScore += sm.HomeUserScore ?? 0;
-                awayTotalScore += sm.AwayUserScore ?? 0;
+                // Real goals, not the headline: a Bo3 sub-match won 2–1 under MatchWins carries a
+                // headline of 2, which would turn the tie's aggregate score into a second win tally.
+                // Null on pre-series sub-matches, where the headline IS the score.
+                homeTotalScore += sm.HomeGoalsTotal ?? sm.HomeUserScore ?? 0;
+                awayTotalScore += sm.AwayGoalsTotal ?? sm.AwayUserScore ?? 0;
             }
 
             // Every game voided as a double walkover → the whole tie is void: closed with no winner,
@@ -6214,6 +6515,7 @@ namespace GameHubz.Logic.Services
             int round = tm.RoundNumber ?? 1;
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
             var progress = ComputeTeamProgress(tm);
+            var teamFormat = SubMatchFormat(tm);
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
@@ -6233,6 +6535,10 @@ namespace GameHubz.Logic.Services
                 IsUpperBracket = tm.IsUpperBracket,
                 NextTeamMatchId = tm.NextTeamMatchId,
                 NextTeamMatchLoserBracketId = tm.NextTeamMatchLoserBracketId,
+                // A team card is a tie, not a series — this is the format each of its individual
+                // sub-matches is played over, taken from the lineup (they all share one format).
+                BestOf = teamFormat.BestOf,
+                TiebreakBestOf = teamFormat.TiebreakBestOf,
                 Evidences = [],
                 Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
                 {
@@ -6278,6 +6584,24 @@ namespace GameHubz.Logic.Services
             return (h, a);
         }
 
+        // Best-of override shared by a tie's sub-matches, or 0 when they inherit the tournament
+        // default (ResolveSeriesFormat fills that in). Both halves come from the same sub-match:
+        // reading Best-of from one row and the tiebreak from another can describe a format that
+        // exists nowhere.
+        //
+        // A played sub-match freezes its format, and the round editor skips it, so a half-played
+        // tie can hold two different ones at the same time. The card reports the format of the
+        // games still to be played — the one that answers "what am I about to play" — and falls
+        // back to the frozen value once nothing is left open.
+        private static (int BestOf, int? TiebreakBestOf) SubMatchFormat(TeamMatchEntity tm)
+        {
+            var subs = tm.SubMatches;
+            if (subs == null || subs.Count == 0) return (0, null);
+
+            var source = subs.FirstOrDefault(s => string.IsNullOrEmpty(s.GamesJson)) ?? subs[0];
+            return (source.BestOf ?? 0, source.TiebreakBestOf);
+        }
+
         // Running progress of a team fixture, surfaced while it is still being played so the
         // bracket card can show "1 : 0, 1/2 done" instead of a dash until the very end.
         // Decided = played to a result OR closed as a double walkover (NoShow) — a voided game is
@@ -6318,6 +6642,7 @@ namespace GameHubz.Logic.Services
 
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
             var progress = ComputeTeamProgress(tm);
+            var teamFormat = SubMatchFormat(tm);
 
             return new MatchStructureDto
             {
@@ -6327,6 +6652,8 @@ namespace GameHubz.Logic.Services
                 Stage = MatchStage.GroupStage,
                 Status = MapTeamMatchStatus(tm.Status),
                 TeamMatchId = tm.Id,
+                BestOf = teamFormat.BestOf,
+                TiebreakBestOf = teamFormat.TiebreakBestOf,
                 TeamGamesTotal = progress.Total,
                 TeamGamesDecided = progress.Decided,
                 TeamLiveHomeScore = progress.HomeWins,
@@ -6531,6 +6858,11 @@ namespace GameHubz.Logic.Services
                 ProposedHomeScore = m.ProposedHomeScore,
                 ProposedAwayScore = m.ProposedAwayScore,
                 ProposedByUserId = m.ProposedByUserId,
+                ProposedGames = m.ProposedGamesJson == null ? null : m.ProposedGames,
+                // 0 = "no override" — ResolveSeriesFormat swaps in the tournament default.
+                BestOf = m.BestOf ?? 0,
+                TiebreakBestOf = m.TiebreakBestOf,
+                Games = m.GamesJson == null ? null : m.Games,
                 Home = m.HomeParticipant == null ? null : new MatchParticipantDto
                 {
                     ParticipantId = m.HomeParticipant.Id!.Value,

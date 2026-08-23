@@ -1,4 +1,4 @@
-using GameHubz.Data.Base;
+﻿using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
@@ -175,8 +175,30 @@ namespace GameHubz.Data.Repository
                         ProposedAwayScore = sm.ProposedAwayScore,
                         ProposedByUserId = sm.ProposedByUserId,
                         AdminHelpRequested = sm.AdminHelpRequested,
-                        AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId
-                    }).ToList()
+                        AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId,
+                        // Each individual game of the tie is its own series. Resolved here (match
+                        // override, else the tournament default) so the client can render the
+                        // per-game entry form without a second lookup.
+                        BestOf = sm.BestOf ?? (
+                            tm.Tournament!.KnockoutBestOf != null
+                            && (tm.Tournament.Format == TournamentFormat.GroupsThenSingleElimination
+                                || tm.Tournament.Format == TournamentFormat.GroupsThenDoubleElimination
+                                || tm.Tournament.Format == TournamentFormat.GroupStageWithKnockout
+                                || tm.Tournament.Format == TournamentFormat.Swiss)
+                            && tm.TournamentStage != null
+                            && (tm.TournamentStage.Type == StageType.SingleEliminationBracket
+                                || tm.TournamentStage.Type == StageType.DoubleEliminationWinnersBracket
+                                || tm.TournamentStage.Type == StageType.DoubleEliminationLosersBracket
+                                || tm.TournamentStage.Type == StageType.PlayIn)
+                                ? tm.Tournament.KnockoutBestOf!.Value
+                                : tm.Tournament.BestOf),
+                        TiebreakBestOf = sm.TiebreakBestOf ?? tm.Tournament!.TiebreakBestOf,
+                        GamesJson = sm.GamesJson,
+                        ProposedGamesJson = sm.ProposedGamesJson,
+                        HomeGoalsTotal = sm.HomeGoalsTotal,
+                        AwayGoalsTotal = sm.AwayGoalsTotal
+                    }).ToList(),
+                    SeriesWinCondition = tm.Tournament!.SeriesWinCondition
                 })
                 .FirstOrDefaultAsync();
         }

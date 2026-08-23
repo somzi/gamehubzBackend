@@ -89,7 +89,23 @@ namespace GameHubz.Logic.Services
         {
             var detail = await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
             if (detail == null) throw new BusinessRuleException("Match not found");
+
+            // The projection carries the games as raw JSON (EF can't deserialize mid-query);
+            // turn them into the parsed lists the client actually consumes.
+            detail.Games = DeserializeGames(detail.GamesJson);
+            detail.ProposedGames = DeserializeGames(detail.ProposedGamesJson);
+
             return detail;
+        }
+
+        private static List<SeriesGame>? DeserializeGames(string? json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+
+            // A malformed blob must not take down the whole match screen — the headline score and
+            // everything else on the DTO are still valid without the per-game breakdown.
+            try { return System.Text.Json.JsonSerializer.Deserialize<List<SeriesGame>>(json); }
+            catch { return null; }
         }
 
         /// <summary>
