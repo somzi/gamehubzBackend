@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 using NUnit.Framework;
 
@@ -146,13 +146,14 @@ namespace GameHubz.Logic.Test.Bracket
         // ── Tiebreak series ────────────────────────────────────────────────────
 
         [Test]
-        public void Tiebreak_HeadlineComesFromTheDecidingSeries_GoalsFromAllOfThem()
+        public void Tiebreak_HeadlineCountsEverySeries_SoItMatchesTheGamesListed()
         {
-            // Main series drew 1–1 by wins; the tiebreak replay decides it. The headline follows
-            // the deciding series, while goals keep counting every game ever played.
+            // Main series drew 1–1 by wins; the tiebreak replay decides it 2–0. The headline is the
+            // whole encounter — 3–1 — because that is what someone reading the five games adds up.
+            // Reporting the tiebreak alone would show "2–0", a figure matching nothing on screen.
             var games = new List<SeriesGame>
             {
-                G(1, 0), G(0, 1), G(2, 2),          // main series: 1–1 on wins
+                G(1, 0), G(0, 1), G(2, 2),              // main series: 1–1 on wins
                 G(3, 1, series: 2), G(2, 0, series: 2), // tiebreak: 2–0
             };
 
@@ -161,11 +162,31 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.Multiple(() =>
             {
                 Assert.That(outcome.CurrentSeriesNumber, Is.EqualTo(2));
-                Assert.That(outcome.HomeHeadline, Is.EqualTo(2), "deciding series' win tally");
-                Assert.That(outcome.AwayHeadline, Is.EqualTo(0));
+                Assert.That(outcome.HomeHeadline, Is.EqualTo(3), "1 win in the main series plus 2 in the tiebreak");
+                Assert.That(outcome.AwayHeadline, Is.EqualTo(1));
                 Assert.That(outcome.IsLevel, Is.False);
                 Assert.That(outcome.HomeGoals, Is.EqualTo(8), "1+0+2+3+2 across every series");
                 Assert.That(outcome.AwayGoals, Is.EqualTo(4), "0+1+2+1+0");
+            });
+        }
+
+        [Test]
+        public void Tiebreak_SummingSeriesKeepsTheWinnerTheDecidingSeriesPicked()
+        {
+            // The property that makes the sum safe: every series before the last is level, so it
+            // adds the same amount to both sides. Winner and margin survive untouched.
+            var games = new List<SeriesGame>
+            {
+                G(1, 0), G(0, 1),                       // main series: 1–1 on wins
+                G(0, 1, series: 2), G(0, 2, series: 2), // tiebreak: away takes it 2–0
+            };
+
+            var outcome = Eval(games, TeamWinCondition.MatchWins, bestOf: 2);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(outcome.AwayWon, Is.True);
+                Assert.That(outcome.AwayHeadline - outcome.HomeHeadline, Is.EqualTo(2), "margin is the deciding series' margin");
             });
         }
 
@@ -209,6 +230,47 @@ namespace GameHubz.Logic.Test.Bracket
 
             Assert.Throws<BusinessRuleException>(
                 () => SeriesEvaluator.ValidateAndEvaluate(tooMany, TeamWinCondition.MatchWins, 3, null));
+        }
+
+        [Test]
+        public void Validate_RejectsADeadRubberAfterTheClinch()
+        {
+            // Bo3 won 2-0: there is no third game to play, so one reported here never happened.
+            var withDeadRubber = new List<SeriesGame> { G(1, 0), G(2, 1), G(0, 3) };
+
+            Assert.Throws<BusinessRuleException>(
+                () => SeriesEvaluator.ValidateAndEvaluate(withDeadRubber, TeamWinCondition.MatchWins, 3, null));
+        }
+
+        [Test]
+        public void Validate_AcceptsEveryGameOfAnAggregateSeries()
+        {
+            // The mirror case: aggregate never clinches early, so all four games of a Bo4 stand
+            // however lopsided the first ones were.
+            var outcome = SeriesEvaluator.ValidateAndEvaluate(
+                [G(5, 0), G(4, 0), G(0, 1), G(0, 2)],
+                TeamWinCondition.AggregateScore,
+                matchBestOf: 4,
+                tiebreakBestOf: null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(outcome.HomeHeadline, Is.EqualTo(9));
+                Assert.That(outcome.AwayHeadline, Is.EqualTo(3));
+                Assert.That(outcome.CurrentSeriesOver, Is.True);
+            });
+        }
+
+        [Test]
+        public void Validate_RejectsAnAggregateSeriesShortOfItsFullBestOf()
+        {
+            // Bo4 on aggregate is always four games — a 9-0 lead after two still has two to play.
+            Assert.Throws<BusinessRuleException>(
+                () => SeriesEvaluator.ValidateAndEvaluate(
+                    [G(5, 0), G(4, 0)],
+                    TeamWinCondition.AggregateScore,
+                    matchBestOf: 4,
+                    tiebreakBestOf: null));
         }
 
         [Test]

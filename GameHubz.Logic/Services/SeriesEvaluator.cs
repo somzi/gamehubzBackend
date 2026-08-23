@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Services
 {
@@ -27,7 +27,11 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public sealed class SeriesOutcome
         {
-            /// <summary>Score shown on the card — the deciding (last) series, since that is what settles the match.</summary>
+            /// <summary>
+            /// Score shown on the card: every series added together, so it reconciles with the games
+            /// listed underneath. Equivalent to the deciding series for deciding a winner — the
+            /// series before it are level by construction.
+            /// </summary>
             public int HomeHeadline { get; init; }
 
             public int AwayHeadline { get; init; }
@@ -55,10 +59,10 @@ namespace GameHubz.Logic.Services
             /// <summary>True when a further game may be added to the current series.</summary>
             public bool CanAddGame => !CurrentSeriesOver;
 
-            /// <summary>Home won the deciding series.</summary>
+            /// <summary>Home won the match — the deciding series went their way.</summary>
             public bool HomeWon => CurrentSeriesOver && HomeHeadline > AwayHeadline;
 
-            /// <summary>Away won the deciding series.</summary>
+            /// <summary>Away won the match — the deciding series went their way.</summary>
             public bool AwayWon => CurrentSeriesOver && AwayHeadline > HomeHeadline;
         }
 
@@ -105,10 +109,25 @@ namespace GameHubz.Logic.Services
 
             var (home, away, over) = ScoreSeries(currentGames, condition, bestOf);
 
+            // The headline counts every series, not just the deciding one, so it always matches what
+            // a reader can add up from the games listed. Reporting the tiebreak alone showed "0–2"
+            // for a match whose four games were won 1–3 — a figure that answered to nothing on
+            // screen. Summing is safe for the winner: a tiebreak only exists because the series
+            // before it finished level, so each of those adds the same amount to both sides, leaving
+            // both the winner and the margin exactly as the deciding series set them.
+            int homeHeadline = 0, awayHeadline = 0;
+            foreach (var number in all.Select(g => g.SeriesNumber).Distinct())
+            {
+                var slice = all.Where(g => g.SeriesNumber == number).ToList();
+                var (h, a, _) = ScoreSeries(slice, condition, BestOfForSeries(number, matchBestOf, tiebreakBestOf));
+                homeHeadline += h;
+                awayHeadline += a;
+            }
+
             return new SeriesOutcome
             {
-                HomeHeadline = home,
-                AwayHeadline = away,
+                HomeHeadline = homeHeadline,
+                AwayHeadline = awayHeadline,
                 HomeGoals = homeGoals,
                 AwayGoals = awayGoals,
                 CurrentSeriesNumber = currentSeriesNumber,
@@ -229,6 +248,20 @@ namespace GameHubz.Logic.Services
 
             if (lastSlice.Count > lastBestOf)
                 throw new BusinessRuleException($"This match is a best-of-{lastBestOf} — you reported {lastSlice.Count} games.");
+
+            // A decided series takes no further games: a Bo3 won 2-0 has no third game to play, so
+            // one reported here never happened. The entry form already stops offering the row, this
+            // refuses the same thing off a hand-made request — a dead rubber would otherwise land in
+            // the win tally (2-1 instead of 2-0) and its goals in the standings.
+            // Only the last series needs the check: an earlier one is required to finish level, and
+            // a clinched series never is. Aggregate series never clinch early, so this is a
+            // MatchWins rule in practice.
+            for (int played = 1; played < lastSlice.Count; played++)
+            {
+                var (_, _, decided) = ScoreSeries(lastSlice.Take(played).ToList(), condition, lastBestOf);
+                if (decided)
+                    throw new BusinessRuleException($"This series was already decided after game {played} — remove the games that follow.");
+            }
 
             var outcome = Evaluate(games, condition, matchBestOf, tiebreakBestOf);
 

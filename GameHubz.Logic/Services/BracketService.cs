@@ -2871,6 +2871,7 @@ namespace GameHubz.Logic.Services
             //    the parent team match on the next report).
             match.Status = match.TeamMatchId.HasValue ? MatchStatus.Pending : MatchStatus.Scheduled;
             ClearSeriesResult(match);
+            await ApplyRoundFormatToReopenedMatchAsync(match);
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
 
             if (reSyncSoloStats)
@@ -2911,6 +2912,48 @@ namespace GameHubz.Logic.Services
             }
 
             await InvalidateMatchCachesAsync(match);
+        }
+
+        /// <summary>
+        /// Puts a reopened match back on the format its round is played under now.
+        /// </summary>
+        /// <remarks>
+        /// A match freezes its Best-of the moment a result lands (see ApplySeriesToMatch), and the
+        /// round editor deliberately skips matches that already have games. Between those two rules
+        /// a fixture played as a Bo3 would be replayed as a Bo3 forever, even after the organizer
+        /// moved the round to Bo5 — nothing else ever revisits it. Deleting the result is exactly
+        /// the moment that lock should lift, so the match rejoins its round.
+        ///
+        /// A round stores nothing of its own (it is just matches sharing a RoundNumber), so the
+        /// live format is read off the siblings that are still unreported — the same set
+        /// SetRoundBestOf writes to. With no open sibling to read there is nothing better than the
+        /// frozen value, and it stays.
+        /// </remarks>
+        private async Task ApplyRoundFormatToReopenedMatchAsync(MatchEntity match)
+        {
+            if (match.RoundNumber == null) return;
+
+            // Stage-scoped where possible: winners and losers rounds share RoundNumber, and team
+            // sub-matches inherit their parent's stage, so this is the same scoping the round
+            // editor uses.
+            var siblings = match.TournamentStageId.HasValue
+                ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(match.TournamentStageId.Value, match.RoundNumber.Value)
+                : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(match.TournamentId, match.RoundNumber.Value);
+
+            var open = siblings
+                .Where(m => m.Id != match.Id && string.IsNullOrEmpty(m.GamesJson) && m.ProposedByUserId == null)
+                .ToList();
+            if (open.Count == 0) return;
+
+            // Open siblings are uniform in practice (every write covers the whole round); the
+            // grouping only decides a round left mixed by older data.
+            var format = open
+                .GroupBy(m => new { m.BestOf, m.TiebreakBestOf })
+                .OrderByDescending(g => g.Count())
+                .First().Key;
+
+            match.BestOf = format.BestOf;
+            match.TiebreakBestOf = format.TiebreakBestOf;
         }
 
         // Drop the caches a result change touches (mirrors FinalizeMatchResult): per-player stats for
@@ -6456,6 +6499,7 @@ namespace GameHubz.Logic.Services
             int round = tm.RoundNumber ?? 1;
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
             var progress = ComputeTeamProgress(tm);
+            var teamFormat = SubMatchFormat(tm);
             return new MatchStructureDto
             {
                 Id = tm.Id!.Value,
@@ -6477,8 +6521,8 @@ namespace GameHubz.Logic.Services
                 NextTeamMatchLoserBracketId = tm.NextTeamMatchLoserBracketId,
                 // A team card is a tie, not a series — this is the format each of its individual
                 // sub-matches is played over, taken from the lineup (they all share one format).
-                BestOf = SubMatchBestOfOverride(tm),
-                TiebreakBestOf = tm.SubMatches?.FirstOrDefault()?.TiebreakBestOf,
+                BestOf = teamFormat.BestOf,
+                TiebreakBestOf = teamFormat.TiebreakBestOf,
                 Evidences = [],
                 Home = tm.HomeTeamParticipant == null ? null : new MatchParticipantDto
                 {
@@ -6525,10 +6569,22 @@ namespace GameHubz.Logic.Services
         }
 
         // Best-of override shared by a tie's sub-matches, or 0 when they inherit the tournament
-        // default (ResolveSeriesFormat fills that in). Sub-matches of one tie are always generated
-        // and re-formatted together, so the first one speaks for all of them.
-        private static int SubMatchBestOfOverride(TeamMatchEntity tm)
-            => tm.SubMatches?.FirstOrDefault()?.BestOf ?? 0;
+        // default (ResolveSeriesFormat fills that in). Both halves come from the same sub-match:
+        // reading Best-of from one row and the tiebreak from another can describe a format that
+        // exists nowhere.
+        //
+        // A played sub-match freezes its format, and the round editor skips it, so a half-played
+        // tie can hold two different ones at the same time. The card reports the format of the
+        // games still to be played — the one that answers "what am I about to play" — and falls
+        // back to the frozen value once nothing is left open.
+        private static (int BestOf, int? TiebreakBestOf) SubMatchFormat(TeamMatchEntity tm)
+        {
+            var subs = tm.SubMatches;
+            if (subs == null || subs.Count == 0) return (0, null);
+
+            var source = subs.FirstOrDefault(s => string.IsNullOrEmpty(s.GamesJson)) ?? subs[0];
+            return (source.BestOf ?? 0, source.TiebreakBestOf);
+        }
 
         // Running progress of a team fixture, surfaced while it is still being played so the
         // bracket card can show "1 : 0, 1/2 done" instead of a dash until the very end.
@@ -6570,6 +6626,7 @@ namespace GameHubz.Logic.Services
 
             var (homeScore, awayScore) = ComputeTeamAggregateScore(tm);
             var progress = ComputeTeamProgress(tm);
+            var teamFormat = SubMatchFormat(tm);
 
             return new MatchStructureDto
             {
@@ -6579,8 +6636,8 @@ namespace GameHubz.Logic.Services
                 Stage = MatchStage.GroupStage,
                 Status = MapTeamMatchStatus(tm.Status),
                 TeamMatchId = tm.Id,
-                BestOf = SubMatchBestOfOverride(tm),
-                TiebreakBestOf = anySub?.TiebreakBestOf,
+                BestOf = teamFormat.BestOf,
+                TiebreakBestOf = teamFormat.TiebreakBestOf,
                 TeamGamesTotal = progress.Total,
                 TeamGamesDecided = progress.Decided,
                 TeamLiveHomeScore = progress.HomeWins,

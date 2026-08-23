@@ -1,8 +1,9 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Threading.Tasks;
 
 using NUnit.Framework;
 
+using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.Logic.Test.Bracket
@@ -33,6 +34,51 @@ namespace GameHubz.Logic.Test.Bracket
 
             int totalMatches = stage.Rounds!.Sum(r => r.Matches.Count);
             Assert.That(totalMatches, Is.EqualTo(7), "N-1 matches surfaced in the structure");
+        }
+
+        [Test]
+        public async Task TeamCard_ReportsTheFormatOfTheGamesStillToBePlayed()
+        {
+            var harness = new BracketTestHarness();
+            var tid = await harness.SeedTeamTournamentAsync(
+                TournamentFormat.SingleElimination, teamCount: 4, teamSize: 2, bestOf: 3);
+            await harness.Service.GenerateTeamSingleEliminationBracket(tid);
+
+            var tie = harness.TeamMatches(tid).First(tm => tm.RoundNumber == 1);
+
+            // One game of the tie is played, freezing its Bo3. The organizer then moves the round
+            // to Bo5, which re-formats only the sub-matches that are still open — so the tie now
+            // holds two formats at once, and the card has to report the one still to be played.
+            using (var ctx = harness.ReadContext())
+            {
+                var subs = ctx.Set<MatchEntity>()
+                    .Where(m => m.TeamMatchId == tie.Id)
+                    .OrderBy(m => m.MatchOrder)
+                    .ToList();
+
+                subs[0].BestOf = 3;
+                subs[0].GamesJson = """[{"HomeScore":1,"AwayScore":0,"SeriesNumber":1}]""";
+                foreach (var open in subs.Skip(1))
+                {
+                    open.BestOf = 5;
+                    open.TiebreakBestOf = 1;
+                }
+
+                await ctx.SaveChangesAsync();
+            }
+
+            var structure = await harness.NewService().GetTournamentStructure(tid);
+
+            var card = structure.Stages
+                .Single().Rounds!
+                .Single(r => r.RoundNumber == 1).Matches
+                .Single(m => m.TeamMatchId == tie.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(card.BestOf, Is.EqualTo(5), "the card names the format of the games still to come");
+                Assert.That(card.TiebreakBestOf, Is.EqualTo(1), "and takes the tiebreak from the same sub-match");
+            });
         }
 
         [Test]

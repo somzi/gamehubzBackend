@@ -1,9 +1,10 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
 using NUnit.Framework;
 
+using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Exceptions;
@@ -125,7 +126,9 @@ namespace GameHubz.Logic.Test.Bracket
             {
                 Assert.That(decided.Status, Is.EqualTo(MatchStatus.Completed));
                 Assert.That(decided.WinnerParticipantId, Is.EqualTo(semi.HomeParticipantId));
-                Assert.That(decided.HomeUserScore, Is.EqualTo(2), "headline follows the deciding series");
+                // The drawn main series contributed no wins to either side, so the whole-encounter
+                // headline and the tiebreak's own tally coincide here.
+                Assert.That(decided.HomeUserScore, Is.EqualTo(2), "headline counts every series");
                 Assert.That(decided.AwayUserScore, Is.EqualTo(0));
                 Assert.That(decided.HomeGoalsTotal, Is.EqualTo(8), "goals count every series: 1+2+0+3+2");
             });
@@ -317,6 +320,76 @@ namespace GameHubz.Logic.Test.Bracket
                 Assert.That(reopened.HomeGoalsTotal, Is.Null);
                 Assert.That(reopened.WinnerParticipantId, Is.Null);
             });
+        }
+
+        [Test]
+        public async Task DeletingAResult_PutsTheMatchBackOnTheRoundsCurrentFormat()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.SingleElimination, 4, bestOf: 3);
+            await harness.NewService().GenerateSingleEliminationBracket(tid);
+
+            var semis = harness.Matches(tid).Where(m => m.RoundNumber == 1).OrderBy(m => m.MatchOrder).ToList();
+            var played = semis[0];
+            var stillOpen = semis[1];
+
+            await harness.NewService().UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = played.Id!.Value,
+                TournamentId = tid,
+                Games = [G(2, 0), G(1, 0)],
+            });
+
+            // The organizer then moves the round to Bo5. SetRoundBestOf refuses to re-format a
+            // match that already has games, so this is the state it leaves behind: one match on
+            // the new format, the played one still frozen on the old.
+            using (var ctx = harness.ReadContext())
+            {
+                var open = ctx.Set<MatchEntity>().Single(m => m.Id == stillOpen.Id);
+                open.BestOf = 5;
+                open.TiebreakBestOf = 1;
+                await ctx.SaveChangesAsync();
+            }
+
+            await harness.NewService().RevertMatchResult(played.Id!.Value);
+
+            var reopened = harness.Matches(tid).Single(m => m.Id == played.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reopened.GamesJson, Is.Null);
+                Assert.That(reopened.BestOf, Is.EqualTo(5), "a reopened match rejoins its round's current format");
+                Assert.That(reopened.TiebreakBestOf, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public async Task DeletingAResult_KeepsTheFrozenFormat_WhenTheWholeRoundIsPlayed()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.SingleElimination, 4, bestOf: 3);
+            await harness.NewService().GenerateSingleEliminationBracket(tid);
+
+            var semis = harness.Matches(tid).Where(m => m.RoundNumber == 1).OrderBy(m => m.MatchOrder).ToList();
+
+            foreach (var semi in semis)
+            {
+                await harness.NewService().UpdateMatchSeriesResult(new MatchSeriesResultDto
+                {
+                    MatchId = semi.Id!.Value,
+                    TournamentId = tid,
+                    Games = [G(2, 0), G(1, 0)],
+                });
+            }
+
+            // No open match left to read the round's format off — the frozen value is the best
+            // answer there is, so it must survive the revert rather than being cleared.
+            await harness.NewService().RevertMatchResult(semis[0].Id!.Value);
+
+            var reopened = harness.Matches(tid).Single(m => m.Id == semis[0].Id);
+
+            Assert.That(reopened.GamesJson, Is.Null);
+            Assert.That(reopened.BestOf, Is.EqualTo(3));
         }
 
         [Test]
