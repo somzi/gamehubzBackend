@@ -51,6 +51,37 @@ namespace GameHubz.DataModels.Models
         public TeamWinCondition? TeamWinCondition { get; set; }
 
         /// <summary>
+        /// Games a single match is played over (1 = one game decides it). 1 on every tournament
+        /// created before the series feature. Carried here so the manage / edit screen opens on the
+        /// stored format instead of falling back to Bo1 — and, because that form posts back the
+        /// value it opened with, so an unrelated edit cannot silently reset a Bo3 to Bo1.
+        /// </summary>
+        public int BestOf { get; set; } = 1;
+
+        /// <summary>
+        /// How a multi-game series is settled: games won, or the total score across the games.
+        /// Omitted from JSON when it holds the default so a pre-series tournament's payload only
+        /// gains <see cref="BestOf"/>; an absent field reads as "games won", exactly like 0.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public TeamWinCondition SeriesWinCondition { get; set; }
+
+        /// <summary>
+        /// Games in the replay series when a knockout series finishes level. Null = the tiebreak
+        /// replays the same format as the match itself.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? TiebreakBestOf { get; set; }
+
+        /// <summary>
+        /// Best-of for the knockout phase of a two-phase tournament (groups or Swiss, then a
+        /// bracket). Null = the knockout is played under the same <see cref="BestOf"/> as the phase
+        /// before it.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? KnockoutBestOf { get; set; }
+
+        /// <summary>
         /// Team tournaments: whether a roster may carry bench players beyond <see cref="TeamSize"/>,
         /// with the captain free to trade a starter for a reserve between games. False on every
         /// tournament created before reserves shipped. Omitted from JSON when false (and MaxReserves
