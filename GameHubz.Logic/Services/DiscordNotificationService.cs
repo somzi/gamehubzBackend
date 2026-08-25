@@ -26,7 +26,7 @@ namespace GameHubz.Logic.Services
             this.logger = logger;
         }
 
-        public async Task SendImageAsync(string webhookUrl, byte[] png, string filename)
+        public async Task SendImageAsync(string webhookUrl, byte[] png, string filename, string? content = null)
         {
             if (string.IsNullOrWhiteSpace(webhookUrl))
                 return;
@@ -36,10 +36,13 @@ namespace GameHubz.Logic.Services
                 var client = httpClientFactory.CreateClient("DiscordWebhook");
 
                 using var form = new MultipartFormDataContent();
-                string payload = JsonSerializer.Serialize(new
-                {
-                    attachments = new[] { new { id = 0, filename } }
-                });
+                // content is omitted entirely when absent so the wire format for every existing
+                // caller stays byte-identical to the card-only payload.
+                object payloadObject = string.IsNullOrWhiteSpace(content)
+                    ? new { attachments = new[] { new { id = 0, filename } } }
+                    : new { attachments = new[] { new { id = 0, filename } }, content };
+
+                string payload = JsonSerializer.Serialize(payloadObject);
                 form.Add(new StringContent(payload, Encoding.UTF8, "application/json"), "payload_json");
 
                 var imageContent = new ByteArrayContent(png);

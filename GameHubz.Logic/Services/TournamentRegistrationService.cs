@@ -84,7 +84,13 @@ namespace GameHubz.Logic.Services
                 var tournamentForStatus = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
                 if (tournamentForStatus.Status != TournamentStatus.RegistrationOpen)
                 {
-                    throw new BusinessRuleException("Registration is not open for this tournament.");
+                    // A scheduled tournament sits in Draft until its opening sweep runs. Saying so
+                    // matters for clients that predate the feature and still offer a Join button —
+                    // "not open" reads as "you missed it", which is the opposite of the truth.
+                    throw new BusinessRuleException(
+                        tournamentForStatus.Status == TournamentStatus.Draft && tournamentForStatus.RegistrationOpensAt != null
+                            ? "Registration for this tournament hasn't opened yet."
+                            : "Registration is not open for this tournament.");
                 }
 
                 // Block duplicate sign-ups. An entrant that already has a non-rejected registration,

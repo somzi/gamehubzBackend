@@ -112,6 +112,80 @@ namespace GameHubz.Logic.Services
             return this.Mapper.Map<UserHubDto>(entity);
         }
 
+        /// <summary>
+        /// Hands the hub to another member. Ownership is stored twice — <c>Hub.UserId</c> gates the
+        /// hub-level actions (edit details, avatar, delete, verification) and, through
+        /// TournamentRepository.GetHubOwnership, tournament management; the Owner <c>UserHub</c> row is
+        /// the same fact denormalised for role lookups. Both move here, in one SaveChanges, because a
+        /// hub whose two markers disagree is one nobody can fully administer.
+        ///
+        /// This is deliberately NOT part of ChangeMemberRole, which refuses HubOwner outright: that
+        /// endpoint edits one membership row, while this is a two-sided swap with its own rules.
+        /// </summary>
+        public async Task TransferOwnership(Guid hubId, Guid newOwnerUserId)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
+
+            // Checked against Hub.UserId rather than the cached role: it is the authoritative marker,
+            // so a drifted or stale Owner role row can never be used to give the hub away.
+            if (hub.UserId != caller.UserId)
+            {
+                throw new BusinessRuleException("Only the hub owner can transfer ownership.");
+            }
+
+            if (newOwnerUserId == caller.UserId)
+            {
+                throw new BusinessRuleException("This user already owns the hub.");
+            }
+
+            // Must already be a member: you can't hand the hub to someone who never joined it, and
+            // the membership row is what gets promoted. A banned user has no row, so this covers them.
+            var newOwnerMembership = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(newOwnerUserId, hubId)
+                ?? throw new BusinessRuleException("The new owner must be a member of this hub.");
+
+            var newOwnerUser = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(newOwnerUserId);
+            if (!newOwnerUser.IsActive)
+            {
+                throw new BusinessRuleException("This account is not active and cannot own a hub.");
+            }
+
+            // Same one-hub-per-user rule HubService.Create enforces — a transfer must not be a way
+            // around it. (Transferring away frees the outgoing owner to create a new hub.)
+            if (await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(newOwnerUserId))
+            {
+                throw new BusinessRuleException("This user already owns a hub and cannot own another one.");
+            }
+
+            var previousOwnerMembership = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(caller.UserId, hubId);
+
+            hub.UserId = newOwnerUserId;
+            await this.AppUnitOfWork.HubRepository.UpdateEntity(hub, this.UserContextReader);
+
+            newOwnerMembership.HubRole = HubRole.HubOwner;
+            await this.AppUnitOfWork.UserHubRepository.UpdateEntity(newOwnerMembership, this.UserContextReader);
+
+            // The outgoing owner stays on as an admin instead of dropping to a plain member: they
+            // built the hub and are usually still running it day to day, and demoting them further
+            // is one tap away for the new owner. Missing row (shouldn't happen — hub creation writes
+            // one) is simply skipped rather than failing a transfer that is otherwise valid.
+            if (previousOwnerMembership != null)
+            {
+                previousOwnerMembership.HubRole = HubRole.HubAdmin;
+                await this.AppUnitOfWork.UserHubRepository.UpdateEntity(previousOwnerMembership, this.UserContextReader);
+            }
+
+            // One SaveChanges over both repositories — they share the unit of work's context, so the
+            // hub marker and both role rows move together or not at all.
+            await this.SaveAsync();
+
+            // Both users' permissions changed, including tournament_authz across every tournament
+            // this hub owns.
+            await this.InvalidateHubCaches(newOwnerUserId, hubId);
+            await this.InvalidateHubCaches(caller.UserId, hubId);
+        }
+
         public async Task<UserHubDto> ChangeMemberRole(Guid hubId, Guid userId, HubRole newRole)
         {
             // Owner role is immutable through this endpoint.

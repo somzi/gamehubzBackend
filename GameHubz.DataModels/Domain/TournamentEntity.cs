@@ -14,6 +14,14 @@ namespace GameHubz.DataModels.Domain
         public DateTime? StartDate { get; set; }
         public DateTime? RegistrationDeadline { get; set; }
 
+        // Scheduled registration opening (UTC). When set on creation, the tournament is saved as
+        // Draft — invisible in the feed and closed to sign-ups — and the background sweep flips it
+        // to RegistrationOpen at this moment, firing the same announcement a manual open would.
+        // Null (every tournament created before this feature) = registration is open immediately.
+        // Kept after the tournament opens as a record of the schedule it was created with — the
+        // sweep can't act on it twice because it only ever looks at Draft rows.
+        public DateTime? RegistrationOpensAt { get; set; }
+
         // Set by the deadline-reminder background sweep once the "registration closing soon"
         // push has been sent for this tournament, so the same hub is never reminded twice.
         // Null = reminder not yet sent.

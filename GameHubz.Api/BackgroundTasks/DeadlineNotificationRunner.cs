@@ -1,18 +1,23 @@
+using GameHubz.Common.Consts;
+using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.Interfaces;
+using GameHubz.Logic.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace GameHubz.Api.BackgroundTasks
 {
     /// <summary>
-    /// One pass of the deadline-reminder sweeps, run on its own DI scope by
+    /// One pass of the deadline sweeps, run on its own DI scope by
     /// <see cref="DeadlineNotificationTask"/>. Reads straight off ApplicationContext (like
-    /// ShareController) and marks each reminded row with ExecuteUpdate so a row is never
-    /// re-evaluated on the next tick — that "sent" marker is what keeps the push one-shot.
+    /// ShareController) and marks each handled row with ExecuteUpdate so a row is never
+    /// re-evaluated on the next tick — that marker is what keeps every push one-shot.
+    /// Also opens tournaments whose scheduled registration time has arrived; there the status
+    /// flip itself is the marker.
     /// </summary>
     public class DeadlineNotificationRunner
     {
@@ -24,6 +29,8 @@ namespace GameHubz.Api.BackgroundTasks
         private readonly ApplicationContext context;
         private readonly INotificationService notificationService;
         private readonly IDiscordDmService discordDmService;
+        private readonly TournamentNotifier tournamentNotifier;
+        private readonly ICacheService cacheService;
         private readonly ShareLinksConfig shareLinksConfig;
         private readonly ILogger<DeadlineNotificationRunner> logger;
         private readonly int registrationLeadMinutes;
@@ -34,6 +41,8 @@ namespace GameHubz.Api.BackgroundTasks
             ApplicationContext context,
             INotificationService notificationService,
             IDiscordDmService discordDmService,
+            TournamentNotifier tournamentNotifier,
+            ICacheService cacheService,
             IOptions<ShareLinksConfig> shareLinksOptions,
             IConfiguration configuration,
             ILogger<DeadlineNotificationRunner> logger)
@@ -41,6 +50,8 @@ namespace GameHubz.Api.BackgroundTasks
             this.context = context;
             this.notificationService = notificationService;
             this.discordDmService = discordDmService;
+            this.tournamentNotifier = tournamentNotifier;
+            this.cacheService = cacheService;
             this.shareLinksConfig = shareLinksOptions.Value;
             this.logger = logger;
 
@@ -58,6 +69,18 @@ namespace GameHubz.Api.BackgroundTasks
 
         public async Task RunAsync(CancellationToken ct)
         {
+            // First: tournaments whose opening time has arrived become open. Running it ahead of the
+            // closing-reminder sweep means a tournament with a very short registration window can be
+            // opened and reminded in the same tick rather than a minute apart.
+            try
+            {
+                await SweepScheduledRegistrationOpeningsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Scheduled registration-opening sweep failed.");
+            }
+
             try
             {
                 await SweepRegistrationDeadlinesAsync(ct);
@@ -75,6 +98,84 @@ namespace GameHubz.Api.BackgroundTasks
             {
                 logger.LogError(ex, "Round-deadline sweep failed.");
             }
+        }
+
+        // Scheduled opening: a tournament created with a RegistrationOpensAt was saved as a Draft —
+        // out of the feed, closed to sign-ups — and this is what publishes it. The Draft →
+        // RegistrationOpen flip is the whole mechanism: every registration path (solo, team, and
+        // the feed's AvailableToJoin filter) already gates on that status. The announcement fires
+        // here rather than at creation so followers hear about the tournament at the moment they
+        // can actually join it, which is the point of scheduling one.
+        private async Task SweepScheduledRegistrationOpeningsAsync(CancellationToken ct)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            var due = await context.Set<TournamentEntity>()
+                .AsNoTracking()
+                .Where(t => t.Status == TournamentStatus.Draft
+                    && t.RegistrationOpensAt != null
+                    && t.RegistrationOpensAt <= now
+                    && t.HubId != null)
+                .ToListAsync(ct);
+
+            foreach (var tournament in due)
+            {
+                if (ct.IsCancellationRequested) return;
+
+                try
+                {
+                    // The flip doubles as the claim: with the Draft guard in the WHERE, a second API
+                    // instance sweeping the same tick updates 0 rows and skips the announcement, so
+                    // nobody gets the push twice.
+                    int claimed = await context.Set<TournamentEntity>()
+                        .Where(t => t.Id == tournament.Id && t.Status == TournamentStatus.Draft)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(t => t.Status, TournamentStatus.RegistrationOpen)
+                            .SetProperty(t => t.ModifiedOn, now), ct);
+
+                    if (claimed == 0) continue;
+
+                    await LogRegistrationOpenedAsync(tournament.HubId!.Value, tournament.Id!.Value, now, ct);
+
+                    // The same caches TournamentService flushes on a manual open — the overview and
+                    // every hub listing page still carry the pre-open status until they are dropped.
+                    await cacheService.RemoveAsync($"tournament:{tournament.Id}");
+                    await cacheService.RemoveAsync($"hub_overview:{tournament.HubId}");
+                    await cacheService.RemoveByPatternAsync($"tournaments:hub:{tournament.HubId}:*");
+
+                    // Expo push to the hub's members + the hub's Discord announcement, identical to
+                    // the manual Open Registration transition. Swallows its own failures.
+                    await tournamentNotifier.RegistrationOpened(tournament);
+
+                    logger.LogInformation(
+                        "Scheduled registration opened for tournament {TournamentId}.", tournament.Id);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed scheduled opening for tournament {TournamentId}.", tournament.Id);
+                }
+            }
+        }
+
+        // HubActivityService is unusable from here: it stamps CreatedBy off the HTTP user context,
+        // which a background scope doesn't have. Written straight to the context under the same
+        // system id AnonymousUserContextReader uses for unattended work, with the timestamps the
+        // unit of work would otherwise have stamped.
+        private async Task LogRegistrationOpenedAsync(Guid hubId, Guid tournamentId, DateTime now, CancellationToken ct)
+        {
+            context.Set<HubActivityEntity>().Add(new HubActivityEntity
+            {
+                Id = Guid.NewGuid(),
+                HubId = hubId,
+                TournamentId = tournamentId,
+                Type = HubActivityType.RegistrationOpen,
+                CreatedOn = now,
+                ModifiedOn = now,
+                CreatedBy = SystemUsers.AppAdminUserId,
+                ModifiedBy = SystemUsers.AppAdminUserId,
+            });
+
+            await context.SaveChangesAsync(ct);
         }
 
         // "Registration closes soon" → eligible hub members who have NOT registered yet.

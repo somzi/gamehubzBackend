@@ -6,6 +6,7 @@ namespace GameHubz.Logic.Services
 {
     public enum AnnouncementKind
     {
+        RegistrationScheduled,
         RegistrationOpened,
         RegistrationClosed,
         TournamentStarted,
@@ -23,7 +24,12 @@ namespace GameHubz.Logic.Services
         public string HubName { get; set; } = "";
         public string TournamentName { get; set; } = "";
 
-        // RegistrationOpened
+        // RegistrationScheduled — the moment sign-ups open. Rendered as UTC on the card (a PNG
+        // has no viewer timezone); the message text next to it carries a Discord <t:> marker that
+        // each reader sees locally.
+        public DateTime? OpensAtUtc { get; set; }
+
+        // RegistrationOpened (RegistrationScheduled shows the same slots/prize chips)
         public int MaxPlayers { get; set; }
         public int Prize { get; set; }
         public string PrizeCurrency { get; set; } = "";
@@ -108,6 +114,7 @@ namespace GameHubz.Logic.Services
 
                                 switch (d.Kind)
                                 {
+                                    case AnnouncementKind.RegistrationScheduled: RegistrationScheduled(panel, d); break;
                                     case AnnouncementKind.RegistrationOpened: RegistrationOpened(panel, d); break;
                                     case AnnouncementKind.RegistrationClosed: RegistrationClosed(panel, d); break;
                                     case AnnouncementKind.TournamentStarted: TournamentStarted(panel); break;
@@ -129,6 +136,36 @@ namespace GameHubz.Logic.Services
         }
 
         // ── Event bodies ──
+
+        // Same shape as RegistrationOpened — slots and prize are exactly what someone deciding
+        // whether to show up wants to see — with the opening time in place of the call to action.
+        private static void RegistrationScheduled(ColumnDescriptor panel, AnnouncementCardData d)
+        {
+            panel.Item().CornerRadius(16).Background(Cell).Border(1).BorderColor(Stroke)
+                .PaddingVertical(18).PaddingHorizontal(14).Column(c =>
+                {
+                    c.Item().AlignCenter().Text("Registration opens soon — be ready!")
+                        .FontSize(13.5f).Bold().FontColor(TextHi);
+
+                    if (d.OpensAtUtc.HasValue)
+                        c.Item().PaddingTop(6).AlignCenter()
+                            .Text(FormatUtc(d.OpensAtUtc.Value, "dd MMM yyyy · HH:mm") + " UTC")
+                            .FontSize(11).Bold().FontColor(Info);
+
+                    bool hasSlots = d.MaxPlayers > 0;
+                    bool hasPrize = d.Prize > 0;
+                    if (hasSlots || hasPrize)
+                        c.Item().PaddingTop(11).AlignCenter().Row(chips =>
+                        {
+                            if (hasSlots)
+                                Chip(chips, PeopleIcon(Info), $"{d.MaxPlayers} SLOTS", Info);
+                            if (hasSlots && hasPrize)
+                                chips.ConstantItem(8);
+                            if (hasPrize)
+                                Chip(chips, TrophyIcon(Gold), $"PRIZE {d.Prize} {d.PrizeCurrency}", Gold);
+                        });
+                });
+        }
 
         private static void RegistrationOpened(ColumnDescriptor panel, AnnouncementCardData d)
         {
@@ -276,6 +313,7 @@ namespace GameHubz.Logic.Services
 
         private static (string label, string color, string icon) Style(AnnouncementKind kind) => kind switch
         {
+            AnnouncementKind.RegistrationScheduled => ("REGISTRATION SCHEDULED", Info, ClockIcon(Info)),
             AnnouncementKind.RegistrationOpened => ("REGISTRATION OPEN", Accent, BellIcon(Accent)),
             AnnouncementKind.RegistrationClosed => ("REGISTRATION CLOSED", Draw, LockIcon(Draw)),
             AnnouncementKind.TournamentStarted => ("TOURNAMENT LIVE", Info, BoltIcon(Info)),
@@ -295,6 +333,9 @@ namespace GameHubz.Logic.Services
 
         private static string TrophyIcon(string color)
             => Svg("<path d=\"M8 21h8M12 17v4M7 3h10v5a5 5 0 0 1-10 0V3z\"/><path d=\"M7 5H4c0 3 1.5 5 4 5M17 5h3c0 3-1.5 5-4 5\"/>", color);
+
+        private static string ClockIcon(string color)
+            => Svg("<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5.5l3.5 2\"/>", color);
 
         private static string BellIcon(string color)
             => Svg("<path d=\"M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6\"/><path d=\"M10 20a2.5 2.5 0 0 0 4 0\"/>", color);

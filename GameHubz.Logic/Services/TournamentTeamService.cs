@@ -32,7 +32,11 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException("This tournament is not a team tournament.");
 
             if (tournament.Status != TournamentStatus.RegistrationOpen)
-                throw new BusinessRuleException("Tournament registration is not open.");
+                throw new BusinessRuleException(
+                    // Waiting to open is not the same as closed — see the note in TournamentRegistrationService.
+                    tournament.Status == TournamentStatus.Draft && tournament.RegistrationOpensAt != null
+                        ? "Registration for this tournament hasn't opened yet."
+                        : "Tournament registration is not open.");
 
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, request.TournamentId);
             if (alreadyInTeam)

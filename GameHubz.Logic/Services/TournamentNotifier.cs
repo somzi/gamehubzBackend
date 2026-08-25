@@ -24,6 +24,56 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// "A tournament is coming": fired at creation when the organiser scheduled the opening
+        /// instead of opening immediately. Its counterpart <see cref="RegistrationOpened(TournamentDto)"/>
+        /// fires again when the sweep actually opens it — a scheduled tournament deliberately gets
+        /// both, one to put it on people's radar and one to tell them they can sign up now.
+        ///
+        /// The Expo body carries no time: a push body is rendered once, server-side, and this app
+        /// shows exact local times everywhere — so the time lives in the tournament screen the tap
+        /// opens. Discord has no such limit, so the message text next to the card uses a
+        /// &lt;t:unix&gt; marker, which every reader sees in their own timezone.
+        /// </summary>
+        public async Task RegistrationScheduled(TournamentDto model)
+        {
+            try
+            {
+                await SendPushToHubMembersAsync(
+                    model.HubId!.Value,
+                    model.IsExclusive,
+                    model.Name,
+                    "New tournament announced — tap to see when registration opens.",
+                    new { tournamentId = model.Id!.Value, type = "registrationScheduled" });
+
+                var hub = await GetDiscordTargetAsync(model.HubId, s => s.RegistrationScheduled);
+                if (hub == null) return;
+
+                string? content = null;
+                if (model.RegistrationOpensAt.HasValue)
+                {
+                    // Npgsql hands DateTime back as Unspecified even though we store UTC.
+                    long unix = new DateTimeOffset(
+                        DateTime.SpecifyKind(model.RegistrationOpensAt.Value, DateTimeKind.Utc))
+                        .ToUnixTimeSeconds();
+
+                    content = $"**{model.Name}** — registration opens <t:{unix}:F> (<t:{unix}:R>)";
+                }
+
+                SendToDiscord(hub.DiscordWebhookUrl!, new AnnouncementCardData
+                {
+                    Kind = AnnouncementKind.RegistrationScheduled,
+                    HubName = hub.Name,
+                    TournamentName = model.Name,
+                    OpensAtUtc = model.RegistrationOpensAt,
+                    MaxPlayers = model.MaxPlayers,
+                    Prize = model.Prize,
+                    PrizeCurrency = PrizeCurrencyLabel(model.PrizeCurrency),
+                }, content);
+            }
+            catch { /* notifications must never break tournament creation */ }
+        }
+
+        /// <summary>
         /// "Registration is open": Expo push to the hub's members (moved from
         /// TournamentService.SendNotification) + Discord announcement to the hub channel.
         /// </summary>
@@ -154,7 +204,24 @@ namespace GameHubz.Logic.Services
         // F109 (moved from TournamentService): resolve the recipients' push tokens here, while the
         // request-scoped DbContext is alive, then fire-and-forget ONLY the push send (which goes
         // through NotificationService's own scope). Shared by both RegistrationOpened overloads.
-        private async Task SendRegistrationOpenedPush(Guid hubId, bool isExclusive, Guid tournamentId, string title)
+        private Task SendRegistrationOpenedPush(Guid hubId, bool isExclusive, Guid tournamentId, string title)
+            => SendPushToHubMembersAsync(
+                hubId,
+                isExclusive,
+                title,
+                "Registration is open, grab your spot!",
+                new { tournamentId });
+
+        // Recipient rule shared by every hub-wide tournament announcement: members of the hub,
+        // minus the owner (who triggered it), minus plain members when the tournament is exclusive.
+        // Extracted from SendRegistrationOpenedPush when the scheduled-opening announcement needed
+        // the same audience with a different body.
+        private async Task SendPushToHubMembersAsync(
+            Guid hubId,
+            bool isExclusive,
+            string title,
+            string body,
+            object data)
         {
             var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
             if (hubMembers == null || hubMembers.Count == 0) return;
@@ -173,11 +240,7 @@ namespace GameHubz.Logic.Services
             {
                 try
                 {
-                    await notificationService.SendToManyAsync(
-                        pushTokens,
-                        title,
-                        "Registration is open, grab your spot!",
-                        new { tournamentId });
+                    await notificationService.SendToManyAsync(pushTokens, title, body, data);
                 }
                 catch { /* fire-and-forget */ }
             });

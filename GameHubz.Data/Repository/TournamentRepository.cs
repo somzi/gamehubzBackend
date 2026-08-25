@@ -100,7 +100,12 @@ namespace GameHubz.Data.Repository
             return BitConverter.ToInt64(bytes, 0) ^ BitConverter.ToInt64(bytes, 8);
         }
 
-        public async Task<List<TournamentOverview>> GetByHubPaged(Guid hubId, TournamentStatus status, int page, int pageSize)
+        /// <param name="includeUnscheduledDrafts">
+        /// True only for hub managers. A Draft WITHOUT an opening time is a tournament the organiser
+        /// is still writing, so members shouldn't see it; a Draft WITH one is a finished tournament
+        /// waiting for its clock, announced publicly, and stays visible to everyone.
+        /// </param>
+        public async Task<List<TournamentOverview>> GetByHubPaged(Guid hubId, TournamentStatus status, int page, int pageSize, bool includeUnscheduledDrafts)
         {
             List<TournamentStatus> statuses = [];
 
@@ -118,6 +123,11 @@ namespace GameHubz.Data.Repository
             var query = this.BaseDbSet()
                 .Where(x => x.HubId == hubId && statuses.Contains(x.Status));
 
+            if (!includeUnscheduledDrafts)
+            {
+                query = query.Where(x => x.Status != TournamentStatus.Draft || x.RegistrationOpensAt != null);
+            }
+
             var items = await query
                 .OrderByDescending(x => x.StartDate)
                 .Skip(page * pageSize)
@@ -134,7 +144,10 @@ namespace GameHubz.Data.Repository
                      Status = x.Status,
                      Id = x.Id!.Value!,
                      IsTeamTournament = x.IsTeamTournament,
-                     IsExclusive = x.IsExclusive
+                     IsExclusive = x.IsExclusive,
+                     // Draft rows are listed on the hub page alongside open ones, so the card needs
+                     // this to say "opens …" instead of looking like a tournament nobody can join.
+                     RegistrationOpensAt = x.RegistrationOpensAt
                  })
                 .ToListAsync();
 
@@ -149,9 +162,10 @@ namespace GameHubz.Data.Repository
             RegionType region,
             string? userCountry,
             int page,
-            int pageSize)
+            int pageSize,
+            bool includeScheduled)
         {
-            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter, includeScheduled);
 
             return await query
                 .OrderByDescending(x => x.StartDate)
@@ -174,7 +188,10 @@ namespace GameHubz.Data.Repository
                     RoundDurationMinutes = x.RoundDurationMinutes,
                     IsTeamTournament = x.IsTeamTournament,
                     TeamWinCondition = x.TeamWinCondition,
-                    IsExclusive = x.IsExclusive
+                    IsExclusive = x.IsExclusive,
+                    // Additive for v1 (which never returns a scheduled row); v2 needs it to render
+                    // "opens …" instead of a join-ready card.
+                    RegistrationOpensAt = x.RegistrationOpensAt
                 })
                 .ToListAsync();
         }
@@ -185,16 +202,22 @@ namespace GameHubz.Data.Repository
             List<Guid> exclusiveHubIds,
             RegionType region,
             string? userCountry,
-            TournamentUserStatus filter)
+            TournamentUserStatus filter,
+            bool includeScheduled)
         {
-            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter);
+            var query = ApplyFilters(userId, hubIds, exclusiveHubIds, region, userCountry, filter, includeScheduled);
             return await query.CountAsync();
         }
 
-        public async Task<int> GetByHubCount(Guid hubId, TournamentStatus status)
+        public async Task<int> GetByHubCount(Guid hubId, TournamentStatus status, bool includeUnscheduledDrafts)
         {
             var query = this.BaseDbSet()
                 .Where(x => x.HubId == hubId && x.Status == status);
+
+            if (!includeUnscheduledDrafts)
+            {
+                query = query.Where(x => x.Status != TournamentStatus.Draft || x.RegistrationOpensAt != null);
+            }
 
             return await query.CountAsync();
         }
@@ -277,6 +300,7 @@ namespace GameHubz.Data.Repository
                       Rules = x.Rules ?? string.Empty,
                       CreatedBy = x.CreatedBy!.Value,
                       RegistrationDeadline = x.RegistrationDeadline,
+                      RegistrationOpensAt = x.RegistrationOpensAt,
                       HubId = x.HubId!.Value,
                       Format = x.Format,
                       RoundDurationMinutes = x.RoundDurationMinutes,
@@ -304,13 +328,20 @@ namespace GameHubz.Data.Repository
                   }).FirstOrDefaultAsync();
         }
 
+        /// <param name="includeScheduled">
+        /// v2 feed only. Adds tournaments that are waiting for their scheduled opening (Draft with an
+        /// opening time) to the AvailableToJoin tab, where the client renders them as "opens …" with
+        /// no join button. v1 leaves it false so pre-existing clients — which would offer a Join that
+        /// the server rejects — keep seeing exactly what they saw before.
+        /// </param>
         private IQueryable<TournamentEntity> ApplyFilters(
             Guid userId,
             List<Guid> hubIds,
             List<Guid> exclusiveHubIds,
             RegionType region,
             string? userCountry,
-            TournamentUserStatus filter)
+            TournamentUserStatus filter,
+            bool includeScheduled)
         {
             // Visibility:
             //  - Region-scoped tournaments (Countries == null): match the user's region or GLOBAL.
@@ -340,7 +371,10 @@ namespace GameHubz.Data.Repository
             {
                 case TournamentUserStatus.AvailableToJoin:
                     query = query.Where(x =>
-                        x.Status == TournamentStatus.RegistrationOpen &&
+                        (x.Status == TournamentStatus.RegistrationOpen
+                            || (includeScheduled
+                                && x.Status == TournamentStatus.Draft
+                                && x.RegistrationOpensAt != null)) &&
                         !x.TournamentParticipants!.Any(tp =>
                             tp.UserId == userId ||
                             (tp.Team != null && tp.Team.Members.Any(tm => tm.UserId == userId))) &&

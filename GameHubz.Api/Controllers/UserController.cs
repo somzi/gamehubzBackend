@@ -103,6 +103,20 @@ namespace GameHubz.Api.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// v2 of the tournament feed. Same payload and paging as v1, plus tournaments waiting for a
+        /// scheduled registration opening in the "available to join" tab — the client renders those
+        /// with the opening time and no Join button. v1 stays byte-identical because a client that
+        /// predates the feature would offer a Join the server refuses.
+        /// </summary>
+        [HttpGet("{id}/tournaments/v2")]
+        public async Task<IActionResult> GetByHubPagedV2([FromRoute] Guid id, [FromQuery] UserTournamentRequest request)
+        {
+            var result = await tournamentService.GetTournamentPagedForUser(id, request, includeScheduled: true);
+
+            return Ok(result);
+        }
+
         protected override UserRoleEnum[]? UserRolesDelete()
         {
             return

@@ -40,7 +40,7 @@ namespace GameHubz.Logic.Services
         /// fail it. All data is resolved into the card DTO before this call, so the background
         /// task never touches the request-scoped DbContext (F109 discipline).
         /// </summary>
-        protected void SendToDiscord(string webhookUrl, AnnouncementCardData card)
+        protected void SendToDiscord(string webhookUrl, AnnouncementCardData card, string? content = null)
         {
             _ = Task.Run(async () =>
             {
@@ -48,7 +48,7 @@ namespace GameHubz.Logic.Services
                 {
                     card.GeneratedAtUtc = DateTime.UtcNow;
                     byte[] png = DiscordAnnouncementCard.Render(card);
-                    await this.discordNotificationService.SendImageAsync(webhookUrl, png, "announcement.png");
+                    await this.discordNotificationService.SendImageAsync(webhookUrl, png, "announcement.png", content);
                 }
                 catch { /* fire-and-forget */ }
             });

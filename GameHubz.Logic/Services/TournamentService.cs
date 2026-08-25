@@ -43,8 +43,14 @@ namespace GameHubz.Logic.Services
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
         {
+            // Unfinished drafts (Draft with no opening time) are the organiser's workbench and are
+            // listed only for people who can manage the hub. A Draft that IS scheduled stays public —
+            // it has been announced and everyone should see when it opens. The flag is part of the
+            // cache key, otherwise a manager's page would be served to members and leak the drafts.
+            bool canManageHub = await CanManageHubAsync(hubId);
+
             string statusKey = request.Status.ToString();
-            string cacheKey = $"tournaments:hub:{hubId}:status:{statusKey}:p:{request.Page}:s:{request.PageSize}";
+            string cacheKey = $"tournaments:hub:{hubId}:status:{statusKey}:mgr:{canManageHub}:p:{request.Page}:s:{request.PageSize}";
 
             var cachedResponse = await cacheService.GetAsync<TournamentPagedResponse>(cacheKey);
             if (cachedResponse != null)
@@ -52,8 +58,8 @@ namespace GameHubz.Logic.Services
                 return cachedResponse;
             }
 
-            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(hubId, request.Status, request.Page, request.PageSize);
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetByHubCount(hubId, request.Status);
+            var tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubPaged(hubId, request.Status, request.Page, request.PageSize, canManageHub);
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetByHubCount(hubId, request.Status, canManageHub);
 
             var response = new TournamentPagedResponse
             {
@@ -66,11 +72,18 @@ namespace GameHubz.Logic.Services
             return response;
         }
 
-        public async Task<TournamentPagedResponse> GetTournamentPagedForUser(Guid userId, UserTournamentRequest request)
+        /// <param name="includeScheduled">
+        /// v2 callers only. Surfaces tournaments waiting for their scheduled opening in the
+        /// "available to join" tab, where the client shows the opening time instead of a Join
+        /// button. v1 keeps them out — an older client would offer a Join the server rejects.
+        /// </param>
+        public async Task<TournamentPagedResponse> GetTournamentPagedForUser(Guid userId, UserTournamentRequest request, bool includeScheduled = false)
         {
             string statusKey = request.Status.ToString();
 
-            string cacheKey = $"user_feed:{userId}:st:{statusKey}:p:{request.Page}:s:{request.PageSize}";
+            // v1 and v2 return different rows for the same user and tab, so they must not share
+            // a cache entry.
+            string cacheKey = $"user_feed:{userId}:st:{statusKey}:sch:{includeScheduled}:p:{request.Page}:s:{request.PageSize}";
 
             var cachedResponse = await cacheService.GetAsync<TournamentPagedResponse>(cacheKey);
             if (cachedResponse != null)
@@ -89,9 +102,9 @@ namespace GameHubz.Logic.Services
             var userRegion = userEntity.Region;
             var userCountry = userEntity.Country;
 
-            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, exclusiveHubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize);
+            List<TournamentOverview> tournaments = await this.AppUnitOfWork.TournamentRepository.GetByHubsPaged(userId, hubIds, exclusiveHubIds, request.Status, userRegion, userCountry, request.Page, request.PageSize, includeScheduled);
 
-            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, exclusiveHubIds, userRegion, userCountry, request.Status);
+            var tournamentsCount = await this.AppUnitOfWork.TournamentRepository.GetCountByHubs(userId, hubIds, exclusiveHubIds, userRegion, userCountry, request.Status, includeScheduled);
 
             var response = new TournamentPagedResponse
             {
@@ -155,7 +168,7 @@ namespace GameHubz.Logic.Services
                 id,
                 TournamentStatus.RegistrationOpen,
                 ShouldOpenRegistration,
-                "Tournament registration can be opened only when it is closed."
+                "Tournament registration can be opened only when it is closed or waiting to open."
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.RegistrationOpen);
@@ -417,6 +430,19 @@ namespace GameHubz.Logic.Services
             return tournament;
         }
 
+        // Hub-level counterpart of TournamentAuthorizationService.CanManageTournamentAsync, which
+        // needs a tournament id we don't have when listing a hub. Anonymous callers get false.
+        private async Task<bool> CanManageHubAsync(Guid hubId)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContext();
+            if (caller == null) return false;
+
+            if (caller.RoleEnum == UserRoleEnum.Admin) return true;
+
+            var role = await this.userHubService.GetUserHubRoleCachedAsync(caller.UserId, hubId);
+            return role == HubRole.HubOwner || role == HubRole.HubAdmin;
+        }
+
         private async Task<TournamentEntity> GetHubOwnedTournamentOrThrow(Guid tournamentId)
         {
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithHubById(tournamentId);
@@ -443,10 +469,21 @@ namespace GameHubz.Logic.Services
 
             if (inputDto.Id is null)
             {
-                await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
+                if (model.RegistrationOpensAt is null)
+                {
+                    await this.hubActivityService.LogActivity(model.HubId!.Value, model.Id!.Value, HubActivityType.RegistrationOpen);
 
-                // Notify all hub followers about the new tournament (Expo push + Discord webhook)
-                await this.tournamentNotifier.RegistrationOpened(model);
+                    // Notify all hub followers about the new tournament (Expo push + Discord webhook)
+                    await this.tournamentNotifier.RegistrationOpened(model);
+                }
+                else
+                {
+                    // A scheduled tournament announces twice on purpose: "this is coming" now, and
+                    // "you can sign up" when the sweep opens it. The "registration open" hub-activity
+                    // entry is NOT written here — it belongs to the moment registration actually
+                    // opens, which the sweep records.
+                    await this.tournamentNotifier.RegistrationScheduled(model);
+                }
             }
             else
             {
@@ -501,6 +538,27 @@ namespace GameHubz.Logic.Services
                 inputDto.KnockoutBestOf = existing.KnockoutBestOf;
             }
 
+            // The scheduled opening travels under its own opt-in flag rather than
+            // AllowStructuralEdits: the currently shipped client already sets that flag and knows
+            // nothing about this field, so folding the two together would let its edits null the
+            // schedule — and the next sweep would never open the tournament at all.
+            // Rescheduling only makes sense while the tournament is still waiting to open; once
+            // registration is live the stored value is history, and re-arming it would hide a
+            // tournament people have already joined.
+            bool canEditSchedule = inputDto.AllowScheduleEdits && existing.Status == TournamentStatus.Draft;
+
+            if (!canEditSchedule)
+            {
+                inputDto.RegistrationOpensAt = existing.RegistrationOpensAt;
+            }
+            else if (inputDto.RegistrationOpensAt is null && existing.RegistrationOpensAt is not null)
+            {
+                // Dropping the schedule would leave a Draft nothing ever opens. Opening it now is a
+                // lifecycle transition with its own announcement — that is what OpenRegistration is.
+                throw new BusinessRuleException(
+                    "Pick a new opening time, or use Open Registration to start sign-ups right away.");
+            }
+
             bool canEditStructural = inputDto.AllowStructuralEdits
                 && existing.Status < TournamentStatus.InProgress;
             if (canEditStructural) return;
@@ -549,6 +607,37 @@ namespace GameHubz.Logic.Services
                 }
             }
 
+            if (isNew && entity.RegistrationOpensAt.HasValue && entity.RegistrationOpensAt.Value <= DateTime.UtcNow)
+            {
+                // A moment already gone is not a schedule. Dropping it rather than rejecting keeps a
+                // slow form submit (or a clock a few seconds off) from stranding the tournament in
+                // Draft with nobody able to join — it just means "open now", the old behaviour.
+                entity.RegistrationOpensAt = null;
+            }
+
+            if (entity.RegistrationOpensAt.HasValue)
+            {
+                if (entity.RegistrationDeadline.HasValue && entity.RegistrationOpensAt.Value >= entity.RegistrationDeadline.Value)
+                {
+                    throw new BusinessRuleException("Registration must open before the registration deadline.");
+                }
+
+                if (entity.StartDate.HasValue && entity.RegistrationOpensAt.Value >= entity.StartDate.Value)
+                {
+                    throw new BusinessRuleException("Registration must open before the tournament starts.");
+                }
+
+                if (isNew)
+                {
+                    // Status is the gate every registration path already checks (solo, team, and the
+                    // feed's AvailableToJoin filter), so a scheduled tournament is simply created as a
+                    // Draft and the background sweep publishes it. Forced here instead of trusted from
+                    // the payload — otherwise a client could post a scheduled tournament that is
+                    // already open, which is the one state this feature exists to prevent.
+                    entity.Status = TournamentStatus.Draft;
+                }
+            }
+
             // Clamp rather than reject: Best-of arrives from a picker with a fixed set of options,
             // so an out-of-range value is a malformed client, not a user mistake worth a 400.
             // A create that omits it maps to 0, which normalizes to the Bo1 default.
@@ -589,9 +678,14 @@ namespace GameHubz.Logic.Services
             await Task.CompletedTask;
         }
 
+        // Draft belongs here too: a tournament scheduled to open tomorrow is the easiest one of all
+        // to have created by mistake, and without this its organiser could not delete it until the
+        // sweep opened it first.
         private static bool ShouldDeleteTournament(TournamentEntity tournament)
         {
-            return tournament.Status == TournamentStatus.RegistrationClosed || tournament.Status == TournamentStatus.RegistrationOpen;
+            return tournament.Status == TournamentStatus.RegistrationClosed
+                || tournament.Status == TournamentStatus.RegistrationOpen
+                || tournament.Status == TournamentStatus.Draft;
         }
 
         private static bool ShouldCancelTournament(TournamentEntity tournament)
@@ -599,9 +693,13 @@ namespace GameHubz.Logic.Services
             return tournament.Status == TournamentStatus.InProgress;
         }
 
+        // Draft joined RegistrationClosed here with scheduled openings: a tournament waiting for its
+        // opening time is exactly the case where an organiser needs an "open it now" override, and
+        // this transition already carries the announcement the sweep would otherwise have fired.
         private static bool ShouldOpenRegistration(TournamentEntity tournament)
         {
-            return tournament.Status == TournamentStatus.RegistrationClosed;
+            return tournament.Status == TournamentStatus.RegistrationClosed
+                || tournament.Status == TournamentStatus.Draft;
         }
 
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)

@@ -20,6 +20,8 @@ namespace GameHubz.DataModels.Models
 
         public DateTime? RegistrationDeadline { get; set; }
 
+        public DateTime? RegistrationOpensAt { get; set; }
+
         public bool HasThirdPlaceMatch { get; set; }
 
         public bool RequireResultApproval { get; set; }

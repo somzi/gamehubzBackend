@@ -107,6 +107,16 @@ namespace GameHubz.Api.Controllers
             return await userHubService.ChangeMemberRole(id, userId, request.Role);
         }
 
+        /// <summary>
+        /// Hands the hub to another member: they become Owner, the caller stays on as Admin.
+        /// Owner-only, and irreversible from the caller's side — only the new owner can transfer back.
+        /// </summary>
+        [HttpPost("{id}/transferOwnership")]
+        public async Task TransferOwnership(Guid id, [FromBody] TransferHubOwnershipRequest request)
+        {
+            await userHubService.TransferOwnership(id, request.UserId);
+        }
+
         [HttpDelete("{id}/members/{userId}")]
         public async Task RemoveMember(Guid id, Guid userId)
         {

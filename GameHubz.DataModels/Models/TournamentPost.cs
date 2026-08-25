@@ -105,6 +105,25 @@ namespace GameHubz.DataModels.Models
         public int? MaxReserves { get; set; }
 
         public DateTime? RegistrationDeadline { get; set; }
+
+        /// <summary>
+        /// Optional scheduled opening of registration (UTC). On create, a value in the future forces
+        /// the tournament to <see cref="TournamentStatus.Draft"/> and suppresses the "registration is
+        /// open" announcement — a background sweep opens it and announces it at that moment instead.
+        /// On edit it can only be changed while the tournament is still waiting to open; null from a
+        /// client that predates this field preserves whatever is stored (see
+        /// TournamentService.BeforeDtoMapToEntity).
+        /// </summary>
+        public DateTime? RegistrationOpensAt { get; set; }
+
+        /// <summary>
+        /// Opt-in marker for clients that know about <see cref="RegistrationOpensAt"/>. Only when this
+        /// is set does a null <see cref="RegistrationOpensAt"/> actually clear the schedule — without
+        /// it, an older client's edit (which never sends the field) would silently unschedule a
+        /// tournament and open registration early.
+        /// </summary>
+        public bool AllowScheduleEdits { get; set; }
+
         public int Prize { get; set; }
         public PrizeCurrency PrizeCurrency { get; set; }
         public RegionType Region { get; set; }

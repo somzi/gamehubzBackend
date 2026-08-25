@@ -38,6 +38,14 @@ namespace GameHubz.DataModels.Models
         public string Rules { get; set; } = string.Empty;
         public Guid CreatedBy { get; set; }
         public DateTime? RegistrationDeadline { get; set; }
+
+        /// <summary>
+        /// Scheduled opening of registration (UTC), or null when registration was open from creation.
+        /// Paired with <see cref="Status"/> == Draft it is what the client shows instead of a Join
+        /// button ("registration opens …"); on an already-open tournament it is only history.
+        /// </summary>
+        public DateTime? RegistrationOpensAt { get; set; }
+
         public string HubName { get; set; } = string.Empty;
         public string? HubAvatarUrl { get; set; }
         public TournamentFormat? Format { get; set; }

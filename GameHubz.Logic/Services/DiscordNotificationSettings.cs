@@ -10,6 +10,7 @@ namespace GameHubz.Logic.Services
     /// </summary>
     public class DiscordNotificationSettings
     {
+        public bool RegistrationScheduled { get; set; } = true;
         public bool RegistrationOpened { get; set; } = true;
         public bool RegistrationClosed { get; set; } = true;
         public bool TournamentStarted { get; set; } = true;

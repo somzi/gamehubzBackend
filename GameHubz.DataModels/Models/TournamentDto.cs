@@ -21,6 +21,14 @@ namespace GameHubz.DataModels.Models
         public DateTime? StartDate { get; set; }
 
         public DateTime? RegistrationDeadline { get; set; }
+
+        /// <summary>
+        /// Scheduled opening of registration (UTC), or null when registration was open from creation.
+        /// While <see cref="Status"/> is <see cref="TournamentStatus.Draft"/> this is a future moment
+        /// the client renders as "registration opens …"; afterwards it is just a record of when it did.
+        /// </summary>
+        public DateTime? RegistrationOpensAt { get; set; }
+
         public RegionType Region { get; set; }
 
         /// <summary>ISO 3166-1 alpha-2 country codes when country-scoped, else null (region-scoped).</summary>
