@@ -910,7 +910,7 @@ namespace GameHubz.Logic.Services
                         // A one-entrant group generates no fixtures at all, which would leave the
                         // group stage permanently unfinishable.
                         if (planned[g].Count < 2)
-                            throw new BusinessRuleException($"Group {GetGroupName(g)} needs at least 2 entrants.");
+                            throw new BusinessRuleException($"{GroupNaming.Name(g, numberOfGroups)} needs at least 2 entrants.");
 
                         buckets[g].AddRange(planned[g].Select(id => byId[id]));
                     }
@@ -1175,7 +1175,7 @@ namespace GameHubz.Logic.Services
                 {
                     Id = Guid.NewGuid(),
                     TournamentStageId = groupStage.Id,
-                    Name = $"Group {GetGroupName(i)}"
+                    Name = GroupNaming.Name(i, numberOfGroups)
                 };
                 groups.Add(group);
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(group, this.UserContextReader);
@@ -1344,7 +1344,7 @@ namespace GameHubz.Logic.Services
                 {
                     Id = Guid.NewGuid(),
                     TournamentStageId = groupStage.Id,
-                    Name = $"Group {GetGroupName(i)}"
+                    Name = GroupNaming.Name(i, numberOfGroups)
                 };
                 groups.Add(g);
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(g, this.UserContextReader);
@@ -5685,7 +5685,7 @@ namespace GameHubz.Logic.Services
             var qualifiers = new List<(TournamentParticipantEntity participant, int groupRank, string groupName)>();
             int qualifiersPerGroup = groupStage.QualifiedPlayersCount ?? 1;
 
-            foreach (var group in groupStage.TournamentGroups.OrderBy(g => g.Name))
+            foreach (var group in groupStage.TournamentGroups.OrderBy(g => GroupNaming.SortKey(g.Name)))
             {
                 var groupParticipants = await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupIdWithNames(group.Id!.Value);
 
@@ -6459,12 +6459,6 @@ namespace GameHubz.Logic.Services
         private static bool IsFinished(MatchStatus status)
             => status == MatchStatus.Completed || status == MatchStatus.NoShow;
 
-        private static string GetGroupName(int index)
-        {
-            const string l = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-            return index < l.Length ? l[index].ToString() : (index + 1).ToString();
-        }
-
         private List<BracketRoundDto> MapTeamBracketRounds(List<TeamMatchEntity>? teamMatches, bool dropCollapsedByes = false)
         {
             var rounds = new List<BracketRoundDto>();
@@ -6729,7 +6723,12 @@ namespace GameHubz.Logic.Services
         private async Task<List<GroupDto>> MapGroups(TournamentStageEntity stage, Guid currentUserId, bool isPrivileged, bool teamGroupMatches = false)
         {
             var groupDtos = new List<GroupDto>();
-            var groups = stage.TournamentGroups ?? new List<TournamentGroupEntity>();
+
+            // Explicit order: Include() gives no ordering guarantee, and a numbered stage sorts
+            // "Group 1", "Group 10", "Group 2" alphabetically — see GroupNaming.SortKey.
+            var groups = (stage.TournamentGroups ?? new List<TournamentGroupEntity>())
+                .OrderBy(g => GroupNaming.SortKey(g.Name))
+                .ToList();
 
             if (groups.Count == 0)
                 return groupDtos;

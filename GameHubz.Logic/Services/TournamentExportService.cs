@@ -609,7 +609,7 @@ namespace GameHubz.Logic.Services
             TournamentStageStructureDto stage,
             bool includeSchedule)
         {
-            var groups = stage.Groups!.OrderBy(g => g.Name).ToList();
+            var groups = stage.Groups!.OrderBy(g => GroupNaming.SortKey(g.Name)).ToList();
             if (groups.Count == 0) return;
 
             int qualifiersCount = structure.QualifiersPerGroup ?? 1;
