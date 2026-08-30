@@ -1,5 +1,7 @@
 using GameHubz.DataModels.Domain;
+using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
+using GameHubz.Logic.Exceptions;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,18 +17,21 @@ namespace GameHubz.Api.Controllers
         private readonly BracketService bracketService;
         private readonly TournamentTeamService tournamentTeamService;
         private readonly TournamentExportService tournamentExportService;
+        private readonly TournamentCsvExportService tournamentCsvExportService;
 
         public TournamentController(
             TournamentService service,
             AppAuthorizationService appAuthorizationService,
             BracketService bracketService,
             TournamentTeamService tournamentTeamService,
-            TournamentExportService tournamentExportService)
+            TournamentExportService tournamentExportService,
+            TournamentCsvExportService tournamentCsvExportService)
             : base(service, appAuthorizationService)
         {
             this.bracketService = bracketService;
             this.tournamentTeamService = tournamentTeamService;
             this.tournamentExportService = tournamentExportService;
+            this.tournamentCsvExportService = tournamentCsvExportService;
         }
 
         [HttpPost("createBracket")]
@@ -317,6 +322,26 @@ namespace GameHubz.Api.Controllers
             var safeName = string.Concat(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
             var suffix = includeSchedule ? "-schedule" : "";
             return File(pdf, "application/pdf", $"bracket-{safeName}{suffix}.pdf");
+        }
+
+        // Machine-readable export for scripted consumers (a site pulling the tournament's rankings
+        // and results on a schedule). CSV holds one table, so the two things worth ingesting are
+        // separate datasets rather than one file with mixed schemas:
+        //   ?dataset=standings — group / league / Swiss tables, a row per participant per group
+        //   ?dataset=matches   — every fixture in the tournament, a row per match
+        // Anonymous like the PDF export so an unattended fetch needs no token.
+        [AllowAnonymous]
+        [HttpGet("{id}/export/csv")]
+        public async Task<IActionResult> ExportTournamentCsv(Guid id, [FromQuery] string dataset = "standings")
+        {
+            if (!Enum.TryParse<TournamentCsvDataset>(dataset, ignoreCase: true, out var parsedDataset)
+                || !Enum.IsDefined(parsedDataset))
+                throw new BusinessRuleException("dataset must be either 'standings' or 'matches'.");
+
+            var (csv, name) = await this.tournamentCsvExportService.GenerateCsvAsync(id, parsedDataset);
+            var safeName = string.Concat(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
+            var kind = parsedDataset == TournamentCsvDataset.Matches ? "matches" : "standings";
+            return File(csv, "text/csv; charset=utf-8", $"{kind}-{safeName}.csv");
         }
     }
 }

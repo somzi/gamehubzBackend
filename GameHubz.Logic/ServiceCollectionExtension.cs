@@ -95,6 +95,7 @@ namespace GameHubz.Logic
             services.AddTransient<HubVerificationService>();
 
             services.AddTransient<TournamentExportService>();
+            services.AddTransient<TournamentCsvExportService>();
 
             services.AddTransient<INotificationService, NotificationService>();
 
