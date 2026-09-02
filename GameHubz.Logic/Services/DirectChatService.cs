@@ -65,7 +65,7 @@ namespace GameHubz.Logic.Services
 
             var dto = await this.AppUnitOfWork.DirectChatRepository.GetChatDtoForUser(chatId, user.UserId);
             if (dto == null)
-                throw new BusinessRuleException("Chat not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatNotFound"]);
 
             return dto;
         }
@@ -75,14 +75,14 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (otherUserId == user.UserId)
-                throw new BusinessRuleException("You cannot chat with yourself.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CannotChatSelf"]);
 
             if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
-                throw new BusinessRuleException("Cannot open chat — there is an active block between the users.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatBlockedOpen"]);
 
             var other = await this.AppUnitOfWork.UserRepository.GetById(otherUserId);
             if (other == null)
-                throw new BusinessRuleException("User not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotFound"]);
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.Find(user.UserId, otherUserId);
             if (chat == null)
@@ -117,7 +117,7 @@ namespace GameHubz.Logic.Services
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new BusinessRuleException("Chat not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatNotFound"]);
 
             return await this.AppUnitOfWork.DirectMessageRepository.GetByChatId(chatId, take, before);
         }
@@ -131,19 +131,19 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (string.IsNullOrWhiteSpace(content))
-                throw new BusinessRuleException("Message cannot be empty.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MessageEmpty"]);
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new BusinessRuleException("Chat not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatNotFound"]);
 
             Guid otherUserId = chat.UserAId == user.UserId ? chat.UserBId : chat.UserAId;
 
             if (await this.friendService.EitherBlocksCachedAsync(user.UserId, otherUserId))
-                throw new BusinessRuleException("Cannot send message — there is an active block between the users.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MessageBlocked"]);
 
             if (!await this.friendService.AreFriendsCachedAsync(user.UserId, otherUserId))
-                throw new BusinessRuleException("Cannot send message — you are no longer friends.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MessageNotFriends"]);
 
             var message = new DirectMessageEntity
             {
@@ -201,7 +201,7 @@ namespace GameHubz.Logic.Services
 
             var chat = await this.AppUnitOfWork.DirectChatRepository.GetByIdForUser(chatId, user.UserId);
             if (chat == null)
-                throw new BusinessRuleException("Chat not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatNotFound"]);
 
             await this.AppUnitOfWork.DirectMessageRepository.MarkRead(chatId, user.UserId);
 

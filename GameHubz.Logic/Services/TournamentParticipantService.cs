@@ -133,7 +133,7 @@ namespace GameHubz.Logic.Services
             await this.EnsureCanManageTournament(tournamentId);
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             foreach (var member in team.Members)
             {
@@ -238,12 +238,12 @@ namespace GameHubz.Logic.Services
 
             if (request.OutgoingUserId == Guid.Empty || request.IncomingUserId == Guid.Empty)
             {
-                throw new BusinessRuleException("Both the outgoing and the incoming player are required.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapNeedsBothPlayers"]);
             }
 
             if (request.OutgoingUserId == request.IncomingUserId)
             {
-                throw new BusinessRuleException("Pick a different player to swap in.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickDifferentPlayer"]);
             }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
@@ -253,17 +253,17 @@ namespace GameHubz.Logic.Services
             var eligibility = this.AssessSwap(tournament, participant, matches);
             if (!eligibility.CanSwap)
             {
-                throw new BusinessRuleException(eligibility.BlockReason ?? "This participant can no longer be swapped.");
+                throw new BusinessRuleException(eligibility.BlockReason ?? this.LocalizationService["BusinessRule.SwapNoLongerPossible"]);
             }
 
             var incomingUser = await this.AppUnitOfWork.UserRepository.GetById(request.IncomingUserId)
-                ?? throw new BusinessRuleException("The player you picked no longer exists.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickedPlayerGone"]);
 
             // UX_TournamentParticipant_Tournament_User (migration 60) is the DB backstop; checking
             // here turns the race-free case into a readable 400 instead of a unique-violation 500.
             if (await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForUser(tournamentId, request.IncomingUserId))
             {
-                throw new BusinessRuleException($"{incomingUser.Username} is already in this tournament.");
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UserAlreadyInTournament"], incomingUser.Username));
             }
 
             await this.EnsureIncomingUserCanJoin(tournament, incomingUser);
@@ -394,7 +394,7 @@ namespace GameHubz.Logic.Services
                 || tournament.Status == TournamentStatus.Deleted)
             {
                 result.CanSwap = false;
-                result.BlockReason = "This tournament is already closed — a swap would rewrite its final results.";
+                result.BlockReason = this.LocalizationService["BusinessRule.SwapTournamentClosed"];
                 return result;
             }
 
@@ -408,8 +408,8 @@ namespace GameHubz.Logic.Services
             {
                 result.CanSwap = false;
                 result.BlockReason = tournament.Format == TournamentFormat.Swiss
-                    ? $"Already played {MatchCountLabel(played)}. Swiss pairings are built from results, so a swap is only possible before the first round is played."
-                    : $"Already played {MatchCountLabel(played)}. A knockout bracket can only be swapped before the player's first match.";
+                    ? string.Format(this.LocalizationService["BusinessRule.SwapSwissPlayed"], MatchCountLabel(played))
+                    : string.Format(this.LocalizationService["BusinessRule.SwapKnockoutPlayed"], MatchCountLabel(played));
                 return result;
             }
 
@@ -418,13 +418,16 @@ namespace GameHubz.Logic.Services
             result.CanSwap = total == 0 || played * 100 < maxPercent * total;
             if (!result.CanSwap)
             {
-                result.BlockReason = $"Already played {played} of {MatchCountLabel(total)} ({result.PlayedPercent}%). This format allows a swap below {maxPercent}%.";
+                result.BlockReason = string.Format(
+                    this.LocalizationService["BusinessRule.SwapTooManyPlayed"], played, MatchCountLabel(total), result.PlayedPercent, maxPercent);
             }
 
             return result;
         }
 
-        private static string MatchCountLabel(int count) => count == 1 ? "1 match" : $"{count} matches";
+        private string MatchCountLabel(int count) => count == 1
+            ? this.LocalizationService["BusinessRule.MatchCountOne"]
+            : string.Format(this.LocalizationService["BusinessRule.MatchCountMany"], count);
 
         private int SwapMaxPlayedPercent()
         {
@@ -443,7 +446,7 @@ namespace GameHubz.Logic.Services
         {
             if (tournament.IsTeamTournament)
             {
-                throw new BusinessRuleException("In a team tournament the entrant is the team — change the roster from the team instead.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamTournamentEntrantIsTeam"]);
             }
 
             var participants = await this.AppUnitOfWork.TournamentParticipantRepository
@@ -451,14 +454,14 @@ namespace GameHubz.Logic.Services
 
             if (participants.Count == 0)
             {
-                throw new BusinessRuleException("That player is not a participant of this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PlayerNotParticipant"]);
             }
 
             if (participants.Count > 1)
             {
                 // Legacy duplicate rows (see RemoveUser): which one carries the real history is a
                 // guess, so refuse rather than pick. Removing the player clears all of them.
-                throw new BusinessRuleException("This player has duplicate entries in the tournament. Remove them and register the replacement instead.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DuplicateParticipantEntries"]);
             }
 
             return participants[0];
@@ -468,13 +471,13 @@ namespace GameHubz.Logic.Services
         {
             if (!tournament.HubId.HasValue)
             {
-                throw new BusinessRuleException("This tournament has no hub, so its roster cannot be changed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoHubNoRosterChange"]);
             }
 
             var role = await this.AppUnitOfWork.UserHubRepository.GetRole(incomingUser.Id!.Value, tournament.HubId.Value);
             if (role == null)
             {
-                throw new BusinessRuleException($"{incomingUser.Username} is not a member of this hub.");
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UserNotHubMember"], incomingUser.Username));
             }
 
             // The tournament's own scope. A manager may hand the spot to any hub member, but not to
@@ -483,8 +486,8 @@ namespace GameHubz.Logic.Services
             if (!IsWithinTournamentScope(tournament, incomingUser))
             {
                 throw new BusinessRuleException(tournament.Countries != null && tournament.Countries.Count > 0
-                    ? $"{incomingUser.Username} can't enter this tournament — it only accepts players from {string.Join(", ", tournament.Countries)}."
-                    : $"{incomingUser.Username} can't enter this tournament — it's restricted to a different region.");
+                    ? string.Format(this.LocalizationService["BusinessRule.EntrantCountryRestricted"], incomingUser.Username, string.Join(", ", tournament.Countries))
+                    : string.Format(this.LocalizationService["BusinessRule.EntrantRegionRestricted"], incomingUser.Username));
             }
 
             // Same access rule the feed uses (UserHubRepository.GetHubIdsWithExclusiveAccess): a
@@ -494,7 +497,7 @@ namespace GameHubz.Logic.Services
                 && role != HubRole.HubAdmin
                 && role != HubRole.HubExclusive)
             {
-                throw new BusinessRuleException($"{incomingUser.Username} needs exclusive access to this hub to enter this tournament.");
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UserNeedsExclusiveAccess"], incomingUser.Username));
             }
         }
 
@@ -588,36 +591,44 @@ namespace GameHubz.Logic.Services
         {
             string tournamentId = tournament.Id!.Value.ToString();
 
-            string inheritedNote = inheritedPlayedMatches > 0
-                ? $"You take over a spot with {MatchCountLabel(inheritedPlayedMatches)} already played."
-                : "You're in — your first match is waiting.";
+            // The count label is part of the sentence, so it has to be resolved in the same
+            // language as the sentence — hence the key rather than a pre-built string.
+            PushText inheritedNote = inheritedPlayedMatches > 0
+                ? PushText.FromKey("Push.SwappedIn.Body", PlayedMatchesKey(inheritedPlayedMatches, incomingUser?.Language))
+                : PushText.FromKey("Push.SwappedIn.BodyFirstMatch");
 
             this.SendPush(
                 incomingUser,
-                tournament.Name,
+                PushText.FromLiteral(tournament.Name),
                 inheritedNote,
                 new { tournamentId, type = "participantSwappedIn" });
 
             this.SendPush(
                 outgoingUser,
-                tournament.Name,
-                "The organizer has replaced you in this tournament.",
+                PushText.FromLiteral(tournament.Name),
+                PushText.FromKey("Push.SwappedOut.Body"),
                 new { tournamentId, type = "participantSwappedOut" });
         }
 
         // The push token is already in hand (both users were loaded during the swap), so only the
         // send is fired and forgotten — a failed notification must never break a committed swap.
-        private void SendPush(UserEntity? target, string title, string body, object data)
+        private void SendPush(UserEntity? target, PushText title, PushText body, object data)
         {
             if (string.IsNullOrEmpty(target?.PushToken)) return;
 
-            var token = target.PushToken!;
+            var recipient = new PushRecipient(target.PushToken!, target.Language);
             _ = Task.Run(async () =>
             {
-                try { await this.notificationService.SendToOneAsync(token, title, body, data); }
+                try { await this.notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }
                 catch { /* fire-and-forget */ }
             });
         }
+
+        // "3 matches" / "1 match" in the recipient's language, for embedding in Push.SwappedIn.Body.
+        private string PlayedMatchesKey(int count, string? language)
+            => count == 1
+                ? this.LocalizationService["Push.PlayedMatches.One", language]
+                : string.Format(this.LocalizationService["Push.PlayedMatches.Many", language], count);
 
         private async Task EnsureCanManageTournament(Guid tournamentId)
         {

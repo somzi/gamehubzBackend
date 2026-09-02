@@ -89,8 +89,8 @@ namespace GameHubz.Logic.Services
                     // "not open" reads as "you missed it", which is the opposite of the truth.
                     throw new BusinessRuleException(
                         tournamentForStatus.Status == TournamentStatus.Draft && tournamentForStatus.RegistrationOpensAt != null
-                            ? "Registration for this tournament hasn't opened yet."
-                            : "Registration is not open for this tournament.");
+                            ? this.LocalizationService["BusinessRule.RegistrationNotOpenedYet"]
+                            : this.LocalizationService["BusinessRule.RegistrationNotOpen"]);
                 }
 
                 // Block duplicate sign-ups. An entrant that already has a non-rejected registration,
@@ -106,7 +106,7 @@ namespace GameHubz.Logic.Services
 
                 if (alreadyRegistered || alreadyParticipant)
                 {
-                    throw new BusinessRuleException("You're already registered for this tournament.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.AlreadyRegistered"]);
                 }
             }
 
@@ -117,7 +117,7 @@ namespace GameHubz.Logic.Services
 
                 if (!IsEligibleToJoin(tournament, user))
                 {
-                    throw new BusinessRuleException("You can't join this tournament — it's restricted to a different region or country.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentRegionRestricted"]);
                 }
 
                 // Exclusive tournaments require an Exclusive-or-higher role in the owning hub.
@@ -130,7 +130,7 @@ namespace GameHubz.Logic.Services
 
                     if (!hasExclusiveAccess)
                     {
-                        throw new BusinessRuleException("You can't join this tournament — it's restricted to exclusive members of this hub.");
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentExclusiveOnly"]);
                     }
                 }
             }
@@ -170,7 +170,7 @@ namespace GameHubz.Logic.Services
 
             if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
             {
-                throw new BusinessRuleException("Cannot approve registration. Tournament has reached maximum number of players.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentFull"]);
             }
 
             await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
@@ -264,7 +264,7 @@ namespace GameHubz.Logic.Services
 
             if (IsAlreadyFullTournament(tournamentRegistration.First(), registrationsToMaterialize.Count))
             {
-                throw new BusinessRuleException("Cannot approve registration. Tournament has reached maximum number of players.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentFull"]);
             }
 
             foreach (var registration in tournamentRegistration)
@@ -400,7 +400,7 @@ namespace GameHubz.Logic.Services
                 // created the participant. The entrant is in — the desired end state — so surface
                 // a clear message instead of a raw DB error. The in-memory "already a participant"
                 // guard can't catch this; only the DB sees the other transaction's pending row.
-                throw new BusinessRuleException("This registration has already been approved.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RegistrationAlreadyApproved"]);
             }
         }
 

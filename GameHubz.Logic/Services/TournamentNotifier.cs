@@ -41,8 +41,8 @@ namespace GameHubz.Logic.Services
                 await SendPushToHubMembersAsync(
                     model.HubId!.Value,
                     model.IsExclusive,
-                    model.Name,
-                    "New tournament announced — tap to see when registration opens.",
+                    PushText.FromLiteral(model.Name),
+                    PushText.FromKey("Push.TournamentAnnounced.Body"),
                     new { tournamentId = model.Id!.Value, type = "registrationScheduled" });
 
                 var hub = await GetDiscordTargetAsync(model.HubId, s => s.RegistrationScheduled);
@@ -208,8 +208,8 @@ namespace GameHubz.Logic.Services
             => SendPushToHubMembersAsync(
                 hubId,
                 isExclusive,
-                title,
-                "Registration is open, grab your spot!",
+                PushText.FromLiteral(title),
+                PushText.FromKey("Push.RegistrationOpen.Body"),
                 new { tournamentId });
 
         // Recipient rule shared by every hub-wide tournament announcement: members of the hub,
@@ -219,28 +219,27 @@ namespace GameHubz.Logic.Services
         private async Task SendPushToHubMembersAsync(
             Guid hubId,
             bool isExclusive,
-            string title,
-            string body,
+            PushText title,
+            PushText body,
             object data)
         {
             var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
             if (hubMembers == null || hubMembers.Count == 0) return;
 
-            var pushTokens = hubMembers
+            var recipients = hubMembers
                 .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
                 // Exclusive tournaments are invisible to plain members, so don't notify them.
                 .Where(m => !isExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
-                .Select(m => m.PushToken!)
-                .Distinct()
+                .Select(m => new PushRecipient(m.PushToken!, m.Language))
                 .ToList();
 
-            if (pushTokens.Count == 0) return;
+            if (recipients.Count == 0) return;
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await notificationService.SendToManyAsync(pushTokens, title, body, data);
+                    await notificationService.SendLocalizedToManyAsync(recipients, title, body, data);
                 }
                 catch { /* fire-and-forget */ }
             });

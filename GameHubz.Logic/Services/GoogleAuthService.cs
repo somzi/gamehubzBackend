@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using GameHubz.Common.Consts;
+using GameHubz.DataModels.Consts;
 using GameHubz.Logic.Crypto;
 
 namespace GameHubz.Logic.Services
@@ -51,7 +52,12 @@ namespace GameHubz.Logic.Services
                 UserRoleId = UserRoles.BasicUser,
                 IsNativeAuthentication = false,
                 IsVerified = true,
-                PasswordNonce = NonceGenerator.GetNew()
+                PasswordNonce = NonceGenerator.GetNew(),
+
+                // Same stamp RegisterUser applies: the signing-in client already sent its
+                // language on this request, and without it the account's first pushes and
+                // e-mails would go out in English until the app syncs the profile.
+                Language = Languages.ToSupported(this.LocalizationService.CurrentLanguage)
             };
 
             await userService.AddUpdateUserAnonymously(newUserEntity);

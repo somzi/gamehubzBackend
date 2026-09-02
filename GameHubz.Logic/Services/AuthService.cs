@@ -115,12 +115,12 @@ namespace GameHubz.Logic.Services
 
             if (this.HashPassword(request.OldPassword, user.PasswordNonce) != user.Password)
             {
-                throw new BusinessRuleException("The current password is incorrect.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CurrentPasswordIncorrect"]);
             }
 
             if (string.IsNullOrWhiteSpace(request.NewPassword))
             {
-                throw new BusinessRuleException("The new password cannot be empty.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NewPasswordEmpty"]);
             }
 
             user.Password = this.HashPassword(request.NewPassword, user.PasswordNonce);

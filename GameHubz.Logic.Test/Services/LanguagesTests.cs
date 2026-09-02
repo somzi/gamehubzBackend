@@ -1,0 +1,66 @@
+using GameHubz.DataModels.Consts;
+using NUnit.Framework;
+
+namespace GameHubz.Logic.Test.Services
+{
+    /// <summary>
+    /// The language tag reaches us from three places that all spell it differently — the mobile
+    /// <c>Language</c> header, the profile column, and appsettings — so the narrowing rule is
+    /// what keeps every push and every resource lookup pointed at a set we can actually render.
+    /// </summary>
+    [TestFixture]
+    public class LanguagesTests
+    {
+        [TestCase("es", "es")]
+        [TestCase("ES", "es")]
+        [TestCase("  es  ", "es")]
+        [TestCase("es-419", "es")]
+        [TestCase("es-ES", "es")]
+        [TestCase("en-US", "en")]
+        [TestCase("pt", "pt")]
+        public void Normalize_ReducesTagToBareLowercaseCode(string input, string expected)
+        {
+            Assert.That(Languages.Normalize(input), Is.EqualTo(expected));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("   ")]
+        public void Normalize_ReturnsNullForBlank_SoCallersCanFallBack(string? input)
+        {
+            // Null is distinct from "unrecognised": callers use it to mean "not specified"
+            // and substitute their own default rather than assuming English.
+            Assert.That(Languages.Normalize(input), Is.Null);
+        }
+
+        [Test]
+        public void Normalize_KeepsALeadingDash_RatherThanProducingAnEmptyCode()
+        {
+            // IndexOf('-') == 0 must not truncate to "", which would then be stored and
+            // compared as a real language.
+            Assert.That(Languages.Normalize("-es"), Is.EqualTo("-es"));
+        }
+
+        [TestCase("es", "es")]
+        [TestCase("es-419", "es")]
+        [TestCase("ES", "es")]
+        [TestCase("en", "en")]
+        [TestCase("en-GB", "en")]
+        public void ToSupported_KeepsTheTwoLanguagesWeRender(string input, string expected)
+        {
+            Assert.That(Languages.ToSupported(input), Is.EqualTo(expected));
+        }
+
+        [TestCase("sr")]      // legacy default, no resource set
+        [TestCase("pt-BR")]   // plausible next language, not shipped yet
+        [TestCase("zzz")]
+        [TestCase("")]
+        [TestCase(null)]
+        public void ToSupported_NarrowsAnythingElseToEnglish(string? input)
+        {
+            // Storing an unrenderable code on the profile would render English on every push
+            // anyway — storing English keeps the column honest about what the user will get.
+            Assert.That(Languages.ToSupported(input), Is.EqualTo(Languages.English));
+        }
+    }
+}

@@ -1,6 +1,7 @@
 using GameHubz.DataModels.Api;
 using GameHubz.Logic.Queuing.Queues;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 
 namespace GameHubz.Logic.Services
@@ -15,6 +16,7 @@ namespace GameHubz.Logic.Services
         private readonly EmailService emailService;
         private readonly ICacheService cacheService;
         private readonly AuthThrottleService authThrottleService;
+        private readonly ILogger<PasswordManagementService> logger;
 
         private const int ForgotPasswrodTokenExpireHours = 1;
 
@@ -34,10 +36,12 @@ namespace GameHubz.Logic.Services
             DateTimeProvider dateTimeProvider,
             EmailService emailService,
             ICacheService cacheService,
-            AuthThrottleService authThrottleService)
+            AuthThrottleService authThrottleService,
+            ILogger<PasswordManagementService> logger)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.authThrottleService = authThrottleService;
+            this.logger = logger;
             this.userService = userService;
             this.configuration = configuration;
             this.passwordHasher = passwordHasher;
@@ -92,7 +96,7 @@ namespace GameHubz.Logic.Services
             int attempts = await this.cacheService.GetAsync<int?>(attemptsKey) ?? 0;
             if (attempts >= MaxOtpResetAttempts)
             {
-                throw new BusinessRuleException("Too many incorrect attempts. Please request a new reset code.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TooManyResetAttempts"]);
             }
 
             UserEntity? user = await this.AppUnitOfWork.UserRepository.GetByOtpAndMail(resetPasswordRequestDto);
@@ -154,7 +158,7 @@ namespace GameHubz.Logic.Services
             EmailQueueModel emailQueue = new()
             {
                 To = user.Email,
-                Subject = "Reset Password",
+                Subject = this.LocalizationService.ForRecipient(user.Language, "Email.ResetPassword.Subject"),
                 Message = message,
                 IsMessageHtml = true
             };
@@ -204,12 +208,23 @@ namespace GameHubz.Logic.Services
             user.ForgotPasswordTokenExpires = DateTime.UtcNow.AddMinutes(30);
             await this.userService.AddUpdateUserAnonymously(user);
 
-            await SendMailForResetPassword(otpCode, email);
+            await SendMailForResetPassword(otpCode, email, user.Language);
         }
 
-        private async Task SendMailForResetPassword(string otpCode, string email)
+        private async Task SendMailForResetPassword(string otpCode, string email, string? recipientLanguage)
         {
-            string subject = "GameHubz: Your password reset code";
+            string subject = this.LocalizationService.ForRecipient(recipientLanguage, "Email.ResetOtp.Subject");
+
+            // Sentences come from the resx, the markup stays here — a translator can reword the
+            // copy without ever being able to break the layout.
+            string greeting = this.LocalizationService.ForRecipient(recipientLanguage, "Email.ResetOtp.Greeting");
+            string intro = this.LocalizationService.ForRecipient(recipientLanguage, "Email.ResetOtp.Intro");
+            string duration = this.LocalizationService.ForRecipient(recipientLanguage, "Email.ResetOtp.ValidityDuration");
+            string validity = this.LocalizationService.ForRecipient(
+                recipientLanguage,
+                "Email.ResetOtp.Validity",
+                $@"<strong style=""color: #e2e8f0;"">{duration}</strong>");
+            string ignore = this.LocalizationService.ForRecipient(recipientLanguage, "Email.ResetOtp.Ignore");
 
             string message = $@"
             <div style=""font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"">
@@ -219,9 +234,9 @@ namespace GameHubz.Logic.Services
                 </div>
 
                 <div style=""padding: 32px; color: #f8fafc;"">
-                    <p style=""font-size: 16px; line-height: 1.5; margin-top: 0;"">Hello,</p>
+                    <p style=""font-size: 16px; line-height: 1.5; margin-top: 0;"">{greeting}</p>
                     <p style=""font-size: 16px; line-height: 1.5; color: #cbd5e1;"">
-                        We received a request to reset the password for your account. Enter the code below in the app to set a new password:
+                        {intro}
                     </p>
 
                     <div style=""text-align: center; margin: 40px 0;"">
@@ -231,13 +246,13 @@ namespace GameHubz.Logic.Services
                     </div>
 
                     <p style=""font-size: 14px; text-align: center; color: #94a3b8;"">
-                        This code is valid for the next <strong style=""color: #e2e8f0;"">15 minutes</strong>.
+                        {validity}
                     </p>
                 </div>
 
                 <div style=""background-color: #0b1120; padding: 24px; text-align: center;"">
                     <p style=""margin: 0; font-size: 12px; color: #64748b; line-height: 1.5;"">
-                        If you didn't request a password reset, you can safely ignore this email. Your account is secure and no one can access it without this code.
+                        {ignore}
                     </p>
                 </div>
             </div>";
@@ -257,7 +272,7 @@ namespace GameHubz.Logic.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Greška pri slanju: {ex.Message}");
+                this.logger.LogError(ex, "Failed to send the password reset code.");
             }
         }
     }

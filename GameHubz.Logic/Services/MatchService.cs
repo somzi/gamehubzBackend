@@ -54,7 +54,7 @@ namespace GameHubz.Logic.Services
         public async Task<MatchAvailabilityDto> GetAvailability(Guid id, Guid userId)
         {
             var availability = await this.AppUnitOfWork.MatchRepository.GetAvailability(id, userId);
-            if (availability == null) throw new BusinessRuleException("Match not found");
+            if (availability == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
             return availability;
         }
 
@@ -88,7 +88,7 @@ namespace GameHubz.Logic.Services
         public async Task<MatchResultDetailDto> GetWithEvidence(Guid id)
         {
             var detail = await this.AppUnitOfWork.MatchRepository.GetWithEvidence(id);
-            if (detail == null) throw new BusinessRuleException("Match not found");
+            if (detail == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // The projection carries the games as raw JSON (EF can't deserialize mid-query);
             // turn them into the parsed lists the client actually consumes.
@@ -150,7 +150,7 @@ namespace GameHubz.Logic.Services
 
             var userId = user.UserId;
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // 1. Determine side (Home vs Away)
             bool isHome = match.HomeParticipant != null &&
@@ -229,13 +229,13 @@ namespace GameHubz.Logic.Services
             if (opponent == null) return;
 
             var (title, body) = match.Status == MatchStatus.Scheduled
-                ? ("Match Scheduled", $"Your match is confirmed vs {user.Username}")
-                : ("Match schedule", $"{user.Username} set their availability, add yours to confirm a time");
+                ? (PushText.FromKey("Push.MatchScheduled.Title"), PushText.FromKey("Push.MatchScheduled.Body", user.Username))
+                : (PushText.FromKey("Push.MatchSchedule.Title"), PushText.FromKey("Push.MatchSchedule.Body", user.Username));
 
             if (!string.IsNullOrEmpty(opponent.PushToken))
             {
                 FireAndForgetPush(
-                    new List<string> { opponent.PushToken! },
+                    new List<PushRecipient> { new(opponent.PushToken!, opponent.Language) },
                     title,
                     body,
                     new { matchId = matchId.ToString() });
@@ -259,7 +259,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // F31: forcing a match to Scheduled is restricted to its participants or a tournament admin.
             if (!IsMatchParticipant(match, user.UserId) && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
@@ -281,7 +281,7 @@ namespace GameHubz.Logic.Services
             // F26: only a match participant or a tournament admin may attach evidence — otherwise any
             // user could pollute an arbitrary match's evidence gallery / burn storage.
             var matchForAuth = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (matchForAuth == null) throw new BusinessRuleException("Match not found");
+            if (matchForAuth == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (!IsMatchParticipant(matchForAuth, user.UserId) && !await this.tournamentAuth.CanManageTournamentAsync(matchForAuth.TournamentId, user))
             {
@@ -289,7 +289,7 @@ namespace GameHubz.Logic.Services
             }
 
             var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             foreach (var file in files)
             {
@@ -321,10 +321,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (!IsMatchParticipant(match, user.UserId))
-                throw new BusinessRuleException("Only match participants can request admin help");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyParticipantsRequestHelp"]);
 
             // Idempotent: a second tap must not spam the admins with notifications.
             if (match.AdminHelpRequested) return;
@@ -349,8 +349,10 @@ namespace GameHubz.Logic.Services
 
             FireAndForgetPush(
                 pushTokens,
-                tournament?.Name ?? "Admin help needed",
-                $"{user.Username} requested admin help in their match.",
+                tournament?.Name is { Length: > 0 } tournamentName
+                    ? PushText.FromLiteral(tournamentName)
+                    : PushText.FromKey("Push.AdminHelp.TitleFallback"),
+                PushText.FromKey("Push.AdminHelp.Body", user.Username),
                 new
                 {
                     matchId = match.Id!.Value.ToString(),
@@ -367,10 +369,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
-                throw new BusinessRuleException("Only tournament admins can resolve help requests");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsResolveHelp"]);
 
             if (!match.AdminHelpRequested) return;
 
@@ -392,9 +394,9 @@ namespace GameHubz.Logic.Services
             if (string.IsNullOrEmpty(requester?.PushToken)) return;
 
             FireAndForgetPush(
-                new List<string> { requester.PushToken! },
-                "Help request resolved",
-                "An admin reviewed your match and marked the issue as resolved.",
+                new List<PushRecipient> { new(requester.PushToken!, requester.Language) },
+                PushText.FromKey("Push.AdminHelpResolved.Title"),
+                PushText.FromKey("Push.AdminHelpResolved.Body"),
                 new { matchId = matchId.ToString(), type = "adminHelpResolved" });
         }
 
@@ -406,7 +408,7 @@ namespace GameHubz.Logic.Services
             // token refresh + retry for a plain authorization failure. BusinessRuleException keeps
             // the descriptive message and stays out of the ErrorLog server-fault noise.
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
-                throw new BusinessRuleException("Only tournament admins can view help requests");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsViewHelp"]);
 
             return await this.AppUnitOfWork.MatchRepository.GetAdminHelpRequests(tournamentId);
         }
@@ -416,7 +418,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
-                throw new BusinessRuleException("Only tournament admins can view pending approvals");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsViewApprovals"]);
 
             return await this.AppUnitOfWork.MatchRepository.GetPendingApprovalMatches(tournamentId);
         }
@@ -437,17 +439,17 @@ namespace GameHubz.Logic.Services
         // Resolves every push token entitled to "Admin help" notifications for a tournament:
         // hub owner + hub admins, plus the hub owner row if they aren't in UserHub.
         // Called while the request-scoped DbContext is alive — never from a Task.Run.
-        private async Task<List<string>> CollectHubAdminPushTokensAsync(Guid tournamentId, Guid excludeUserId)
+        private async Task<List<PushRecipient>> CollectHubAdminPushTokensAsync(Guid tournamentId, Guid excludeUserId)
         {
             var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
-            if (ownership == null) return new List<string>();
+            if (ownership == null) return new List<PushRecipient>();
 
             var hubUsers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
-            var pushTokens = hubUsers
+            var recipients = hubUsers
                 .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
                             && m.UserId != excludeUserId
                             && !string.IsNullOrEmpty(m.PushToken))
-                .Select(m => m.PushToken!)
+                .Select(m => new PushRecipient(m.PushToken!, m.Language))
                 .ToList();
 
             // The hub owner may not have a UserHub membership row — include them explicitly.
@@ -455,23 +457,24 @@ namespace GameHubz.Logic.Services
                 !hubUsers.Any(m => m.UserId == ownership.OwnerUserId))
             {
                 var owner = await this.AppUnitOfWork.UserRepository.GetById(ownership.OwnerUserId);
-                if (!string.IsNullOrEmpty(owner?.PushToken)) pushTokens.Add(owner.PushToken!);
+                if (!string.IsNullOrEmpty(owner?.PushToken)) recipients.Add(new PushRecipient(owner.PushToken!, owner.Language));
             }
 
-            return pushTokens.Distinct().ToList();
+            // De-duplicated on the token inside SendLocalizedToManyAsync.
+            return recipients;
         }
 
         // Hands off already-resolved tokens to the push pipeline. Safe inside Task.Run because
         // NotificationService owns its own DbContext scope (see SendBatchAsync).
-        private void FireAndForgetPush(List<string> pushTokens, string title, string body, object data)
+        private void FireAndForgetPush(List<PushRecipient> recipients, PushText title, PushText body, object data)
         {
-            if (pushTokens.Count == 0) return;
+            if (recipients.Count == 0) return;
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await notificationService.SendToManyAsync(pushTokens, title, body, data);
+                    await notificationService.SendLocalizedToManyAsync(recipients, title, body, data);
                 }
                 catch { /* fire-and-forget */ }
             });
@@ -493,13 +496,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (!IsStreamingPlatform(request.Platform))
-                throw new BusinessRuleException("Unsupported streaming platform. Choose Twitch, YouTube or Kick.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UnsupportedStreamPlatform"]);
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (!IsMatchParticipant(match, user.UserId))
-                throw new BusinessRuleException("Only match participants can stream this match.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyParticipantsStream"]);
 
             // Resolve the channel handle: explicit handle wins, otherwise fall back to a saved social.
             var socials = await this.AppUnitOfWork.UserSocialRepository.GetByUserId(user.UserId);
@@ -510,7 +513,7 @@ namespace GameHubz.Logic.Services
                 handle = existingSocial?.Username?.Trim() ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(handle))
-                throw new BusinessRuleException("No channel found. Add your channel handle to start streaming.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoStreamChannel"]);
 
             // Persist the channel on the profile for next time (create or update).
             if (existingSocial == null)
@@ -578,7 +581,7 @@ namespace GameHubz.Logic.Services
             // Target the caller's own stream by default; an admin may pass StreamerUserId to end another's.
             var targetStreamerId = request?.StreamerUserId ?? user.UserId;
             var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
-            if (stream == null) throw new BusinessRuleException("No stream found for this match.");
+            if (stream == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoStreamForMatch"]);
 
             await EnsureCanManageStream(stream, matchId, user);
 
@@ -614,11 +617,11 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (string.IsNullOrWhiteSpace(request.VodUrl))
-                throw new BusinessRuleException("VOD URL is required.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VodUrlRequired"]);
 
             var targetStreamerId = request.StreamerUserId ?? user.UserId;
             var stream = await this.AppUnitOfWork.MatchStreamRepository.GetLatestByMatchAndStreamer(matchId, targetStreamerId);
-            if (stream == null) throw new BusinessRuleException("No stream found for this match.");
+            if (stream == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoStreamForMatch"]);
 
             await EnsureCanManageStream(stream, matchId, user);
 
@@ -728,7 +731,7 @@ namespace GameHubz.Logic.Services
 
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
             if (match == null || !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
-                throw new BusinessRuleException("Only the streamer or a tournament admin can manage this stream.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStreamerManageStream"]);
         }
 
         private static bool IsStreamingPlatform(SocialType platform) =>

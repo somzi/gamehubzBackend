@@ -29,18 +29,18 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(request.TournamentId);
 
             if (!tournament.IsTeamTournament)
-                throw new BusinessRuleException("This tournament is not a team tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotATeamTournament"]);
 
             if (tournament.Status != TournamentStatus.RegistrationOpen)
                 throw new BusinessRuleException(
                     // Waiting to open is not the same as closed — see the note in TournamentRegistrationService.
                     tournament.Status == TournamentStatus.Draft && tournament.RegistrationOpensAt != null
-                        ? "Registration for this tournament hasn't opened yet."
-                        : "Tournament registration is not open.");
+                        ? this.LocalizationService["BusinessRule.RegistrationNotOpenedYet"]
+                        : this.LocalizationService["BusinessRule.TournamentRegistrationNotOpen"]);
 
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, request.TournamentId);
             if (alreadyInTeam)
-                throw new BusinessRuleException("User is already in a team for this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
             var team = new TournamentTeamEntity
             {
@@ -76,10 +76,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can rename the team.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainRename"]);
 
             team.TeamName = request.TeamName;
             await this.AppUnitOfWork.TournamentTeamRepository.UpdateEntity(team, this.UserContextReader);
@@ -100,10 +100,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can delete the team.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainDeleteTeam"]);
 
             foreach (var member in team.Members)
             {
@@ -121,18 +121,18 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
-            if (data == null) throw new BusinessRuleException("Team not found.");
+            if (data == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (!data.TeamSize.HasValue)
-                throw new BusinessRuleException("Tournament team size is not configured.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeNotConfigured"]);
 
             // Capacity is the lineup plus whatever bench the organizer granted, so a team with a
             // full lineup still has room while it has empty bench slots.
             if (data.CurrentMemberCount >= data.RosterCapacity)
-                throw new BusinessRuleException("Team is already full.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamFull"]);
 
             if (data.UserAlreadyInTournament)
-                throw new BusinessRuleException("User is already in a team for this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
             bool joinsAsReserve = data.CurrentStarterCount >= data.TeamSize.Value;
 
@@ -170,16 +170,16 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can kick members.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainKick"]);
 
             if (userId == user.UserId)
-                throw new BusinessRuleException("Captain cannot kick themselves.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CaptainCannotKickSelf"]);
 
             var member = team.Members.FirstOrDefault(m => m.UserId == userId);
-            if (member == null) throw new BusinessRuleException("User is not a member of this team.");
+            if (member == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotTeamMember"]);
 
             await this.EnsureLineupSurvivesRemoval(team, member);
 
@@ -201,23 +201,23 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
-            if (data == null) throw new BusinessRuleException("Team not found.");
+            if (data == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (!data.RequiresApproval)
-                throw new BusinessRuleException("This team is public. Use the join endpoint instead.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamIsPublicUseJoin"]);
 
             if (!data.TeamSize.HasValue)
-                throw new BusinessRuleException("Tournament team size is not configured.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeNotConfigured"]);
 
             if (data.CurrentMemberCount >= data.RosterCapacity)
-                throw new BusinessRuleException("Team is already full.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamFull"]);
 
             if (data.UserAlreadyInTournament)
-                throw new BusinessRuleException("User is already in a team for this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
             var alreadyRequested = await this.AppUnitOfWork.TeamJoinRequestRepository.HasPendingRequest(teamId, user.UserId);
             if (alreadyRequested)
-                throw new BusinessRuleException("You already have a pending request for this team.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PendingRequestForTeam"]);
 
             var request = new TeamJoinRequestEntity
             {
@@ -235,8 +235,8 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(data.CaptainUserId);
             await NotifyUserAsync(
                 data.CaptainUserId,
-                data.TeamName,
-                $"{user.Username} asked to join your team.",
+                PushText.FromLiteral(data.TeamName),
+                PushText.FromKey("Push.TeamJoinRequest.Body", user.Username),
                 new { teamId = data.TeamId.ToString(), tournamentId = data.TournamentId.ToString(), type = "teamJoinRequest" });
 
             return new TeamDto
@@ -258,15 +258,48 @@ namespace GameHubz.Logic.Services
 
         // Fire-and-forget push to a single user by id. Resolves the token in the request scope,
         // then sends in the background so the DbContext is never touched off-thread.
-        private async Task NotifyUserAsync(Guid userId, string title, string body, object data)
+        // "You're in the lineup — 3 upcoming games are yours." The count label sits inside the
+        // sentence, so it has to be resolved in the SAME language as the sentence.
+        private async Task NotifyLineupInAsync(Guid reserveUserId, TournamentTeamEntity team, TournamentEntity tournament, int upcomingGames)
+        {
+            var target = await this.AppUnitOfWork.UserRepository.GetById(reserveUserId);
+            if (string.IsNullOrEmpty(target?.PushToken)) return;
+
+            string? language = target.Language;
+
+            PushText body;
+            if (upcomingGames > 0)
+            {
+                string gamesNote = upcomingGames == 1
+                    ? this.LocalizationService["Push.UpcomingGames.One", language]
+                    : string.Format(this.LocalizationService["Push.UpcomingGames.Many", language], upcomingGames);
+
+                body = PushText.FromKey("Push.TeamLineupIn.Body", gamesNote);
+            }
+            else
+            {
+                body = PushText.FromKey("Push.TeamLineupIn.BodyNoGames");
+            }
+
+            var recipient = new PushRecipient(target.PushToken!, language);
+            var data = new { teamId = team.Id.ToString(), tournamentId = tournament.Id!.Value.ToString(), type = "teamLineupIn" };
+
+            _ = Task.Run(async () =>
+            {
+                try { await notificationService.SendLocalizedToOneAsync(recipient, PushText.FromLiteral(team.TeamName), body, data); }
+                catch { /* fire-and-forget */ }
+            });
+        }
+
+        private async Task NotifyUserAsync(Guid userId, PushText title, PushText body, object data)
         {
             var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
             if (string.IsNullOrEmpty(target?.PushToken)) return;
 
-            var token = target.PushToken!;
+            var recipient = new PushRecipient(target.PushToken!, target.Language);
             _ = Task.Run(async () =>
             {
-                try { await notificationService.SendToOneAsync(token, title, body, data); }
+                try { await notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }
                 catch { /* fire-and-forget */ }
             });
         }
@@ -277,7 +310,7 @@ namespace GameHubz.Logic.Services
         public async Task<TeamShareSummaryDto> GetTeamShareSummary(Guid teamId)
         {
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             return new TeamShareSummaryDto
             {
@@ -306,10 +339,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetById(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can view join requests.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainViewRequests"]);
 
             return await this.AppUnitOfWork.TeamJoinRequestRepository.GetPendingRequestsByTeamId(teamId);
         }
@@ -319,25 +352,25 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
-            if (request == null) throw new BusinessRuleException("Request not found.");
+            if (request == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNotFound"]);
 
             var team = request.Team!;
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can approve requests.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainApprove"]);
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(team.TournamentId!.Value);
 
             if (!tournament.TeamSize.HasValue)
-                throw new BusinessRuleException("Tournament team size is not configured.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeNotConfigured"]);
 
             int rosterCapacity = RosterCapacity(tournament);
             if (team.Members.Count >= rosterCapacity)
-                throw new BusinessRuleException("Team is already full.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamFull"]);
 
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(request.UserId!.Value, team.TournamentId!.Value);
             if (alreadyInTeam)
-                throw new BusinessRuleException("User is already in a team for this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
             var member = new TournamentTeamMemberEntity
             {
@@ -362,8 +395,8 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(user.UserId);
             await NotifyUserAsync(
                 request.UserId!.Value,
-                team.TeamName,
-                "You've been added to the team.",
+                PushText.FromLiteral(team.TeamName),
+                PushText.FromKey("Push.TeamJoinApproved.Body"),
                 new { teamId = team.Id.ToString(), tournamentId = team.TournamentId!.Value.ToString(), type = "teamJoinApproved" });
 
             return MapTeamsToDto(team, [.. team.Members, member], tournament.TeamSize, tournament.AllowReserves, tournament.MaxReserves);
@@ -374,10 +407,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.TeamJoinRequestRepository.GetByIdWithTeam(requestId);
-            if (request == null) throw new BusinessRuleException("Request not found.");
+            if (request == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNotFound"]);
 
             if (request.Team!.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can reject requests.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainReject"]);
 
             request.Status = JoinRequestStatus.Rejected;
             await this.AppUnitOfWork.TeamJoinRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -388,8 +421,8 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(user.UserId);
             await NotifyUserAsync(
                 request.UserId!.Value,
-                request.Team!.TeamName,
-                "Your request to join the team was declined.",
+                PushText.FromLiteral(request.Team!.TeamName),
+                PushText.FromKey("Push.TeamJoinRejected.Body"),
                 new { teamId = request.TeamId!.Value.ToString(), tournamentId = request.Team!.TournamentId!.Value.ToString(), type = "teamJoinRejected" });
         }
 
@@ -420,10 +453,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             var member = team.Members.FirstOrDefault(m => m.UserId == user.UserId);
-            if (member == null) throw new BusinessRuleException("User is not a member of this team.");
+            if (member == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotTeamMember"]);
 
             await this.EnsureLineupSurvivesRemoval(team, member, leavingSelf: true);
 
@@ -467,35 +500,35 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var team = await this.AppUnitOfWork.TournamentTeamRepository.GetByIdWithMembers(teamId);
-            if (team == null) throw new BusinessRuleException("Team not found.");
+            if (team == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
 
             if (team.CaptainUserId != user.UserId)
-                throw new BusinessRuleException("Only the captain can change the lineup.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainLineup"]);
 
             var tournament = team.Tournament
                 ?? await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(team.TournamentId!.Value);
 
             if (!tournament.AllowReserves)
-                throw new BusinessRuleException("This tournament doesn't use reserves.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentHasNoReserves"]);
 
             if (tournament.Status == TournamentStatus.Completed
                 || tournament.Status == TournamentStatus.Cancelled
                 || tournament.Status == TournamentStatus.Deleted)
-                throw new BusinessRuleException("This tournament is closed — the lineup can no longer be changed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentClosedLineup"]);
 
             if (request.StarterUserId == request.ReserveUserId)
-                throw new BusinessRuleException("Pick a reserve to bring in for a different player.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickDifferentReserve"]);
 
             var starter = team.Members.FirstOrDefault(m => m.UserId == request.StarterUserId)
-                ?? throw new BusinessRuleException("That player is not on this team.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.PlayerNotOnTeam"]);
             var reserve = team.Members.FirstOrDefault(m => m.UserId == request.ReserveUserId)
-                ?? throw new BusinessRuleException("That reserve is not on this team.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.ReserveNotOnTeam"]);
 
             if (starter.IsReserve)
-                throw new BusinessRuleException("The player going out is already on the bench.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OutgoingAlreadyOnBench"]);
 
             if (!reserve.IsReserve)
-                throw new BusinessRuleException("The player coming in is already in the lineup.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.IncomingAlreadyInLineup"]);
 
             // Every fixture the outgoing player is still due to play, across all rounds already on the
             // schedule. Group stages create the whole season up front, so benching someone has to take
@@ -523,8 +556,9 @@ namespace GameHubz.Logic.Services
 
             if (wouldDuplicate)
             {
-                throw new BusinessRuleException(
-                    $"{reserve.User?.Username ?? "That player"} already has a game in one of these rounds — bring in someone else.");
+                throw new BusinessRuleException(string.Format(
+                    this.LocalizationService["BusinessRule.ReserveAlreadyHasGame"],
+                    reserve.User?.Username ?? this.LocalizationService["BusinessRule.ThatPlayerFallback"]));
             }
 
             starter.IsReserve = true;
@@ -558,20 +592,14 @@ namespace GameHubz.Logic.Services
             foreach (var affectedUserId in new[] { request.StarterUserId, request.ReserveUserId })
                 await this.badgeService.PushAsync(affectedUserId);
 
-            string gamesNote = toRepoint.Count == 1 ? "1 upcoming game" : $"{toRepoint.Count} upcoming games";
-
-            await NotifyUserAsync(
-                request.ReserveUserId,
-                team.TeamName,
-                toRepoint.Count > 0
-                    ? $"You're in the lineup — {gamesNote} are yours."
-                    : "You're in the lineup for the next round.",
-                new { teamId = team.Id.ToString(), tournamentId = tournament.Id!.Value.ToString(), type = "teamLineupIn" });
+            // The games note is interpolated into the sentence, so it must be resolved in the
+            // recipient's language — resolved inside NotifyLineupAsync rather than here.
+            await NotifyLineupInAsync(request.ReserveUserId, team, tournament, toRepoint.Count);
 
             await NotifyUserAsync(
                 request.StarterUserId,
-                team.TeamName,
-                "You've been moved to the bench by your captain.",
+                PushText.FromLiteral(team.TeamName),
+                PushText.FromKey("Push.TeamLineupOut.Body"),
                 new { teamId = team.Id.ToString(), tournamentId = tournament.Id!.Value.ToString(), type = "teamLineupOut" });
 
             return MapTeamsToDto(team, team.Members, tournament.TeamSize, tournament.AllowReserves, tournament.MaxReserves);
@@ -645,12 +673,16 @@ namespace GameHubz.Logic.Services
             if (hasReserveToPromote) return;
 
             int lineupSize = tournament.TeamSize ?? 0;
-            throw new BusinessRuleException(leavingSelf
-                ? $"You can't leave — the team needs {MemberCountLabel(lineupSize)} to play and has no reserve to take your place. Ask the organizer to remove the team instead."
-                : $"The team needs {MemberCountLabel(lineupSize)} to play and has no reserve to take that slot. Add a reserve first, or ask the organizer to remove the team.");
+            throw new BusinessRuleException(string.Format(
+                leavingSelf
+                    ? this.LocalizationService["BusinessRule.CannotLeaveNoReserve"]
+                    : this.LocalizationService["BusinessRule.CannotRemoveNoReserve"],
+                MemberCountLabel(lineupSize)));
         }
 
-        private static string MemberCountLabel(int count) => count == 1 ? "1 player" : $"{count} players";
+        private string MemberCountLabel(int count) => count == 1
+            ? this.LocalizationService["BusinessRule.PlayerCountOne"]
+            : string.Format(this.LocalizationService["BusinessRule.PlayerCountMany"], count);
 
         /// <summary>
         /// Keeps the lineup at TeamSize after someone leaves: when a starter goes, the longest-serving

@@ -96,6 +96,7 @@ namespace GameHubz.Data.Repository
                     UserId = x.UserId!.Value,
                     Username = x.User!.Username,
                     PushToken = x.User!.PushToken,
+                    Language = x.User!.Language,
                     AvatarUrl = x.User!.AvatarUrl,
                     HubRole = x.HubRole
                 })
@@ -125,6 +126,7 @@ namespace GameHubz.Data.Repository
                     UserId = x.UserId!.Value,
                     Username = x.User!.Username,
                     PushToken = x.User!.PushToken,
+                    Language = x.User!.Language,
                     AvatarUrl = x.User!.AvatarUrl,
                     HubRole = x.HubRole
                 })

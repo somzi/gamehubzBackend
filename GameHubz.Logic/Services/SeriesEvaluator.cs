@@ -227,30 +227,35 @@ namespace GameHubz.Logic.Services
         /// exists because the series before it drew); the last series played out to a decision or
         /// a level finish; and non-negative scores.
         /// </remarks>
+        /// <param name="localization">
+        /// Required because every rejection below is read by a player. A static helper has no
+        /// request context of its own, so the caller hands its own service in.
+        /// </param>
         public static SeriesOutcome ValidateAndEvaluate(
             IReadOnlyList<SeriesGame>? games,
             TeamWinCondition condition,
             int matchBestOf,
-            int? tiebreakBestOf)
+            int? tiebreakBestOf,
+            ILocalizationService localization)
         {
             if (games == null || games.Count == 0)
-                throw new BusinessRuleException("Report at least one game for this match.");
+                throw new BusinessRuleException(localization["BusinessRule.ReportAtLeastOneGame"]);
 
             if (games.Any(g => g.HomeScore < 0 || g.AwayScore < 0))
-                throw new BusinessRuleException("Game scores cannot be negative.");
+                throw new BusinessRuleException(localization["BusinessRule.NegativeScores"]);
 
             var seriesNumbers = games.Select(g => g.SeriesNumber).Distinct().OrderBy(n => n).ToList();
 
             if (seriesNumbers[0] != 1)
-                throw new BusinessRuleException("The first series must be numbered 1.");
+                throw new BusinessRuleException(localization["BusinessRule.FirstSeriesNumberOne"]);
 
             if (seriesNumbers.Count > MaxSeriesCount)
-                throw new BusinessRuleException($"A match cannot go beyond {MaxSeriesCount - 1} tiebreaks.");
+                throw new BusinessRuleException(string.Format(localization["BusinessRule.TooManyTiebreaks"], MaxSeriesCount - 1));
 
             for (int i = 0; i < seriesNumbers.Count; i++)
             {
                 if (seriesNumbers[i] != i + 1)
-                    throw new BusinessRuleException("Tiebreak series must be consecutive — a series is missing.");
+                    throw new BusinessRuleException(localization["BusinessRule.TiebreakSeriesGap"]);
             }
 
             // Every series but the last must be complete AND level: a tiebreak exists only because
@@ -262,13 +267,13 @@ namespace GameHubz.Logic.Services
                 var slice = games.Where(g => g.SeriesNumber == number).ToList();
 
                 if (slice.Count > bestOf)
-                    throw new BusinessRuleException($"Series {number} has more games than its best-of-{bestOf} format allows.");
+                    throw new BusinessRuleException(string.Format(localization["BusinessRule.SeriesTooManyGames"], number, bestOf));
 
                 var (home, away, over) = ScoreSeries(slice, condition, bestOf);
                 if (!over)
-                    throw new BusinessRuleException($"Series {number} is not finished, so a tiebreak cannot start.");
+                    throw new BusinessRuleException(string.Format(localization["BusinessRule.SeriesNotFinished"], number));
                 if (home != away)
-                    throw new BusinessRuleException($"Series {number} already has a winner, so a tiebreak cannot start.");
+                    throw new BusinessRuleException(string.Format(localization["BusinessRule.SeriesAlreadyWon"], number));
             }
 
             var lastNumber = seriesNumbers[^1];
@@ -276,7 +281,7 @@ namespace GameHubz.Logic.Services
             var lastSlice = games.Where(g => g.SeriesNumber == lastNumber).ToList();
 
             if (lastSlice.Count > lastBestOf)
-                throw new BusinessRuleException($"This match is a best-of-{lastBestOf} — you reported {lastSlice.Count} games.");
+                throw new BusinessRuleException(string.Format(localization["BusinessRule.WrongGameCountForBestOf"], lastBestOf, lastSlice.Count));
 
             // A decided series takes no further games: a Bo3 won 2-0 has no third game to play, so
             // one reported here never happened. The entry form already stops offering the row, this
@@ -289,13 +294,13 @@ namespace GameHubz.Logic.Services
             {
                 var (_, _, decided) = ScoreSeries(lastSlice.Take(played).ToList(), condition, lastBestOf);
                 if (decided)
-                    throw new BusinessRuleException($"This series was already decided after game {played} — remove the games that follow.");
+                    throw new BusinessRuleException(string.Format(localization["BusinessRule.SeriesDecidedEarlier"], played));
             }
 
             var outcome = Evaluate(games, condition, matchBestOf, tiebreakBestOf);
 
             if (!outcome.CurrentSeriesOver)
-                throw new BusinessRuleException("This series is not finished yet — report the remaining games.");
+                throw new BusinessRuleException(localization["BusinessRule.SeriesIncomplete"]);
 
             return outcome;
         }

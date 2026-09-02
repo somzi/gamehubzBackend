@@ -86,7 +86,7 @@ namespace GameHubz.Logic.Services
                 var userEntity = await this.AppUnitOfWork.UserRepository.GetWithSocials(userId);
 
                 if (userEntity == null)
-                    throw new BusinessRuleException("User not found");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotFoundNoDot"]);
 
                 cachedProfile = this.mapper.Map<UserProfileDto>(userEntity);
 

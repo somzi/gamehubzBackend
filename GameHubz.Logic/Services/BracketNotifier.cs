@@ -46,8 +46,8 @@ namespace GameHubz.Logic.Services
             var userIds = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllUserIdsByTournamentId(tournamentId);
             if (userIds.Count == 0) return;
 
-            var pushTokens = await this.AppUnitOfWork.UserRepository.GetPushTokensByUserIds(userIds);
-            if (pushTokens.Count == 0) return;
+            var recipients = await this.AppUnitOfWork.UserRepository.GetPushRecipientsByUserIds(userIds);
+            if (recipients.Count == 0) return;
 
             var title = tournament.Name;
 
@@ -55,10 +55,10 @@ namespace GameHubz.Logic.Services
             {
                 try
                 {
-                    await notificationService.SendToManyAsync(
-                        pushTokens,
-                        $"{title}",
-                        $"Tournament is now live. Good luck!",
+                    await notificationService.SendLocalizedToManyAsync(
+                        recipients,
+                        PushText.FromLiteral(title),
+                        PushText.FromKey("Push.TournamentLive.Body"),
                         new { tournamentId });
                 }
                 catch { /* fire-and-forget */ }

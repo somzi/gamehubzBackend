@@ -74,8 +74,8 @@ namespace GameHubz.Logic.Services
 
             foreach (var activity in activities)
             {
-                activity.TimeAgo = GetTimeAgo(activity.CreatedOn);
-                activity.Message = GetMessageForType(activity.Type);
+                activity.TimeAgo = this.GetTimeAgo(activity.CreatedOn);
+                activity.Message = this.GetMessageForType(activity.Type);
             }
 
             return activities;
@@ -106,26 +106,32 @@ namespace GameHubz.Logic.Services
             return result;
         }
 
-        private static string GetMessageForType(HubActivityType type)
+        private string GetMessageForType(HubActivityType type)
         {
-            return type switch
+            string key = type switch
             {
-                HubActivityType.TournamentAnnounced => "announced a new tournament",
-                HubActivityType.RegistrationOpen => "registration is now open",
-                HubActivityType.TournamentCanceled => "tournament has been cancelled",
-                HubActivityType.TournamentLive => "started a live tournament",
-                HubActivityType.TournamentCompleted => "tournament concluded",
-                HubActivityType.TournamentDeleted => "tournament deleted",
-                _ => "updated a tournament"
+                HubActivityType.TournamentAnnounced => "HubActivity.TournamentAnnounced",
+                HubActivityType.RegistrationOpen => "HubActivity.RegistrationOpen",
+                HubActivityType.TournamentCanceled => "HubActivity.TournamentCanceled",
+                HubActivityType.TournamentLive => "HubActivity.TournamentLive",
+                HubActivityType.TournamentCompleted => "HubActivity.TournamentCompleted",
+                HubActivityType.TournamentDeleted => "HubActivity.TournamentDeleted",
+                _ => "HubActivity.Updated"
             };
+
+            return this.LocalizationService[key];
         }
 
-        private static string GetTimeAgo(DateTime date)
+        private string GetTimeAgo(DateTime date)
         {
             var span = DateTime.UtcNow - date;
-            if (span.TotalHours < 1) return $"{span.Minutes}m ago";
-            if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
-            return $"{(int)span.TotalDays}d ago";
+
+            if (span.TotalHours < 1)
+                return string.Format(this.LocalizationService["HubActivity.MinutesAgo"], span.Minutes);
+            if (span.TotalHours < 24)
+                return string.Format(this.LocalizationService["HubActivity.HoursAgo"], (int)span.TotalHours);
+
+            return string.Format(this.LocalizationService["HubActivity.DaysAgo"], (int)span.TotalDays);
         }
     }
 }

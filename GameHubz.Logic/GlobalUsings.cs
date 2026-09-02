@@ -6,6 +6,7 @@ global using global::GameHubz.DataModels;
 global using global::GameHubz.DataModels.Domain;
 global using global::GameHubz.DataModels.Models;
 global using global::GameHubz.Logic.Exceptions;
+global using global::GameHubz.Logic.Extensions;
 global using global::GameHubz.Logic.Interfaces;
 global using global::GameHubz.Logic.Utility;
 global using global::AutoMapper;

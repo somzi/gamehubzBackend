@@ -2,6 +2,7 @@ using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Exceptions;
+using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,6 +19,7 @@ namespace GameHubz.Api.Controllers
         private readonly TournamentTeamService tournamentTeamService;
         private readonly TournamentExportService tournamentExportService;
         private readonly TournamentCsvExportService tournamentCsvExportService;
+        private readonly ILocalizationService localizationService;
 
         public TournamentController(
             TournamentService service,
@@ -25,9 +27,11 @@ namespace GameHubz.Api.Controllers
             BracketService bracketService,
             TournamentTeamService tournamentTeamService,
             TournamentExportService tournamentExportService,
-            TournamentCsvExportService tournamentCsvExportService)
+            TournamentCsvExportService tournamentCsvExportService,
+            ILocalizationService localizationService)
             : base(service, appAuthorizationService)
         {
+            this.localizationService = localizationService;
             this.bracketService = bracketService;
             this.tournamentTeamService = tournamentTeamService;
             this.tournamentExportService = tournamentExportService;
@@ -336,7 +340,7 @@ namespace GameHubz.Api.Controllers
         {
             if (!Enum.TryParse<TournamentCsvDataset>(dataset, ignoreCase: true, out var parsedDataset)
                 || !Enum.IsDefined(parsedDataset))
-                throw new BusinessRuleException("dataset must be either 'standings' or 'matches'.");
+                throw new BusinessRuleException(this.localizationService["BusinessRule.InvalidExportDataset"]);
 
             var (csv, name) = await this.tournamentCsvExportService.GenerateCsvAsync(id, parsedDataset);
             var safeName = string.Concat(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));

@@ -79,7 +79,7 @@ namespace GameHubz.Logic.Services
             // Owner role is bound to Hub.UserId and is assigned only when the hub is created.
             if (role == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("Owner role cannot be assigned. The hub already has an owner.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerRoleNotAssignable"]);
             }
 
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
@@ -94,7 +94,7 @@ namespace GameHubz.Logic.Services
             var existing = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (existing != null)
             {
-                throw new BusinessRuleException("User is already a member of this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyHubMember"]);
             }
 
             var entity = new UserHubEntity
@@ -132,30 +132,30 @@ namespace GameHubz.Logic.Services
             // so a drifted or stale Owner role row can never be used to give the hub away.
             if (hub.UserId != caller.UserId)
             {
-                throw new BusinessRuleException("Only the hub owner can transfer ownership.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerTransfer"]);
             }
 
             if (newOwnerUserId == caller.UserId)
             {
-                throw new BusinessRuleException("This user already owns the hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyOwnsThisHub"]);
             }
 
             // Must already be a member: you can't hand the hub to someone who never joined it, and
             // the membership row is what gets promoted. A banned user has no row, so this covers them.
             var newOwnerMembership = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(newOwnerUserId, hubId)
-                ?? throw new BusinessRuleException("The new owner must be a member of this hub.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.NewOwnerMustBeMember"]);
 
             var newOwnerUser = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(newOwnerUserId);
             if (!newOwnerUser.IsActive)
             {
-                throw new BusinessRuleException("This account is not active and cannot own a hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.InactiveAccountCannotOwnHub"]);
             }
 
             // Same one-hub-per-user rule HubService.Create enforces — a transfer must not be a way
             // around it. (Transferring away frees the outgoing owner to create a new hub.)
             if (await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(newOwnerUserId))
             {
-                throw new BusinessRuleException("This user already owns a hub and cannot own another one.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyOwnsAHub"]);
             }
 
             var previousOwnerMembership = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(caller.UserId, hubId);
@@ -191,7 +191,7 @@ namespace GameHubz.Logic.Services
             // Owner role is immutable through this endpoint.
             if (newRole == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("Owner role cannot be assigned. The hub already has an owner.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerRoleNotAssignable"]);
             }
 
             // Only the Owner can change roles (grant or revoke admin).
@@ -199,11 +199,11 @@ namespace GameHubz.Logic.Services
             await this.EnsureCallerIsOwner(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
-                ?? throw new BusinessRuleException("Membership not found.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MembershipNotFound"]);
 
             if (member.HubRole == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("The hub owner's role cannot be changed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerRoleCannotChange"]);
             }
 
             member.HubRole = newRole;
@@ -222,11 +222,11 @@ namespace GameHubz.Logic.Services
             var callerRole = await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId)
-                ?? throw new BusinessRuleException("Membership not found.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MembershipNotFound"]);
 
             if (member.HubRole == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("The hub owner cannot be removed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerCannotBeRemoved"]);
             }
 
             // Admins may only act on regular and exclusive members. Removing another
@@ -256,7 +256,7 @@ namespace GameHubz.Logic.Services
             await this.EnsureCallerCanManage(hubId, caller.UserId);
 
             var ban = await this.AppUnitOfWork.UserHubBanRepository.FindActiveBan(userId, hubId)
-                ?? throw new BusinessRuleException("This user is not banned from this hub.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotBanned"]);
 
             await this.AppUnitOfWork.UserHubBanRepository.SoftDeleteEntity(ban, this.UserContextReader);
             await this.SaveAsync();
@@ -272,7 +272,7 @@ namespace GameHubz.Logic.Services
             var member = await this.AppUnitOfWork.UserHubRepository.FindByUserAndHub(userId, hubId);
             if (member != null && member.HubRole == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("The hub owner cannot be banned.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerCannotBeBanned"]);
             }
 
             // Admins may only act on regular and exclusive members. Banning another
@@ -338,10 +338,10 @@ namespace GameHubz.Logic.Services
 
                 var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(caller.UserId, inputDto.HubId.Value);
                 if (isBanned)
-                    throw new BusinessRuleException("You are banned from this hub.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAreBanned"]);
 
                 if (!hub.IsPublic && hub.UserId != caller.UserId)
-                    throw new BusinessRuleException("This hub is private. You need to request to join.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.HubIsPrivate"]);
             }
 
             await this.InvalidateHubCaches(caller.UserId, inputDto.HubId);

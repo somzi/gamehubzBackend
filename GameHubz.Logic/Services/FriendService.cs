@@ -234,17 +234,17 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (toUserId == user.UserId)
-                throw new BusinessRuleException("You cannot send a friend request to yourself.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CannotFriendSelf"]);
 
             var target = await this.AppUnitOfWork.UserRepository.GetById(toUserId);
             if (target == null)
-                throw new BusinessRuleException("User not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotFound"]);
 
             if (await this.AppUnitOfWork.UserBlockRepository.EitherBlocks(user.UserId, toUserId))
-                throw new BusinessRuleException("Cannot send a request — there is an active block between the users.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestBlocked"]);
 
             if (await this.AppUnitOfWork.FriendshipRepository.AreFriends(user.UserId, toUserId))
-                throw new BusinessRuleException("You are already friends.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.AlreadyFriends"]);
 
             var existing = await this.AppUnitOfWork.FriendRequestRepository.FindPendingBetween(user.UserId, toUserId);
             if (existing != null)
@@ -257,7 +257,7 @@ namespace GameHubz.Logic.Services
                                             user.Username, null, null);
                 }
 
-                throw new BusinessRuleException("A pending request already exists.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestAlreadyPending"]);
             }
 
             var request = new FriendRequestEntity
@@ -277,8 +277,9 @@ namespace GameHubz.Logic.Services
             await this.badgeService.PushAsync(toUserId);
 
             // Fire-and-forget push notification
-            SendNotification(target, user.Username, "New friend request",
-                $"{user.Username} sent you a friend request.",
+            SendNotification(target, user.Username,
+                PushText.FromKey("Push.FriendRequest.Title"),
+                PushText.FromKey("Push.FriendRequest.Body", user.Username),
                 new { type = "friend_request", requestId = request.Id!.Value.ToString(), fromUserId = user.UserId.ToString() });
 
             return new FriendRequestDto
@@ -301,13 +302,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new BusinessRuleException("Friend request not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.FriendRequestNotFound"]);
 
             if (request.ToUserId != user.UserId)
-                throw new BusinessRuleException("Only the recipient can accept this request.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyRecipientAccept"]);
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new BusinessRuleException("This request is no longer pending.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ThisRequestNoLongerPending"]);
 
             request.Status = FriendRequestStatus.Accepted;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -341,8 +342,9 @@ namespace GameHubz.Logic.Services
 
             // Notify the original sender
             var sender = await this.AppUnitOfWork.UserRepository.GetById(request.FromUserId);
-            SendNotification(sender, user.Username, "Friend request accepted",
-                $"{user.Username} accepted your friend request.",
+            SendNotification(sender, user.Username,
+                PushText.FromKey("Push.FriendAccepted.Title"),
+                PushText.FromKey("Push.FriendAccepted.Body", user.Username),
                 new { type = "friend_accepted", userId = user.UserId.ToString() });
         }
 
@@ -352,13 +354,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new BusinessRuleException("Friend request not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.FriendRequestNotFound"]);
 
             if (request.ToUserId != user.UserId)
-                throw new BusinessRuleException("Only the recipient can reject this request.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyRecipientReject"]);
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new BusinessRuleException("This request is no longer pending.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ThisRequestNoLongerPending"]);
 
             request.Status = FriendRequestStatus.Rejected;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -377,13 +379,13 @@ namespace GameHubz.Logic.Services
 
             var request = await this.AppUnitOfWork.FriendRequestRepository.GetById(requestId);
             if (request == null)
-                throw new BusinessRuleException("Friend request not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.FriendRequestNotFound"]);
 
             if (request.FromUserId != user.UserId)
-                throw new BusinessRuleException("Only the sender can cancel this request.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlySenderCancel"]);
 
             if (request.Status != FriendRequestStatus.Pending)
-                throw new BusinessRuleException("This request is no longer pending.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ThisRequestNoLongerPending"]);
 
             request.Status = FriendRequestStatus.Cancelled;
             await this.AppUnitOfWork.FriendRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -402,7 +404,7 @@ namespace GameHubz.Logic.Services
 
             var friendship = await this.AppUnitOfWork.FriendshipRepository.Find(user.UserId, otherUserId);
             if (friendship == null)
-                throw new BusinessRuleException("You are not friends with this user.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotFriends"]);
 
             await this.AppUnitOfWork.FriendshipRepository.SoftDeleteEntity(friendship, this.UserContextReader);
             await this.SaveAsync();
@@ -418,11 +420,11 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (otherUserId == user.UserId)
-                throw new BusinessRuleException("You cannot block yourself.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CannotBlockSelf"]);
 
             var target = await this.AppUnitOfWork.UserRepository.GetById(otherUserId);
             if (target == null)
-                throw new BusinessRuleException("User not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotFound"]);
 
             // If a soft-deleted block row exists for this pair, resurrect it —
             // UQ_UserBlock_Pair is not partial, so re-inserting would violate it.
@@ -490,16 +492,18 @@ namespace GameHubz.Logic.Services
         // PRIVATE
         // ─────────────────────────────────────────────────────────────────
 
-        private void SendNotification(UserEntity? target, string fromUsername, string title, string body, object data)
+        // Written in the TARGET's language, not the acting user's — the request header belongs
+        // to whoever triggered this, and they are not the one reading the notification.
+        private void SendNotification(UserEntity? target, string fromUsername, PushText title, PushText body, object data)
         {
             if (target?.PushToken == null) return;
 
-            string token = target.PushToken;
+            var recipient = new PushRecipient(target.PushToken, target.Language);
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await notificationService.SendToOneAsync(token, title, body, data);
+                    await notificationService.SendLocalizedToOneAsync(recipient, title, body, data);
                 }
                 catch { /* swallow */ }
             });

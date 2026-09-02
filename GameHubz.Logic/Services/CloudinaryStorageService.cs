@@ -10,9 +10,12 @@ namespace GameHubz.Logic.Services
     public class CloudinaryStorageService
     {
         private readonly Cloudinary cloudinary;
+        private readonly ILocalizationService localizationService;
 
-        public CloudinaryStorageService(IConfiguration config)
+        public CloudinaryStorageService(IConfiguration config, ILocalizationService localizationService)
         {
+            this.localizationService = localizationService;
+
             var account = new Account(
                 config["Cloudinary:CloudName"],
                 config["Cloudinary:ApiKey"],
@@ -56,7 +59,7 @@ namespace GameHubz.Logic.Services
                 int cloudinaryStatus = (int)uploadResult.StatusCode;
                 if (cloudinaryStatus >= 400 && cloudinaryStatus < 500)
                 {
-                    throw new BusinessRuleException("The uploaded file could not be processed. Please make sure it is a valid image.");
+                    throw new BusinessRuleException(this.localizationService["BusinessRule.UploadNotAnImage"]);
                 }
 
                 throw new Exception($"Cloudinary upload failed: {uploadResult.Error.Message}");

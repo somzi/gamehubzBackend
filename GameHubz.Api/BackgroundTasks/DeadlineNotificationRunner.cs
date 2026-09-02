@@ -29,6 +29,7 @@ namespace GameHubz.Api.BackgroundTasks
         private readonly ApplicationContext context;
         private readonly INotificationService notificationService;
         private readonly IDiscordDmService discordDmService;
+        private readonly ILocalizationService localizationService;
         private readonly TournamentNotifier tournamentNotifier;
         private readonly ICacheService cacheService;
         private readonly ShareLinksConfig shareLinksConfig;
@@ -41,6 +42,7 @@ namespace GameHubz.Api.BackgroundTasks
             ApplicationContext context,
             INotificationService notificationService,
             IDiscordDmService discordDmService,
+            ILocalizationService localizationService,
             TournamentNotifier tournamentNotifier,
             ICacheService cacheService,
             IOptions<ShareLinksConfig> shareLinksOptions,
@@ -50,6 +52,7 @@ namespace GameHubz.Api.BackgroundTasks
             this.context = context;
             this.notificationService = notificationService;
             this.discordDmService = discordDmService;
+            this.localizationService = localizationService;
             this.tournamentNotifier = tournamentNotifier;
             this.cacheService = cacheService;
             this.shareLinksConfig = shareLinksOptions.Value;
@@ -253,27 +256,29 @@ namespace GameHubz.Api.BackgroundTasks
                             .AsNoTracking()
                             .Where(u => targetIds.Contains(u.Id!.Value) && u.IsActive
                                 && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
-                            .Select(u => new { u.PushToken, u.DiscordUserId, u.DiscordDmEnabled })
+                            .Select(u => new { u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
 
-                        var tokens = targets
+                        var recipients = targets
                             .Where(t => t.PushToken != null)
-                            .Select(t => t.PushToken!)
+                            .Select(t => new PushRecipient(t.PushToken!, t.Language))
                             .ToList();
 
-                        if (tokens.Count > 0)
+                        if (recipients.Count > 0)
                         {
-                            await notificationService.SendToManyAsync(
-                                tokens,
-                                tournament.Name,
-                                "Registration closes soon — join before the deadline!",
+                            await notificationService.SendLocalizedToManyAsync(
+                                recipients,
+                                PushText.FromLiteral(tournament.Name),
+                                PushText.FromKey("Push.RegistrationClosingSoon.Body"),
                                 new { tournamentId = tournament.Id, type = "registrationDeadline" });
                         }
 
-                        string dmContent = $"⏰ **{tournament.Name}** — registration closes soon, join before the deadline!\n"
-                            + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}>)";
                         foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
                         {
+                            // Built per target: this runs outside any request, so the recipient's
+                            // own language is the only thing that can decide the wording.
+                            string dmContent = $"⏰ **{tournament.Name}** — {this.localizationService["Dm.RegistrationClosingSoon.Body", target.Language]}\n"
+                                + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}>)";
                             await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
                         }
                     }
@@ -353,19 +358,19 @@ namespace GameHubz.Api.BackgroundTasks
                         && roundLengthMinutes.Value >= this.roundEarlyLeadMinutes;
 
                     int newStage;
-                    string body;
+                    string bodyKey;
 
                     if (match.RoundReminderStage < 1 && earlyEligible && now >= earlyAt && now < lastCallAt)
                     {
                         newStage = 1;
-                        body = "Don't forget to play your match before the round deadline.";
+                        bodyKey = "Push.RoundDeadline.Body";
                     }
                     else if (now >= lastCallAt)
                     {
                         // Covers both the normal last-call and the case where we missed the early
                         // window (task was down) — we jump straight to the final reminder, never both.
                         newStage = 2;
-                        body = "Final call — play your match before time runs out!";
+                        bodyKey = "Push.RoundDeadlineFinal.Body";
                     }
                     else
                     {
@@ -383,30 +388,30 @@ namespace GameHubz.Api.BackgroundTasks
                             .AsNoTracking()
                             .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive
                                 && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
-                            .Select(u => new { u.PushToken, u.DiscordUserId, u.DiscordDmEnabled })
+                            .Select(u => new { u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
 
-                        var tokens = targets
+                        var recipients = targets
                             .Where(t => t.PushToken != null)
-                            .Select(t => t.PushToken!)
+                            .Select(t => new PushRecipient(t.PushToken!, t.Language))
                             .ToList();
 
-                        if (tokens.Count > 0)
+                        if (recipients.Count > 0)
                         {
-                            await notificationService.SendToManyAsync(
-                                tokens,
-                                match.TournamentName,
-                                body,
+                            await notificationService.SendLocalizedToManyAsync(
+                                recipients,
+                                PushText.FromLiteral(match.TournamentName),
+                                PushText.FromKey(bodyKey),
                                 // teamMatchId — carried for team-tournament sub-matches so the mobile deep
                                 // link can route to the team-match modal (the solo modal renders empty for
                                 // a sub-match id).
                                 new { tournamentId = match.TournamentId, matchId = match.Id, teamMatchId = match.TeamMatchId, type = "roundDeadline" });
                         }
 
-                        string dmContent = $"⏰ **{match.TournamentName}** — {body}\n"
-                            + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
                         foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
                         {
+                            string dmContent = $"⏰ **{match.TournamentName}** — {this.localizationService[bodyKey, target.Language]}\n"
+                                + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
                             await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
                         }
                     }

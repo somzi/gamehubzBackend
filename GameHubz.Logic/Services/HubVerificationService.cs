@@ -35,17 +35,17 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
 
             if (hub.UserId != user.UserId)
-                throw new BusinessRuleException("Only the hub owner can request verification.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerRequestVerification"]);
 
             if (hub.IsVerified)
-                throw new BusinessRuleException("This hub is already verified.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.HubAlreadyVerified"]);
 
             if (string.IsNullOrWhiteSpace(reason))
-                throw new BusinessRuleException("Please provide a reason and evidence for the verification request.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationNeedsReason"]);
 
             var pending = await this.AppUnitOfWork.HubVerificationRequestRepository.GetPendingForHub(hubId);
             if (pending != null)
-                throw new BusinessRuleException("A verification request for this hub is already pending review.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationAlreadyPending"]);
 
             var request = new HubVerificationRequestEntity
             {
@@ -70,7 +70,7 @@ namespace GameHubz.Logic.Services
             await this.appAuthorizationService.CheckAuthorization([UserRoleEnum.Admin]);
 
             var request = await this.AppUnitOfWork.HubVerificationRequestRepository.GetPendingForHub(hubId)
-                ?? throw new BusinessRuleException("No pending verification request found for this hub.");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoPendingVerification"]);
 
             request.Status = approved ? HubVerificationStatus.Approved : HubVerificationStatus.Rejected;
             await this.AppUnitOfWork.HubVerificationRequestRepository.UpdateEntity(request, this.UserContextReader);

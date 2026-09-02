@@ -99,7 +99,7 @@ namespace GameHubz.Logic.Services
 
             if (hubDto == null)
             {
-                throw new BusinessRuleException("Hub not found");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.HubNotFoundNoDot"]);
             }
 
             hubDto.IsUserOwner = hubDto.UserId == user.UserId;
@@ -137,7 +137,7 @@ namespace GameHubz.Logic.Services
         // Empty/whitespace becomes null (integration off). A non-empty value must be a real Discord
         // webhook endpoint — without this check the server could be pointed at an arbitrary URL and
         // used as a blind HTTP POST proxy (SSRF) by the notifiers' fire-and-forget sends.
-        private static string? NormalizeDiscordWebhookUrl(string? url)
+        private static string? NormalizeDiscordWebhookUrl(string? url, ILocalizationService localization)
         {
             if (string.IsNullOrWhiteSpace(url)) return null;
 
@@ -149,7 +149,7 @@ namespace GameHubz.Logic.Services
                 || trimmed.StartsWith("https://canary.discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase);
 
             if (!isDiscordWebhook)
-                throw new BusinessRuleException("The Discord webhook URL must start with https://discord.com/api/webhooks/.");
+                throw new BusinessRuleException(localization["BusinessRule.DiscordWebhookPrefix"]);
 
             return trimmed;
         }
@@ -185,7 +185,7 @@ namespace GameHubz.Logic.Services
                 // Discord server is already linked to another hub" instead of a raw db exception.
                 var existing = await this.AppUnitOfWork.HubRepository.GetByDiscordGuildId(guildId);
                 if (existing != null && existing.Id != hubId)
-                    throw new BusinessRuleException("This Discord server is already linked to another GameHubz hub.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.DiscordServerLinkedElsewhere"]);
 
                 return guildId;
             }
@@ -247,7 +247,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(request.Id!.Value);
 
             if (hub.UserId != caller.UserId)
-                throw new BusinessRuleException("Only the hub owner can edit hub details.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerEditHub"]);
 
             hub.Name = request.Name;
             hub.Description = request.Description;
@@ -258,7 +258,7 @@ namespace GameHubz.Logic.Services
             // string is an explicit clear from the Discord form.
             string? previousWebhookUrl = hub.DiscordWebhookUrl;
             if (request.DiscordWebhookUrl != null)
-                hub.DiscordWebhookUrl = NormalizeDiscordWebhookUrl(request.DiscordWebhookUrl);
+                hub.DiscordWebhookUrl = NormalizeDiscordWebhookUrl(request.DiscordWebhookUrl, this.LocalizationService);
             if (request.DiscordNotificationSettings != null)
                 hub.DiscordNotificationSettings = string.IsNullOrWhiteSpace(request.DiscordNotificationSettings)
                     ? null
@@ -292,7 +292,7 @@ namespace GameHubz.Logic.Services
 
             var alreadyOwnsHub = await this.AppUnitOfWork.HubRepository.UserOwnsAnyHub(user.UserId);
             if (alreadyOwnsHub)
-                throw new BusinessRuleException("You already own a hub and cannot create another one.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAlreadyOwnAHub"]);
 
             var hub = new HubEntity
             {
@@ -334,7 +334,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(entityId);
 
             if (hub.UserId != caller.UserId)
-                throw new BusinessRuleException("Only the hub owner can delete the hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerDeleteHub"]);
 
             var activities = await this.AppUnitOfWork.HubActivityRepository.GetByHubId(entityId);
 
@@ -428,7 +428,7 @@ namespace GameHubz.Logic.Services
 
             if (userhub.HubRole == HubRole.HubOwner)
             {
-                throw new BusinessRuleException("The hub owner cannot be removed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OwnerCannotBeRemoved"]);
             }
 
             await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(userhub, UserContextReader);
@@ -453,7 +453,7 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(id);
 
             if (hub.UserId != caller.UserId)
-                throw new BusinessRuleException("Only the hub owner can change the hub avatar.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerHubAvatar"]);
 
             string fileName = $"avatar";
             string folderPath = $"hubs/{hub!.Name}";

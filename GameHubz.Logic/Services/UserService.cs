@@ -2,6 +2,7 @@ using Azure.Core;
 using FluentValidation;
 using GameHubz.Common.Consts;
 using GameHubz.DataModels.Api;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Catalog;
 using GameHubz.Logic.Crypto;
 using GameHubz.Logic.Exceptions;
@@ -97,6 +98,22 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
+        /// <summary>
+        /// Stores the language this user reads the app in. Only supported codes are persisted:
+        /// an unknown tag would silently fall back to English on every push anyway, and keeping
+        /// it out of the column means the value can be trusted wherever it is read.
+        /// </summary>
+        public async Task UpdateLanguage(Guid userId, string? language)
+        {
+            var user = await this.AppUnitOfWork.UserRepository.GetById(userId)
+                       ?? throw new EntityNotFoundException("User", "UserEntity", this.LocalizationService);
+
+            user.Language = Languages.ToSupported(language);
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+            await this.SaveAsync();
+        }
+
         protected override IRepository<UserEntity> GetRepository()
         {
             return this.AppUnitOfWork.UserRepository;
@@ -117,12 +134,15 @@ namespace GameHubz.Logic.Services
             // Country (optional at registration) dictates region when provided.
             ApplyCountry(user, registerUserPostDto.Country);
 
-            ValidateEmailField(user);
+            ValidateEmailField(user, this.LocalizationService);
 
             if (string.IsNullOrEmpty(user.Password))
             {
                 throw new EmptyPasswordException(this.LocalizationService);
             }
+
+            // The registering client already sends its language on this request.
+            user.Language = Languages.ToSupported(this.LocalizationService.CurrentLanguage);
 
             user.PasswordNonce = NonceGenerator.GetNew();
             user.Password = this.HashPassword(user.Password, user.PasswordNonce);
@@ -186,7 +206,7 @@ namespace GameHubz.Logic.Services
             EmailQueueModel emailQueue = new()
             {
                 To = userEntity.Email,
-                Subject = "Verify email",
+                Subject = this.LocalizationService.ForRecipient(userEntity.Language, "Email.VerifyEmail.Subject"),
                 Message = message,
                 IsMessageHtml = true
             };
@@ -206,7 +226,7 @@ namespace GameHubz.Logic.Services
             var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(userId, request.HubId);
             if (isBanned)
             {
-                throw new BusinessRuleException("You are banned from this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAreBanned"]);
             }
 
             // Idempotency guard: a repeated Follow (double-tap, or a stale UI still showing "Follow")
@@ -246,7 +266,7 @@ namespace GameHubz.Logic.Services
 
             await this.CheckPasswordField(entity, inputDto, isNew);
 
-            ValidateEmailField(entity);
+            ValidateEmailField(entity, this.LocalizationService);
 
             if ((await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).RoleEnum == UserRoleEnum.Admin)
             {
@@ -326,7 +346,7 @@ namespace GameHubz.Logic.Services
             return this.passwordHasher.HashPassword(password, salt);
         }
 
-        private static void ValidateEmailField(UserEntity entity)
+        private static void ValidateEmailField(UserEntity entity, ILocalizationService localization)
         {
             try
             {
@@ -334,7 +354,7 @@ namespace GameHubz.Logic.Services
             }
             catch (Exception)
             {
-                throw new BusinessRuleException("Invalid email address format.");
+                throw new BusinessRuleException(localization["BusinessRule.InvalidEmailFormat"]);
             }
         }
 
@@ -360,7 +380,7 @@ namespace GameHubz.Logic.Services
                 else if (!string.Equals(user.Country, request.Country, StringComparison.OrdinalIgnoreCase))
                 {
                     // Already set to a different value — locked, reject the change.
-                    throw new BusinessRuleException("Country is already set and cannot be changed.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.CountryAlreadySet"]);
                 }
             }
 
@@ -384,7 +404,7 @@ namespace GameHubz.Logic.Services
             }
 
             var country = CountryCatalog.Get(countryCode)
-                ?? throw new BusinessRuleException($"Unknown country code '{countryCode}'.");
+                ?? throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UnknownCountryCode"], countryCode));
 
             user.Country = country.Code;
             user.Region = country.Region;

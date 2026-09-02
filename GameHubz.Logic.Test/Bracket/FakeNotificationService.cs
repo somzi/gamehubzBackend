@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using GameHubz.Logic.Interfaces;
 
@@ -27,5 +28,26 @@ namespace GameHubz.Logic.Test.Bracket
 
             return Task.CompletedTask;
         }
+
+        public Task SendLocalizedToOneAsync(PushRecipient recipient, PushText title, PushText body, object? data = null)
+        {
+            Sent.Add((recipient.PushToken, Describe(title), Describe(body)));
+            return Task.CompletedTask;
+        }
+
+        public Task SendLocalizedToManyAsync(IEnumerable<PushRecipient> recipients, PushText title, PushText body, object? data = null)
+        {
+            foreach (var recipient in recipients)
+            {
+                Sent.Add((recipient.PushToken, Describe(title), Describe(body)));
+            }
+
+            return Task.CompletedTask;
+        }
+
+        // The resource key, not the rendered sentence — asserting on the key is what tells a test
+        // that the right notification fired, and it survives any later rewording of the copy.
+        private static string Describe(PushText text)
+            => text.ResourceKey ?? text.Literal ?? string.Empty;
     }
 }

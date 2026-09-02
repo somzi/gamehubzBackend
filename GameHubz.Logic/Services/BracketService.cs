@@ -52,7 +52,8 @@ namespace GameHubz.Logic.Services
             Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
             bool isAdmin = currentUser?.RoleEnum == UserRoleEnum.Admin;
 
-            string cacheKey = $"bracket:{tournamentId}";
+            // The cached payload carries localized round names, so the language is part of its identity.
+            string cacheKey = $"bracket:{tournamentId}:{this.LocalizationService.CurrentLanguage}";
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
 
             var tournament = cachedBracket == null
@@ -60,7 +61,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new BusinessRuleException("Tournament not found");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
             Guid hubOwnerId = tournament?.Hub?.UserId ?? Guid.Empty;
             bool isPrivileged = isAdmin || currentUserId == hubOwnerId;
@@ -90,7 +91,8 @@ namespace GameHubz.Logic.Services
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
             Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
 
-            string cacheKey = $"bracket:{tournamentId}";
+            // The cached payload carries localized round names, so the language is part of its identity.
+            string cacheKey = $"bracket:{tournamentId}:{this.LocalizationService.CurrentLanguage}";
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
 
             var tournament = cachedBracket == null
@@ -98,7 +100,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new BusinessRuleException("Tournament not found");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
             bool canManage = currentUser != null
                 && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
@@ -130,7 +132,8 @@ namespace GameHubz.Logic.Services
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContext();
             Guid currentUserId = currentUser?.UserId ?? Guid.Empty;
 
-            string cacheKey = $"bracket:v3:{tournamentId}";
+            // The cached payload carries localized round names, so the language is part of its identity.
+            string cacheKey = $"bracket:v3:{tournamentId}:{this.LocalizationService.CurrentLanguage}";
             var cachedBracket = await cacheService.GetAsync<TournamentStructureDto>(cacheKey);
 
             var tournament = cachedBracket == null
@@ -138,7 +141,7 @@ namespace GameHubz.Logic.Services
                             : null;
 
             if (cachedBracket == null && tournament == null)
-                throw new BusinessRuleException("Tournament not found");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
             bool canManage = currentUser != null
                 && await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser);
@@ -259,10 +262,10 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(request.TournamentId);
 
             if (tournament == null)
-                throw new BusinessRuleException("Tournament not found");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
             if (tournament.TournamentParticipants == null || tournament.TournamentParticipants.Count < 2)
-                throw new BusinessRuleException("Not enough participants to start tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotEnoughParticipantsStart"]);
 
             // Every participating team must field a full lineup: sub-matches are created per lineup
             // slot, so a short side produces matches with no player that can never be played, which
@@ -281,14 +284,14 @@ namespace GameHubz.Logic.Services
                     .ToList();
 
                 if (incompleteTeams.Count > 0)
-                    throw new BusinessRuleException($"All teams must be full before starting. Incomplete: {string.Join(", ", incompleteTeams)}");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.TeamsNotFull"], string.Join(", ", incompleteTeams)));
             }
 
             var tournamentId = request.TournamentId;
 
             // Seeding choice (random shuffle / hand-made / standard seeding / pot draw). Rejected up
             // front when the format doesn't offer it, before the generation claim is taken.
-            var draw = BuildDraw(tournament, request);
+            var draw = BuildDraw(tournament, request, this.LocalizationService);
 
             TimeSpan? roundDuration = tournament.RoundDurationMinutes.HasValue
                 ? TimeSpan.FromMinutes(tournament.RoundDurationMinutes.Value)
@@ -301,7 +304,7 @@ namespace GameHubz.Logic.Services
             var previousStatus = tournament.Status;
             bool claimed = await this.AppUnitOfWork.TournamentRepository.TryClaimBracketGeneration(tournamentId);
             if (!claimed)
-                throw new BusinessRuleException("Tournament already started.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentAlreadyStarted"]);
 
             try
             {
@@ -320,8 +323,8 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
@@ -341,18 +344,18 @@ namespace GameHubz.Logic.Services
         {
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can reset the bracket.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffResetBracket"]);
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
 
             // Only a group stage feeding a knockout can be reset this way (order 1 = groups, 2 = knockout).
             var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 1);
             if (groupStage == null || groupStage.Type != StageType.GroupStage)
-                throw new BusinessRuleException("This tournament has no group stage, so there is no bracket to reset.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoGroupStageNoBracket"]);
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
             if (knockoutStage == null)
-                throw new BusinessRuleException("No knockout stage was found for this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoKnockoutStage"]);
 
             // Gather all knockout stages (WB + LB for double elim) so a played LB match still blocks reset.
             var stageIds = new List<Guid> { knockoutStage.Id!.Value };
@@ -398,13 +401,13 @@ namespace GameHubz.Logic.Services
             }
 
             if (totalKnockoutMatches == 0)
-                throw new BusinessRuleException("The bracket has not been drawn yet, so there is nothing to reset.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.BracketNotDrawnYet"]);
 
             if (anyPlayed)
                 throw new BusinessRuleException(
                     tournament.Status == TournamentStatus.Completed
-                        ? "This tournament is already completed."
-                        : "At least one knockout match has already been played. Revert the played results first before resetting the bracket.");
+                        ? this.LocalizationService["BusinessRule.TournamentAlreadyCompleted"]
+                        : this.LocalizationService["BusinessRule.KnockoutPlayedRevertFirst"]);
 
             await TearDownKnockoutMatchesAsync(tournament, knockoutStage);
             await this.SaveAsync();
@@ -421,15 +424,15 @@ namespace GameHubz.Logic.Services
         {
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can draw the bracket.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffDrawBracket"]);
 
             var groupStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 1);
             if (groupStage == null || groupStage.Type != StageType.GroupStage)
-                throw new BusinessRuleException("This tournament has no group stage to draw a bracket from.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoGroupStageToDrawFrom"]);
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
             if (knockoutStage != null && await this.AppUnitOfWork.MatchRepository.HasMatchesForStage(knockoutStage.Id!.Value))
-                throw new BusinessRuleException("The bracket is already drawn. Reset it first if you want to re-draw.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.BracketAlreadyDrawn"]);
 
             // Serialised like the automatic draw: CheckAndAdvanceGroupStage is a check-then-act over
             // many rows and must not race a concurrent result finalise.
@@ -456,17 +459,17 @@ namespace GameHubz.Logic.Services
         {
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can edit the bracket seeding.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffEditSeeding"]);
 
             if (participantAId == participantBId)
-                throw new BusinessRuleException("Pick two different teams to swap.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickTwoDifferentTeams"]);
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
 
             var knockoutStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 2);
             if (knockoutStage == null
                 || (knockoutStage.Type != StageType.SingleEliminationBracket && knockoutStage.Type != StageType.DoubleEliminationWinnersBracket))
-                throw new BusinessRuleException("This tournament has no knockout bracket to edit.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoKnockoutBracketToEdit"]);
 
             bool useDoubleKnockout = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
 
@@ -508,7 +511,7 @@ namespace GameHubz.Logic.Services
                 else
                 {
                     // A bye is involved — re-seed from the swapped slots (rebuilds the whole knockout).
-                    EnsureNoKnockoutResultPlayed(allMatches);
+                    EnsureNoKnockoutResultPlayed(allMatches, this.LocalizationService);
                     await RegenerateBracketWithSwapAsync(
                         tournament, tournamentId, knockoutStage, useDoubleKnockout,
                         BuildSlotIdsFromTeamFirstRound(firstRound), participantAId, participantBId);
@@ -531,7 +534,7 @@ namespace GameHubz.Logic.Services
                 }
                 else
                 {
-                    EnsureNoKnockoutResultPlayed(allMatches);
+                    EnsureNoKnockoutResultPlayed(allMatches, this.LocalizationService);
                     await RegenerateBracketWithSwapAsync(
                         tournament, tournamentId, knockoutStage, useDoubleKnockout,
                         BuildSlotIdsFromSoloFirstRound(firstRound), participantAId, participantBId);
@@ -559,7 +562,7 @@ namespace GameHubz.Logic.Services
                 if (slotIds[i] == bId) ib = i;
             }
             if (ia < 0 || ib < 0)
-                throw new BusinessRuleException("Both teams must be in the first round of the bracket.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamsMustBeFirstRound"]);
 
             (slotIds[ia], slotIds[ib]) = (slotIds[ib], slotIds[ia]);
 
@@ -602,18 +605,18 @@ namespace GameHubz.Logic.Services
             return slots;
         }
 
-        private static void EnsureNoKnockoutResultPlayed(List<TeamMatchEntity> matches)
+        private static void EnsureNoKnockoutResultPlayed(List<TeamMatchEntity> matches, ILocalizationService localization)
         {
             if (matches.Any(tm => tm.Status == TeamMatchStatus.Completed
                     && tm.HomeTeamParticipantId.HasValue && tm.AwayTeamParticipantId.HasValue))
-                throw new BusinessRuleException("A knockout match has already been played — reset the bracket to re-seed.");
+                throw new BusinessRuleException(localization["BusinessRule.KnockoutAlreadyPlayed"]);
         }
 
-        private static void EnsureNoKnockoutResultPlayed(List<MatchEntity> matches)
+        private static void EnsureNoKnockoutResultPlayed(List<MatchEntity> matches, ILocalizationService localization)
         {
             if (matches.Any(m => m.Status == MatchStatus.Completed
                     && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue))
-                throw new BusinessRuleException("A knockout match has already been played — reset the bracket to re-seed.");
+                throw new BusinessRuleException(localization["BusinessRule.KnockoutAlreadyPlayed"]);
         }
 
         // First-round fixture + side (true = home) that holds the participant, but only when it is a real,
@@ -695,8 +698,8 @@ namespace GameHubz.Logic.Services
 
         private async Task InvalidateTournamentBracketCaches(Guid tournamentId)
         {
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
@@ -712,7 +715,7 @@ namespace GameHubz.Logic.Services
         {
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can set up the draw.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffSetUpDraw"]);
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
             var participants = await this.AppUnitOfWork.TournamentParticipantRepository
@@ -786,16 +789,16 @@ namespace GameHubz.Logic.Services
             _ => new List<BracketSeedingMode> { BracketSeedingMode.Random },
         };
 
-        private static BracketDraw BuildDraw(TournamentEntity tournament, CreateBracketRequest request)
+        private static BracketDraw BuildDraw(TournamentEntity tournament, CreateBracketRequest request, ILocalizationService localization)
         {
             // Old clients send no mode at all — that's a random draw, exactly as before.
             var mode = request.SeedingMode ?? BracketSeedingMode.Random;
 
             if (!SupportedSeedingModes(tournament.Format).Contains(mode))
-                throw new BusinessRuleException($"This tournament format does not support a {mode.ToString().ToLowerInvariant()} draw.");
+                throw new BusinessRuleException(string.Format(localization["BusinessRule.DrawModeUnsupported"], mode.ToString().ToLowerInvariant()));
 
             if ((mode == BracketSeedingMode.Manual || mode == BracketSeedingMode.Pots) && request.DrawPlan == null)
-                throw new BusinessRuleException("The draw is missing — pick the placements again and retry.");
+                throw new BusinessRuleException(localization["BusinessRule.DrawMissing"]);
 
             return new BracketDraw(mode, request.DrawPlan);
         }
@@ -818,7 +821,7 @@ namespace GameHubz.Logic.Services
         /// all three cases the caller persists the participants afterwards.
         /// </summary>
         private static List<TournamentParticipantEntity?> BuildEliminationSlots(
-            List<TournamentParticipantEntity> participants, BracketDraw draw)
+            List<TournamentParticipantEntity> participants, BracketDraw draw, ILocalizationService localization)
         {
             int bracketSize = GetNextPowerOfTwo(participants.Count);
             var seedOrder = GetStandardSeedOrder(bracketSize);
@@ -826,14 +829,15 @@ namespace GameHubz.Logic.Services
             if (draw.Mode == BracketSeedingMode.Manual)
             {
                 var planned = draw.Plan?.Slots
-                    ?? throw new BusinessRuleException("The manual draw is missing its bracket slots.");
+                    ?? throw new BusinessRuleException(localization["BusinessRule.ManualDrawMissingSlots"]);
 
                 if (planned.Count != bracketSize)
-                    throw new BusinessRuleException(
-                        $"A bracket for {participants.Count} entrants has {bracketSize} slots ({bracketSize - participants.Count} of them byes), but {planned.Count} were sent.");
+                    throw new BusinessRuleException(string.Format(
+                        localization["BusinessRule.BracketSlotCountMismatch"],
+                        participants.Count, bracketSize, bracketSize - participants.Count, planned.Count));
 
                 var byId = ResolvePlacedEntrants(
-                    planned.Where(s => s.HasValue).Select(s => s!.Value), participants, "bracket");
+                    planned.Where(s => s.HasValue).Select(s => s!.Value), participants, "bracket", localization);
 
                 var manualSlots = new List<TournamentParticipantEntity?>(bracketSize);
                 for (int i = 0; i < bracketSize; i++)
@@ -859,8 +863,8 @@ namespace GameHubz.Logic.Services
                 for (int i = 0; i + 1 < bracketSize; i += 2)
                 {
                     if (manualSlots[i] == null && manualSlots[i + 1] == null)
-                        throw new BusinessRuleException(
-                            $"Match {(i / 2) + 1} has nobody in it. Spread the byes out — every first-round match needs at least one entrant.");
+                        throw new BusinessRuleException(string.Format(
+                            localization["BusinessRule.MatchHasNobody"], (i / 2) + 1));
                 }
 
                 return manualSlots;
@@ -887,7 +891,7 @@ namespace GameHubz.Logic.Services
         /// group. The caller persists the participants.
         /// </summary>
         private static List<List<TournamentParticipantEntity>> BuildGroupAssignment(
-            List<TournamentParticipantEntity> participants, int numberOfGroups, BracketDraw draw)
+            List<TournamentParticipantEntity> participants, int numberOfGroups, BracketDraw draw, ILocalizationService localization)
         {
             var buckets = Enumerable.Range(0, numberOfGroups)
                 .Select(_ => new List<TournamentParticipantEntity>())
@@ -898,19 +902,19 @@ namespace GameHubz.Logic.Services
                 case BracketSeedingMode.Manual:
                 {
                     var planned = draw.Plan?.Groups
-                        ?? throw new BusinessRuleException("The manual draw is missing its groups.");
+                        ?? throw new BusinessRuleException(localization["BusinessRule.ManualDrawMissingGroups"]);
 
                     if (planned.Count != numberOfGroups)
-                        throw new BusinessRuleException($"This tournament has {numberOfGroups} groups, but {planned.Count} were sent.");
+                        throw new BusinessRuleException(string.Format(localization["BusinessRule.GroupCountMismatch"], numberOfGroups, planned.Count));
 
-                    var byId = ResolvePlacedEntrants(planned.SelectMany(g => g), participants, "groups");
+                    var byId = ResolvePlacedEntrants(planned.SelectMany(g => g), participants, "groups", localization);
 
                     for (int g = 0; g < numberOfGroups; g++)
                     {
                         // A one-entrant group generates no fixtures at all, which would leave the
                         // group stage permanently unfinishable.
                         if (planned[g].Count < 2)
-                            throw new BusinessRuleException($"{GroupNaming.Name(g, numberOfGroups)} needs at least 2 entrants.");
+                            throw new BusinessRuleException(string.Format(localization["BusinessRule.GroupNeedsTwoEntrants"], GroupNaming.Name(g, numberOfGroups)));
 
                         buckets[g].AddRange(planned[g].Select(id => byId[id]));
                     }
@@ -921,14 +925,15 @@ namespace GameHubz.Logic.Services
                 case BracketSeedingMode.Pots:
                 {
                     var pots = draw.Plan?.Pots
-                        ?? throw new BusinessRuleException("The pot draw is missing its pots.");
+                        ?? throw new BusinessRuleException(localization["BusinessRule.PotDrawMissingPots"]);
 
                     int potCount = (int)Math.Ceiling((double)participants.Count / numberOfGroups);
                     if (pots.Count != potCount)
-                        throw new BusinessRuleException(
-                            $"{participants.Count} entrants across {numberOfGroups} groups needs exactly {potCount} pots, but {pots.Count} were sent.");
+                        throw new BusinessRuleException(string.Format(
+                            localization["BusinessRule.PotCountMismatch"],
+                            participants.Count, numberOfGroups, potCount, pots.Count));
 
-                    var byId = ResolvePlacedEntrants(pots.SelectMany(p => p), participants, "pots");
+                    var byId = ResolvePlacedEntrants(pots.SelectMany(p => p), participants, "pots", localization);
 
                     for (int i = 0; i < pots.Count; i++)
                     {
@@ -936,7 +941,7 @@ namespace GameHubz.Logic.Services
                         // remainder. Any other shape would leave the groups unbalanced by more than one.
                         int expected = Math.Min(numberOfGroups, participants.Count - (i * numberOfGroups));
                         if (pots[i].Count != expected)
-                            throw new BusinessRuleException($"Pot {i + 1} must hold exactly {expected} entrant(s), but holds {pots[i].Count}.");
+                            throw new BusinessRuleException(string.Format(localization["BusinessRule.PotWrongSize"], i + 1, expected, pots[i].Count));
                     }
 
                     var potRand = new Random();
@@ -993,7 +998,7 @@ namespace GameHubz.Logic.Services
         /// out. Returns the entrant lookup so the caller can turn ids into the entities it loaded.
         /// </summary>
         private static Dictionary<Guid, TournamentParticipantEntity> ResolvePlacedEntrants(
-            IEnumerable<Guid> placedIds, List<TournamentParticipantEntity> participants, string what)
+            IEnumerable<Guid> placedIds, List<TournamentParticipantEntity> participants, string what, ILocalizationService localization)
         {
             var byId = participants
                 .Where(p => p.Id.HasValue)
@@ -1002,13 +1007,13 @@ namespace GameHubz.Logic.Services
             var placed = placedIds.ToList();
 
             if (placed.Distinct().Count() != placed.Count)
-                throw new BusinessRuleException("The same entrant was placed twice in the draw.");
+                throw new BusinessRuleException(localization["BusinessRule.EntrantPlacedTwice"]);
 
             if (placed.Any(id => !byId.ContainsKey(id)))
-                throw new BusinessRuleException("The draw refers to an entrant who is no longer in this tournament. Reopen the draw and try again.");
+                throw new BusinessRuleException(localization["BusinessRule.DrawHasStaleEntrant"]);
 
             if (placed.Count != byId.Count)
-                throw new BusinessRuleException($"Every entrant has to be placed in the {what} — {byId.Count - placed.Count} still unplaced.");
+                throw new BusinessRuleException(string.Format(localization["BusinessRule.EntrantsUnplaced"], what, byId.Count - placed.Count));
 
             return byId;
         }
@@ -1040,7 +1045,7 @@ namespace GameHubz.Logic.Services
 
                 case TournamentFormat.GroupStageWithKnockout:
                     if (!tournament.GroupsCount.HasValue || !tournament.QualifiersPerGroup.HasValue)
-                        throw new BusinessRuleException("Group count and qualifiers count are required for this format.");
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.GroupsAndQualifiersRequired"]);
                     if (tournament.IsTeamTournament)
                         await GenerateTeamGroupStageWithKnockout(tournamentId, tournament.GroupsCount.Value, tournament.QualifiersPerGroup!.Value, roundDuration, tournament.DoubleRoundRobin, draw);
                     else
@@ -1051,12 +1056,12 @@ namespace GameHubz.Logic.Services
                     // Team Swiss is not wired up — round-by-round pairing would need TeamMatchEntity
                     // generation on every advance plus the team result pipeline. Solo only for now.
                     if (tournament.IsTeamTournament)
-                        throw new BusinessRuleException("Team Swiss tournaments are not supported yet.");
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSwissUnsupported"]);
                     await GenerateSwissTournament(tournamentId, roundDuration);
                     break;
 
                 default:
-                    throw new BusinessRuleException($"Tournament format {tournament.Format} not supported");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.TournamentFormatUnsupported"], tournament.Format));
             }
         }
 
@@ -1070,9 +1075,9 @@ namespace GameHubz.Logic.Services
 
             var participants = tournament!.TournamentParticipants?.ToList();
             if (participants == null || participants.Count == 0)
-                throw new BusinessRuleException("No participants");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoParticipants"]);
 
-            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
 
             foreach (var participant in participants)
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
@@ -1149,11 +1154,11 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants!.Count < numberOfGroups * 2)
-                throw new BusinessRuleException($"Not enough participants. Need at least {numberOfGroups * 2} players for {numberOfGroups} groups.");
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.NotEnoughPlayersForGroups"], numberOfGroups * 2, numberOfGroups));
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
             if (totalQualifiers < 2)
-                throw new BusinessRuleException("Need at least 2 qualifiers to build a knockout bracket.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NeedTwoQualifiers"]);
             // Both single- and double-elimination pad the bracket up to the next power of two with byes
             // (e.g. 6 qualifiers → bracket of 8, top 2 seeds on a bye), so any qualifier count works.
 
@@ -1181,7 +1186,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(group, this.UserContextReader);
             }
 
-            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw);
+            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
             var groupParticipants = groups.ToDictionary(g => g.Id!.Value, _ => new List<TournamentParticipantEntity>());
 
             for (int groupIndex = 0; groupIndex < numberOfGroups; groupIndex++)
@@ -1247,7 +1252,7 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             if (!tournament!.TeamSize.HasValue)
-                throw new BusinessRuleException("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeRequired"]);
 
             int teamSize = tournament.TeamSize.Value;
 
@@ -1256,7 +1261,7 @@ namespace GameHubz.Logic.Services
                 .ToList();
 
             if (participants == null || participants.Count < 2)
-                throw new BusinessRuleException("Not enough team participants");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotEnoughTeamParticipants"]);
 
             var stage = new TournamentStageEntity
             {
@@ -1311,18 +1316,18 @@ namespace GameHubz.Logic.Services
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
 
             if (!tournament!.TeamSize.HasValue)
-                throw new BusinessRuleException("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeRequired"]);
 
             int teamSize = tournament.TeamSize.Value;
 
             var participants = tournament.TournamentParticipants?.ToList();
 
             if (participants!.Count < numberOfGroups * 2)
-                throw new BusinessRuleException($"Not enough participants. Need at least {numberOfGroups * 2} teams for {numberOfGroups} groups.");
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.NotEnoughTeamsForGroups"], numberOfGroups * 2, numberOfGroups));
 
             int totalQualifiers = numberOfGroups * qualifiersPerGroup;
             if (totalQualifiers < 2)
-                throw new BusinessRuleException("Need at least 2 qualifiers to build a knockout bracket.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NeedTwoQualifiers"]);
             // Both single- and double-elimination pad the bracket up to the next power of two with byes
             // (e.g. 6 qualifiers → bracket of 8, top 2 seeds on a bye), so any qualifier count works.
 
@@ -1350,7 +1355,7 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentGroupRepository.AddEntity(g, this.UserContextReader);
             }
 
-            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw);
+            var assignment = BuildGroupAssignment(participants, numberOfGroups, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
             var groupParticipants = groups.ToDictionary(g => g.Id!.Value, _ => new List<TournamentParticipantEntity>());
 
             for (int groupIndex = 0; groupIndex < numberOfGroups; groupIndex++)
@@ -1415,7 +1420,7 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 4)
-                throw new BusinessRuleException("Double elimination requires at least 4 participants.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleElimNeedsFour"]);
 
             // Solo-only generator. Team double-elimination has its own generator
             // (GenerateTeamDoubleEliminationBracket); GenerateBracketForFormat routes teams there.
@@ -1427,7 +1432,7 @@ namespace GameHubz.Logic.Services
             // bracket-seeding spread leaves the bye slots on the top-seed side so the byes
             // get auto-advanced in WB R1 and the LB cascade below collapses any LB match
             // that would otherwise have nothing to play.
-            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
 
             foreach (var participant in participants)
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
@@ -1475,14 +1480,14 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 4)
-                throw new BusinessRuleException("Double elimination requires at least 4 participants.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleElimNeedsFour"]);
 
             if (!tournament.TeamSize.HasValue)
-                throw new BusinessRuleException("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeRequired"]);
 
             int teamSize = tournament.TeamSize.Value;
 
-            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
 
             foreach (var participant in participants)
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
@@ -1977,7 +1982,7 @@ namespace GameHubz.Logic.Services
 
             var participants = tournament!.TournamentParticipants?.ToList();
             if (participants == null || participants.Count < 2)
-                throw new BusinessRuleException("Not enough participants");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotEnoughParticipantsShort"]);
 
             // Optional post-Swiss knockout: validate against the real participant count now,
             // at generation time (mirrors how GroupStageWithKnockout validates its config).
@@ -1989,14 +1994,15 @@ namespace GameHubz.Logic.Services
                 int direct = directBerths!.Value;
 
                 if (size < 2 || !IsPowerOfTwo(size))
-                    throw new BusinessRuleException("Knockout qualifiers must be a power of 2 (2, 4, 8, 16, 32).");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.QualifiersPowerOfTwo"]);
                 if (size > n)
-                    throw new BusinessRuleException($"Knockout qualifiers ({size}) cannot exceed the participant count ({n}).");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.QualifiersExceedParticipants"], size, n));
                 if (direct < 0 || direct > size)
-                    throw new BusinessRuleException($"Direct qualifiers must be between 0 and {size}.");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.DirectQualifiersRange"], size));
                 if (direct < size && direct + 2 * (size - direct) > n)
-                    throw new BusinessRuleException(
-                        $"Not enough participants for the play-in: {direct} direct + {2 * (size - direct)} play-in players need {direct + 2 * (size - direct)}, but only {n} registered.");
+                    throw new BusinessRuleException(string.Format(
+                        this.LocalizationService["BusinessRule.NotEnoughForPlayIn"],
+                        direct, 2 * (size - direct), direct + 2 * (size - direct), n));
             }
 
             var stage = new TournamentStageEntity
@@ -2272,14 +2278,14 @@ namespace GameHubz.Logic.Services
             var participants = tournament!.TournamentParticipants?.ToList();
 
             if (participants == null || participants.Count < 2)
-                throw new BusinessRuleException("Not enough team participants");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotEnoughTeamParticipants"]);
 
             if (!tournament.TeamSize.HasValue)
-                throw new BusinessRuleException("TeamSize is required for team tournaments.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeRequired"]);
 
             int teamSize = tournament.TeamSize.Value;
 
-            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw);
+            var bracketSlots = BuildEliminationSlots(participants, draw ?? BracketDraw.RandomDraw, this.LocalizationService);
 
             foreach (var participant in participants)
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
@@ -2438,16 +2444,16 @@ namespace GameHubz.Logic.Services
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId);
 
-            if (match == null) throw new BusinessRuleException("Match not found");
-            if (match.TournamentId != request.TournamentId) throw new BusinessRuleException("Match wrong tournament");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            if (match.TournamentId != request.TournamentId) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchWrongTournament"]);
             if (match.RoundOpenAt.HasValue && match.RoundOpenAt.Value > DateTime.UtcNow)
-                throw new BusinessRuleException("This round is not open yet.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNotOpen"]);
 
             // A solo match without both sides can't take a result — covers Swiss byes
             // (pre-completed free wins) and TBD elimination slots still awaiting feeders.
             // Team sub-matches always carry both participant ids, so they pass through.
             if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
-                throw new BusinessRuleException("This match has no opponent yet and cannot be reported.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchHasNoOpponent"]);
 
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
@@ -2467,13 +2473,13 @@ namespace GameHubz.Logic.Services
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
-                ?? throw new BusinessRuleException("Tournament not found");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             // Resolve the series format in force for this match and read the submission through it.
             // Everything downstream works off `series` instead of the raw request scores, so the v1
             // and v2 paths converge here and only differ in what they were allowed to send.
-            var series = ResolveSubmittedSeries(match, approvalCtx, request, submittedGames);
+            var series = ResolveSubmittedSeries(match, approvalCtx, request, submittedGames, this.LocalizationService);
 
             // When the tournament requires result approval and the caller is a participant
             // (not a tournament manager — platform admin, hub owner, or hub admin),
@@ -2481,12 +2487,12 @@ namespace GameHubz.Logic.Services
             if (approvalCtx.RequireResultApproval && !isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
-                    throw new BusinessRuleException("You are not a participant of this match.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
 
                 // Once a result is confirmed in approval mode, only an admin / hub owner can change it.
                 // Otherwise the approval gate could be bypassed via the edit path.
                 if (match.Status == MatchStatus.Completed)
-                    throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to amend it.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.ResultFinalAmend"]);
 
                 await SaveProposal(match, series, currentUser);
                 return;
@@ -2516,15 +2522,15 @@ namespace GameHubz.Logic.Services
                     if (!request.Cascade)
                         throw new BusinessRuleException(lockReason);
                     if (!isPrivileged)
-                        throw new BusinessRuleException("Only the hub owner or an admin can change a result once downstream matches have been played.");
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffChangeResultDownstream"]);
                     if (match.TeamMatchId.HasValue)
-                        throw new BusinessRuleException("Changing this result would undo already-played team matches. Revert the downstream team match first.");
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChangeResultUndoesTeamMatches"]);
 
                     await CascadeRevertDownstream(match);
 
                     // The chain below is reopened now; reload the target and its links from committed state.
                     match = await this.AppUnitOfWork.MatchRepository.GetWithStage(request.MatchId)
-                        ?? throw new BusinessRuleException("Match not found");
+                        ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
                     (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
                 }
 
@@ -2608,7 +2614,8 @@ namespace GameHubz.Logic.Services
             MatchEntity match,
             TournamentApprovalContext approvalCtx,
             MatchResultDto request,
-            List<SeriesGame>? submittedGames)
+            List<SeriesGame>? submittedGames,
+            ILocalizationService localization)
         {
             var condition = approvalCtx.SeriesWinCondition;
             // The match's own override wins; without one it inherits its PHASE default, so the
@@ -2623,7 +2630,7 @@ namespace GameHubz.Logic.Services
                 // Legacy single-score submission. It cannot describe a multi-game series, so rather
                 // than silently record a Bo3 as one game, refuse and tell the client to update.
                 if (bestOf > 1)
-                    throw new BusinessRuleException("This match is played as a best-of series. Update the app to report it game by game.");
+                    throw new BusinessRuleException(localization["BusinessRule.BestOfNeedsNewerApp"]);
 
                 var single = new List<SeriesGame>
                 {
@@ -2646,7 +2653,7 @@ namespace GameHubz.Logic.Services
                 Games = submittedGames
                     .Select(g => new SeriesGame { HomeScore = g.HomeScore, AwayScore = g.AwayScore, SeriesNumber = g.SeriesNumber })
                     .ToList(),
-                Outcome = SeriesEvaluator.ValidateAndEvaluate(submittedGames, condition, bestOf, tiebreakBestOf),
+                Outcome = SeriesEvaluator.ValidateAndEvaluate(submittedGames, condition, bestOf, tiebreakBestOf, localization),
                 BestOf = bestOf,
                 TiebreakBestOf = tiebreakBestOf,
                 AllowsTieBreak = true,
@@ -2679,12 +2686,12 @@ namespace GameHubz.Logic.Services
         /// (and any Bo1 proposal from a v1 client) hold only a score line, so they read back as the
         /// one game they describe.
         /// </summary>
-        private static SubmittedSeries ResolveProposedSeries(MatchEntity match, TournamentApprovalContext approvalCtx)
+        private static SubmittedSeries ResolveProposedSeries(MatchEntity match, TournamentApprovalContext approvalCtx, ILocalizationService localization)
         {
             var proposedGames = match.ProposedGames;
 
             if (proposedGames.Count > 0)
-                return ResolveSubmittedSeries(match, approvalCtx, new MatchResultDto(), proposedGames);
+                return ResolveSubmittedSeries(match, approvalCtx, new MatchResultDto(), proposedGames, localization);
 
             return ResolveSubmittedSeries(
                 match,
@@ -2694,7 +2701,8 @@ namespace GameHubz.Logic.Services
                     HomeScore = match.ProposedHomeScore!.Value,
                     AwayScore = match.ProposedAwayScore!.Value
                 },
-                submittedGames: null);
+                submittedGames: null,
+                localization);
         }
 
         private static void ClearProposal(MatchEntity match)
@@ -2775,7 +2783,7 @@ namespace GameHubz.Logic.Services
         public async Task RevertMatchResult(Guid matchId, bool cascade = false)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // NoShow is deletable too — that's the undo for a mistakenly applied group/league/Swiss
             // double walkover (the core reopens the match to Scheduled; standings are unaffected
@@ -2784,12 +2792,12 @@ namespace GameHubz.Logic.Services
             if (match.Status != MatchStatus.Completed
                 && match.Status != MatchStatus.NoShow
                 && match.Status != MatchStatus.TieBreakRequired)
-                throw new BusinessRuleException("This match has no result to delete.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchHasNoResult"]);
 
             // Byes / one-sided completions (Swiss free wins, elimination walkovers) carry no
             // real reported result — nothing to delete.
             if (!match.TeamMatchId.HasValue && (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue))
-                throw new BusinessRuleException("This match has no result to delete.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchHasNoResult"]);
 
             MatchEntity? nextMatch = null;
             if (match.NextMatchId.HasValue)
@@ -2807,7 +2815,7 @@ namespace GameHubz.Logic.Services
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
-                ?? throw new BusinessRuleException("Tournament not found");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
             // Trust boundary matches UpdateMatchResult: the controller [Authorize] plus the
@@ -2817,7 +2825,7 @@ namespace GameHubz.Logic.Services
             // confirmed result is locked to managers, mirroring how UpdateMatchResult refuses a
             // participant edit of a confirmed result.
             if (!isPrivileged && approvalCtx.RequireResultApproval)
-                throw new BusinessRuleException("This result is final. Ask the hub owner or an admin to delete it.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ResultFinalDelete"]);
 
             var lockReason = await GetDownstreamLockReasonAsync(match, nextMatch, loserBracketMatch, forEdit: false);
             if (lockReason != null)
@@ -2828,15 +2836,15 @@ namespace GameHubz.Logic.Services
                 if (!cascade)
                     throw new BusinessRuleException(lockReason);
                 if (!isPrivileged)
-                    throw new BusinessRuleException("Only the hub owner or an admin can delete a result once downstream matches have been played.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffDeleteResultDownstream"]);
                 if (match.TeamMatchId.HasValue)
-                    throw new BusinessRuleException("Deleting this result would undo already-played team matches. Revert the downstream team match first.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.DeleteResultUndoesTeamMatches"]);
 
                 await CascadeRevertDownstream(match);
 
                 // The chain below is reopened now; reload the target and its links from committed state.
                 match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId)
-                    ?? throw new BusinessRuleException("Match not found");
+                    ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
                 (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
             }
 
@@ -2993,8 +3001,8 @@ namespace GameHubz.Logic.Services
             foreach (var userId in affectedUserIds)
                 await cacheService.RemoveAsync($"player_stats:{userId}");
 
-            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
         }
@@ -3016,13 +3024,15 @@ namespace GameHubz.Logic.Services
 
         private async Task<string?> GetDownstreamLockReasonAsync(MatchEntity match, MatchEntity? nextMatch, MatchEntity? loserBracketMatch, bool forEdit)
         {
-            string verb = forEdit ? "To edit this, you must revert" : "You must revert";
+            string verb = forEdit
+                ? this.LocalizationService["BusinessRule.LockVerbEdit"]
+                : this.LocalizationService["BusinessRule.LockVerbDelete"];
 
             // Group results feed the knockout draw through the standings, not a Next* link, so the
             // checks below never catch them. Once the bracket is drawn, changing a group result would
             // desync the seeding from the standings — lock it until the bracket is reset.
             if (match.TournamentStage?.Type == StageType.GroupStage && await GroupKnockoutAlreadyDrawnAsync(match.TournamentId))
-                return "The knockout bracket was already drawn from the group standings. Reset the bracket before changing a group result.";
+                return this.LocalizationService["BusinessRule.LockGroupBracketDrawn"];
 
             if (match.TeamMatchId.HasValue)
             {
@@ -3032,7 +3042,7 @@ namespace GameHubz.Logic.Services
                 {
                     var nextTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchId.Value);
                     if (nextTeamMatch.Status != TeamMatchStatus.Pending)
-                        return $"This match is locked because the next round has already progressed. {verb} the downstream match first.";
+                        return string.Format(this.LocalizationService["BusinessRule.LockNextRoundProgressed"], verb);
                 }
 
                 if (parentTeamMatch.NextTeamMatchLoserBracketId.HasValue)
@@ -3040,7 +3050,7 @@ namespace GameHubz.Logic.Services
                     // Single-elim → third-place play-off; double-elim → the LB match the loser dropped into.
                     var loserBracketTeamMatch = await this.AppUnitOfWork.TeamMatchRepository.ShallowGetByIdOrThrowIfNull(parentTeamMatch.NextTeamMatchLoserBracketId.Value);
                     if (loserBracketTeamMatch.Status != TeamMatchStatus.Pending)
-                        return $"This match is locked because the match its loser feeds into has already progressed. {verb} that match first.";
+                        return string.Format(this.LocalizationService["BusinessRule.LockLoserFeedProgressed"], verb);
                 }
 
                 return null;
@@ -3051,15 +3061,17 @@ namespace GameHubz.Logic.Services
             // step clears the participant from the next match and resets it to Pending so the new
             // matchup can be re-scheduled.
             if (nextMatch != null && !IsDownstreamUnplayed(nextMatch.Status))
-                return $"This match is locked because the next round has already progressed. {verb} the downstream match first.";
+                return string.Format(this.LocalizationService["BusinessRule.LockNextRoundProgressed"], verb);
 
             if (loserBracketMatch != null && !IsDownstreamUnplayed(loserBracketMatch.Status))
             {
                 // Single-elim → third-place play-off. DE → the Losers Bracket match that received this
                 // WB match's loser. Same lock applies in both cases.
                 bool isThirdPlace = loserBracketMatch.Stage == MatchStage.ThirdPlace;
-                var label = isThirdPlace ? "third-place match" : "loser bracket match";
-                return $"This match is locked because the {label} has already progressed. {verb} the downstream {label} first.";
+                var label = isThirdPlace
+                    ? this.LocalizationService["BusinessRule.LockLabelThirdPlace"]
+                    : this.LocalizationService["BusinessRule.LockLabelLoserBracket"];
+                return string.Format(this.LocalizationService["BusinessRule.LockLabelProgressed"], verb, label);
             }
 
             return null;
@@ -3191,11 +3203,11 @@ namespace GameHubz.Logic.Services
         public async Task<List<CascadeAffectedMatchDto>> GetCascadeRevertPreview(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can preview a cascade revert.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffPreviewRevert"]);
 
             var chain = await ComputeDownstreamCompletedChain(match.TournamentId, matchId);
 
@@ -3218,13 +3230,13 @@ namespace GameHubz.Logic.Services
         public async Task ApproveProposedResult(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (match.ProposedByUserId == null || match.ProposedHomeScore == null || match.ProposedAwayScore == null)
-                throw new BusinessRuleException("No pending result to approve for this match.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoPendingResultApprove"]);
 
             if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException("This match is already completed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
@@ -3232,11 +3244,11 @@ namespace GameHubz.Logic.Services
             if (!isPrivileged)
             {
                 if (!IsMatchParticipant(match, currentUser.UserId))
-                    throw new BusinessRuleException("You are not a participant of this match.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
 
                 // The proposer cannot also be the approver — the opponent (or a tournament manager) confirms.
                 if (match.ProposedByUserId == currentUser.UserId)
-                    throw new BusinessRuleException("Your opponent must approve the result you reported.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.OpponentMustApprove"]);
             }
 
             MatchEntity? nextMatch = null;
@@ -3248,9 +3260,9 @@ namespace GameHubz.Logic.Services
                 loserBracketMatch = match.NextMatchLoserBracket ?? await this.AppUnitOfWork.MatchRepository.GetByIdOrThrowIfNull(match.NextMatchLoserBracketId.Value);
 
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
-                ?? throw new BusinessRuleException("Tournament not found");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
-            var series = ResolveProposedSeries(match, approvalCtx);
+            var series = ResolveProposedSeries(match, approvalCtx, this.LocalizationService);
             int homeScore = series.HomeScore;
             int awayScore = series.AwayScore;
             var proposerId = match.ProposedByUserId!.Value;
@@ -3281,13 +3293,13 @@ namespace GameHubz.Logic.Services
         public async Task RejectProposedResult(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             if (match.ProposedByUserId == null)
-                throw new BusinessRuleException("No pending result to reject for this match.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoPendingResultReject"]);
 
             if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException("This match is already completed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
@@ -3296,18 +3308,18 @@ namespace GameHubz.Logic.Services
             {
                 var fullMatch = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
                 if (fullMatch == null || !IsMatchParticipant(fullMatch, currentUser.UserId))
-                    throw new BusinessRuleException("You are not a participant of this match.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
 
                 if (match.ProposedByUserId == currentUser.UserId)
-                    throw new BusinessRuleException("You can't reject your own proposal — submit a corrected result instead.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.CannotRejectOwnProposal"]);
             }
 
             ClearProposal(match);
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
-            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
 
             // Proposal cleared → the opponent's "result to confirm" badge drops. Refresh both
@@ -3336,11 +3348,11 @@ namespace GameHubz.Logic.Services
         public async Task ApplyDoubleWalkover(Guid matchId)
         {
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId)
-                ?? throw new BusinessRuleException("Match not found");
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
-                throw new BusinessRuleException("Only the hub owner or an admin can apply a double walkover.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffDoubleWalkover"]);
 
             if (match.TeamMatchId.HasValue)
             {
@@ -3356,19 +3368,19 @@ namespace GameHubz.Logic.Services
             // A voided play-in match would leave a knockout slot without a qualifier and the
             // bracket draw expects an exact count — the organizer must enter a result instead.
             if (stageType == StageType.PlayIn)
-                throw new BusinessRuleException("Double walkover isn't available for play-in matches — every play-in slot must produce a qualifier, so enter a result instead.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNotForPlayIn"]);
 
             if (!isGroupMachinery && !IsElimination(stageType))
-                throw new BusinessRuleException("Double walkover is only available in elimination brackets.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverEliminationOnly"]);
 
             if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException("This match is already completed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
 
             if (match.Status == MatchStatus.NoShow)
-                throw new BusinessRuleException("This match is already closed as a no-show.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchClosedNoShow"]);
 
             if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
-                throw new BusinessRuleException("Both players must be set before a double walkover.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNeedsBoth"]);
 
             if (isGroupMachinery)
             {
@@ -3378,7 +3390,7 @@ namespace GameHubz.Logic.Services
             {
                 // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
                 if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
-                    throw new BusinessRuleException("This match has no next round, so a walkover can't advance anyone.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.WalkoverNoNextRound"]);
 
                 // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
                 // check-then-act over many rows and must not race a concurrent result report.
@@ -3415,8 +3427,8 @@ namespace GameHubz.Logic.Services
                 await this.badgeService.PushAsync(userId);
             }
 
-            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
 
@@ -3485,16 +3497,16 @@ namespace GameHubz.Logic.Services
             // Team tournaments only run league / groups / elimination; refuse anything else
             // (a hypothetical team play-in slot must always produce a qualifier, like solo).
             if (!isLeagueOrGroup && !IsElimination(stageType))
-                throw new BusinessRuleException("Double walkover isn't available for this match.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverUnavailable"]);
 
             if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException("This match is already completed.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
 
             if (match.Status == MatchStatus.NoShow)
-                throw new BusinessRuleException("This match is already closed as a no-show.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchClosedNoShow"]);
 
             if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
-                throw new BusinessRuleException("Both players must be set before a double walkover.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNeedsBoth"]);
 
             // Serialised per tournament, exactly like FinalizeMatchResult: the aggregation (and the
             // settle pass it may trigger) is check-then-act over many rows and must not race a
@@ -3540,8 +3552,8 @@ namespace GameHubz.Logic.Services
                 await this.badgeService.PushAsync(userId);
             }
 
-            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{match.TournamentId}");
@@ -3812,7 +3824,7 @@ namespace GameHubz.Logic.Services
                     {
                         // Solo elimination
                         if (winnerParticipientId == null)
-                            throw new BusinessRuleException("Draws not allowed in elimination matches. Someone must win!");
+                            throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoDrawsInElimination"]);
 
                         await AdvanceWinnerToNextMatch(match, winnerParticipientId.Value, winnerUserId, nextMatch);
 
@@ -3859,8 +3871,8 @@ namespace GameHubz.Logic.Services
             foreach (var userId in affectedUserIds)
                 await this.badgeService.PushAsync(userId);
 
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
 
@@ -3883,8 +3895,8 @@ namespace GameHubz.Logic.Services
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
-            await cacheService.RemoveAsync($"bracket:{match.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
 
             // The opponent now has a result waiting for them — bump their badge and push.
@@ -3919,15 +3931,15 @@ namespace GameHubz.Logic.Services
 
             if (!string.IsNullOrEmpty(opponent.PushToken))
             {
-                var token = opponent.PushToken!;
+                var recipient = new PushRecipient(opponent.PushToken!, opponent.Language);
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await notificationService.SendToOneAsync(
-                            token,
-                            "Result to confirm",
-                            $"{proposerName} reported a result. Tap to confirm or dispute.",
+                        await notificationService.SendLocalizedToOneAsync(
+                            recipient,
+                            PushText.FromKey("Push.ResultToConfirm.Title"),
+                            PushText.FromKey("Push.ResultToConfirm.Body", proposerName),
                             new { matchId = matchId.ToString(), type = "resultProposed" });
                     }
                     catch { /* fire-and-forget */ }
@@ -3976,32 +3988,29 @@ namespace GameHubz.Logic.Services
                 var teamMatchId = teamMatch.Id!.Value;
                 var homeName = homeTeam?.TeamName ?? "Home team";
                 var awayName = awayTeam?.TeamName ?? "Away team";
-                var body = $"{homeName} vs {awayName} ended level — pick your player for the tie-break.";
+                // Team names are data; only the sentence around them is translated.
+                var tieBreakBody = PushText.FromKey("Push.TieBreak.Body", homeName, awayName);
 
                 // Push tokens + linked Discord accounts in one query — push is the primary channel.
                 var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(captainIds);
 
-                var pushTokens = targets
+                var recipients = targets
                     .Where(t => !string.IsNullOrEmpty(t.PushToken))
-                    .Select(t => t.PushToken!)
-                    .Distinct()
+                    .Select(t => new PushRecipient(t.PushToken!, t.Language))
                     .ToList();
-                if (pushTokens.Count > 0)
+                if (recipients.Count > 0)
                 {
                     _ = Task.Run(async () =>
                     {
-                        foreach (var token in pushTokens)
+                        try
                         {
-                            try
-                            {
-                                await notificationService.SendToOneAsync(
-                                    token,
-                                    "Tie-break — pick your player",
-                                    body,
-                                    new { type = "teamTieBreak", tournamentId = tournamentId.ToString(), teamMatchId = teamMatchId.ToString() });
-                            }
-                            catch { /* fire-and-forget */ }
+                            await notificationService.SendLocalizedToManyAsync(
+                                recipients,
+                                PushText.FromKey("Push.TieBreak.Title"),
+                                tieBreakBody,
+                                new { type = "teamTieBreak", tournamentId = tournamentId.ToString(), teamMatchId = teamMatchId.ToString() });
                         }
+                        catch { /* fire-and-forget */ }
                     });
                 }
 
@@ -4045,10 +4054,9 @@ namespace GameHubz.Logic.Services
                 // Push tokens + linked Discord accounts in one query — push stays the primary
                 // channel, the bot DM is additive for winners who linked Discord.
                 var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(winnerUserIds);
-                var pushTokens = targets
+                var winnerRecipients = targets
                     .Where(t => !string.IsNullOrEmpty(t.PushToken))
-                    .Select(t => t.PushToken!)
-                    .Distinct()
+                    .Select(t => new PushRecipient(t.PushToken!, t.Language))
                     .ToList();
                 var discordUserIds = targets
                     .Where(t => t.DiscordDmEnabled && !string.IsNullOrEmpty(t.DiscordUserId))
@@ -4056,21 +4064,21 @@ namespace GameHubz.Logic.Services
                     .Distinct()
                     .ToList();
 
-                if (pushTokens.Count == 0 && discordUserIds.Count == 0) return;
+                if (winnerRecipients.Count == 0 && discordUserIds.Count == 0) return;
 
                 var tournamentId = tournament.Id!.Value;
                 var title = tournament.Name;
 
-                if (pushTokens.Count > 0)
+                if (winnerRecipients.Count > 0)
                 {
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await notificationService.SendToManyAsync(
-                                pushTokens,
-                                title,
-                                "Congratulations — you won the tournament! 🏆",
+                            await notificationService.SendLocalizedToManyAsync(
+                                winnerRecipients,
+                                PushText.FromLiteral(title),
+                                PushText.FromKey("Push.TournamentWon.Body"),
                                 new { tournamentId, type = "tournamentWon" });
                         }
                         catch { /* fire-and-forget */ }
@@ -4183,7 +4191,7 @@ namespace GameHubz.Logic.Services
             if (cached != null) return cached;
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithParticipents(tournamentId);
-            if (tournament == null) throw new BusinessRuleException("Tournament not found");
+            if (tournament == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
 
             var standings = tournament.TournamentParticipants?
                 .Select(p => new LeagueStandingDto
@@ -5357,8 +5365,8 @@ namespace GameHubz.Logic.Services
                 else
                     await CheckAndCompleteLeague(teamMatch.TournamentId);
 
-                await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
-                await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
+                await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -5371,8 +5379,8 @@ namespace GameHubz.Logic.Services
                 teamMatch.Status = TeamMatchStatus.TieBreakRequired;
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
                 await this.SaveAsync();
-                await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
-                await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
+                await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -5400,8 +5408,8 @@ namespace GameHubz.Logic.Services
             // committed state (it clears the change tracker). Mirrors the solo settle hook.
             await SettleForcedTeamWalkovers(teamMatch.TournamentId);
 
-            await cacheService.RemoveAsync($"bracket:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{teamMatch.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
@@ -6495,7 +6503,7 @@ namespace GameHubz.Logic.Services
                 {
                     RoundNumber = grp.Key,
                     RoundDeadline = grp.SelectMany(m => m.SubMatches).Max(sm => sm.RoundDeadline),
-                    Name = $"Round {grp.Key}",
+                    Name = string.Format(this.LocalizationService["Bracket.RoundN"], grp.Key),
                     Matches = grp.OrderBy(m => m.MatchOrder)
                                  .Select(tm => MapTeamMatchToDto(tm, totalRounds))
                                  .ToList()
@@ -6710,7 +6718,7 @@ namespace GameHubz.Logic.Services
                 rounds.Add(new BracketRoundDto
                 {
                     RoundNumber = grp.Key,
-                    Name = $"Round {grp.Key}",
+                    Name = string.Format(this.LocalizationService["Bracket.RoundN"], grp.Key),
                     RoundDeadline = grp.Max(m => m.RoundDeadline),
                     Matches = grp.OrderBy(m => m.MatchOrder)
                                  .Select(m => MapMatchToDto(m, currentUserId, isPrivileged, matchById))

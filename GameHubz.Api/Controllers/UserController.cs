@@ -42,6 +42,16 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        [HttpPost("language")]
+        public async Task<IActionResult> UpdateLanguage([FromBody] UpdateLanguageRequest request)
+        {
+            var tokenUserInfo = await this.userContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            await this.Service.UpdateLanguage(tokenUserInfo.UserId, request.Language);
+
+            return Ok();
+        }
+
         [HttpGet("lookup")]
         public async Task<IEnumerable<LookupResponse>> GetUserLookup()
         {

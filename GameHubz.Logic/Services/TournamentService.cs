@@ -130,14 +130,14 @@ namespace GameHubz.Logic.Services
             // (compare OpenRegistration/CancelTournament which gate through GetHubOwnedTournamentOrThrow).
             if (!await this.tournamentAuth.CanManageTournamentAsync(id))
             {
-                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffManageTournament"]);
             }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
             if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
             {
-                throw new BusinessRuleException("A tournament requires a minimum of 2 participants.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNeedsTwo"]);
             }
 
             tournament.Status = TournamentStatus.RegistrationClosed;
@@ -168,7 +168,7 @@ namespace GameHubz.Logic.Services
                 id,
                 TournamentStatus.RegistrationOpen,
                 ShouldOpenRegistration,
-                "Tournament registration can be opened only when it is closed or waiting to open."
+                this.LocalizationService["BusinessRule.OpenRegistrationWrongStatus"]
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.RegistrationOpen);
@@ -268,10 +268,10 @@ namespace GameHubz.Logic.Services
         public async Task SetRoundDeadline(Guid tournamentId, int roundNumber, DateTime? deadline, DateTime? roundStart, Guid? stageId = null, bool clearRoundStart = false, bool clearDeadline = false)
         {
             if (roundNumber < 1)
-                throw new BusinessRuleException("Round number must be greater than 0.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNumberPositive"]);
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
-                throw new BusinessRuleException("Only the hub owner or a hub admin can manage round deadlines.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffRoundDeadlines"]);
 
             // When a stage is given, scope the update to that bracket only — the Winners and Losers
             // brackets are separate stages that share RoundNumber, so a tournament-wide update would
@@ -280,7 +280,7 @@ namespace GameHubz.Logic.Services
                 ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
                 : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
-                throw new BusinessRuleException("Round not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNotFound"]);
 
             foreach (var match in roundMatches)
             {
@@ -327,26 +327,26 @@ namespace GameHubz.Logic.Services
             bool clearBestOf = false)
         {
             if (roundNumber < 1)
-                throw new BusinessRuleException("Round number must be greater than 0.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNumberPositive"]);
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
-                throw new BusinessRuleException("Only the hub owner or a hub admin can manage the round format.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffRoundFormat"]);
 
             if (!clearBestOf)
             {
                 if (bestOf == null)
-                    throw new BusinessRuleException("Choose how many games this round is played over.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChooseRoundGames"]);
                 if (bestOf < 1 || bestOf > SeriesEvaluator.MaxBestOf)
-                    throw new BusinessRuleException($"Best-of must be between 1 and {SeriesEvaluator.MaxBestOf}.");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.BestOfRange"], SeriesEvaluator.MaxBestOf));
                 if (tiebreakBestOf != null && (tiebreakBestOf < 1 || tiebreakBestOf > SeriesEvaluator.MaxBestOf))
-                    throw new BusinessRuleException($"Tiebreak best-of must be between 1 and {SeriesEvaluator.MaxBestOf}.");
+                    throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.TiebreakBestOfRange"], SeriesEvaluator.MaxBestOf));
             }
 
             var roundMatches = stageId.HasValue
                 ? await this.AppUnitOfWork.MatchRepository.GetByStageAndRound(stageId.Value, roundNumber)
                 : await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
-                throw new BusinessRuleException("Round not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNotFound"]);
 
             var result = new SetRoundBestOfResult();
 
@@ -374,7 +374,7 @@ namespace GameHubz.Logic.Services
             }
 
             if (result.UpdatedMatches == 0)
-                throw new BusinessRuleException("Every match in this round has already been reported, so its format is locked.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundFormatLocked"]);
 
             await this.SaveAsync();
             await cacheService.RemoveAsync($"bracket:{tournamentId}");
@@ -391,7 +391,7 @@ namespace GameHubz.Logic.Services
                 id,
                 TournamentStatus.Cancelled,
                 ShouldCancelTournament,
-                "Tournament can be cancelled only when it is in progress."
+                this.LocalizationService["BusinessRule.CancelWrongStatus"]
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentCanceled);
@@ -403,7 +403,7 @@ namespace GameHubz.Logic.Services
                 id,
                 TournamentStatus.Deleted,
                 ShouldDeleteTournament,
-                "Tournament can be deleted only when it is in progress or completed."
+                this.LocalizationService["BusinessRule.DeleteWrongStatus"]
             );
 
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentDeleted);
@@ -449,7 +449,7 @@ namespace GameHubz.Logic.Services
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
             {
-                throw new BusinessRuleException("Only the hub owner or a hub admin can manage this tournament.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffManageTournament"]);
             }
 
             return tournament;
@@ -556,7 +556,7 @@ namespace GameHubz.Logic.Services
                 // Dropping the schedule would leave a Draft nothing ever opens. Opening it now is a
                 // lifecycle transition with its own announcement — that is what OpenRegistration is.
                 throw new BusinessRuleException(
-                    "Pick a new opening time, or use Open Registration to start sign-ups right away.");
+                    this.LocalizationService["BusinessRule.PickNewOpeningTime"]);
             }
 
             bool canEditStructural = inputDto.AllowStructuralEdits
@@ -591,7 +591,7 @@ namespace GameHubz.Logic.Services
             {
                 if (!entity.HubId.HasValue)
                 {
-                    throw new BusinessRuleException("A tournament must belong to a hub.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNeedsHub"]);
                 }
 
                 if (caller.RoleEnum != UserRoleEnum.Admin)
@@ -619,12 +619,12 @@ namespace GameHubz.Logic.Services
             {
                 if (entity.RegistrationDeadline.HasValue && entity.RegistrationOpensAt.Value >= entity.RegistrationDeadline.Value)
                 {
-                    throw new BusinessRuleException("Registration must open before the registration deadline.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.RegistrationOpenBeforeDeadline"]);
                 }
 
                 if (entity.StartDate.HasValue && entity.RegistrationOpensAt.Value >= entity.StartDate.Value)
                 {
-                    throw new BusinessRuleException("Registration must open before the tournament starts.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.RegistrationOpenBeforeStart"]);
                 }
 
                 if (isNew)
@@ -657,7 +657,7 @@ namespace GameHubz.Logic.Services
                 .Select(c =>
                 {
                     var country = CountryCatalog.Get(c)
-                        ?? throw new BusinessRuleException($"Unknown country code '{c}'.");
+                        ?? throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UnknownCountryCode"], c));
                     return country.Code;
                 })
                 .Distinct()
@@ -717,14 +717,14 @@ namespace GameHubz.Logic.Services
         private async Task UpdateRoundSchedule(Guid tournamentId, int roundNumber, DateTime? opensAt = null, DateTime? deadline = null)
         {
             if (roundNumber < 1)
-                throw new BusinessRuleException("Round number must be greater than 0.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNumberPositive"]);
 
             if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
-                throw new BusinessRuleException("Only the hub owner or a hub admin can manage round deadlines.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffRoundDeadlines"]);
 
             var roundMatches = await this.AppUnitOfWork.MatchRepository.GetByTournamentAndRound(tournamentId, roundNumber);
             if (roundMatches.Count == 0)
-                throw new BusinessRuleException("Round not found.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNotFound"]);
 
             foreach (var match in roundMatches)
             {

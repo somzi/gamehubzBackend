@@ -27,10 +27,10 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var teamMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatchId);
-            if (teamMatch == null) throw new BusinessRuleException("Team match not found.");
+            if (teamMatch == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamMatchNotFound"]);
 
             if (teamMatch.Status != TeamMatchStatus.TieBreakRequired)
-                throw new BusinessRuleException("Tie-break is not required for this match.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TieBreakNotRequired"]);
 
             var homeTeam = teamMatch.HomeTeamParticipant?.Team;
             var awayTeam = teamMatch.AwayTeamParticipant?.Team;
@@ -52,9 +52,9 @@ namespace GameHubz.Logic.Services
             if (!captainOwnRoster && !isManager)
             {
                 if (isHomeCaptain || isAwayCaptain)
-                    throw new BusinessRuleException("Selected user is not a member of your team.");
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotInYourTeam"]);
 
-                throw new BusinessRuleException("Only a team captain or a tournament manager can submit a representative.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyCaptainOrManagerRepresentative"]);
             }
 
             // The side follows the nominee's roster, not the caller's: a captain can only land on
@@ -64,7 +64,7 @@ namespace GameHubz.Logic.Services
             else if (nomineeOnAway)
                 teamMatch.AwayTeamRepresentativeUserId = request.UserId;
             else
-                throw new BusinessRuleException("Selected user is not a member of either team.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserNotInEitherTeam"]);
 
             await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
@@ -122,7 +122,7 @@ namespace GameHubz.Logic.Services
         public async Task<TieBreakStatusDto> GetTieBreakStatus(Guid teamMatchId)
         {
             var projection = await this.AppUnitOfWork.TeamMatchRepository.GetTieBreakProjection(teamMatchId);
-            if (projection == null) throw new BusinessRuleException("Team match not found.");
+            if (projection == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamMatchNotFound"]);
 
             return new TieBreakStatusDto
             {
@@ -148,7 +148,7 @@ namespace GameHubz.Logic.Services
         public async Task<TeamMatchDetailsDto> GetTeamMatchDetails(Guid teamMatchId)
         {
             var projection = await this.AppUnitOfWork.TeamMatchRepository.GetDetailsProjection(teamMatchId);
-            if (projection == null) throw new BusinessRuleException("Team match not found.");
+            if (projection == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamMatchNotFound"]);
 
             var homeTeamMembers = projection.HomeTeam?.Members ?? [];
             var awayTeamMembers = projection.AwayTeam?.Members ?? [];

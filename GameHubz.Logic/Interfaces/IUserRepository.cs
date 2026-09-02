@@ -42,6 +42,9 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<string>> GetPushTokensByUserIds(List<Guid> userIds);
 
+        /// <summary>Push tokens plus each user's language, for pushes written in the recipient's language.</summary>
+        Task<List<PushRecipient>> GetPushRecipientsByUserIds(List<Guid> userIds);
+
         Task<UserEntity?> GetByDiscordUserId(string discordUserId);
 
         Task<List<UserNotificationTarget>> GetNotificationTargetsByUserIds(List<Guid> userIds);

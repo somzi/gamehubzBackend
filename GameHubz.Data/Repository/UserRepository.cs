@@ -205,6 +205,18 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Same set as GetPushTokensByUserIds, but carrying each user's language so the push can
+        // be written in the RECIPIENT's language rather than the caller's.
+        public async Task<List<PushRecipient>> GetPushRecipientsByUserIds(List<Guid> userIds)
+        {
+            var rows = await this.BaseDbSet()
+                .Where(x => userIds.Contains(x.Id!.Value) && x.PushToken != null)
+                .Select(x => new { x.PushToken, x.Language })
+                .ToListAsync();
+
+            return rows.Select(r => new PushRecipient(r.PushToken!, r.Language)).ToList();
+        }
+
         public async Task<UserEntity?> GetByDiscordUserId(string discordUserId)
         {
             return await this.BaseDbSet()
@@ -222,6 +234,7 @@ namespace GameHubz.Data.Repository
                 .Select(x => new UserNotificationTarget
                 {
                     PushToken = x.PushToken,
+                    Language = x.Language,
                     DiscordUserId = x.DiscordUserId,
                     DiscordDmEnabled = x.DiscordDmEnabled,
                 })

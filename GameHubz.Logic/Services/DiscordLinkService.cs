@@ -50,7 +50,7 @@ namespace GameHubz.Logic.Services
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             if (string.IsNullOrWhiteSpace(config.ClientId) || string.IsNullOrWhiteSpace(config.RedirectUri))
-                throw new BusinessRuleException("Discord linking isn't configured on this server yet.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DiscordNotConfigured"]);
 
             // One-time, TTL-bound state tied to the caller. The callback is anonymous, so this
             // entry is the only thing binding the returning code to a GameHubz account — without

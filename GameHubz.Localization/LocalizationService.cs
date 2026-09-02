@@ -1,23 +1,67 @@
+using System.Collections.Concurrent;
 using System.Resources;
+using GameHubz.DataModels.Consts;
 using GameHubz.Localization.Resources;
 using GameHubz.Logic.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Primitives;
 
 namespace GameHubz.Localization
 {
+    /// <summary>
+    /// Resolves user-facing strings for the language of the CURRENT request.
+    /// <para>
+    /// This is registered as a singleton and used from ~100 services, so the language can
+    /// never be captured in the constructor: it is read per call. <see cref="IHttpContextAccessor"/>
+    /// is safe to hold from a singleton because it resolves the context through an AsyncLocal,
+    /// not through captured state.
+    /// </para>
+    /// <para>
+    /// Anything running outside a request — background tasks, queue consumers, and push
+    /// notifications, which must speak the RECIPIENT's language rather than the caller's —
+    /// has no HttpContext to read. Those paths use the explicit
+    /// <see cref="this[string, string]"/> overload instead.
+    /// </para>
+    /// </summary>
     public class LocalizationService : ILocalizationService
     {
-        private readonly ResourceManager resourceManager;
-        private readonly ResourceManager fallbackResourceManager;
+        /// <summary>Header the mobile client sends on every request (see api.ts).</summary>
+        private const string LanguageHeader = "Language";
 
-        public LocalizationService(IConfiguration configuration)
+        private static readonly ResourceManager EnglishResources = TranslationEN.ResourceManager;
+
+        private static readonly ResourceManager SpanishResources = new ResourceManager(
+            "GameHubz.Localization.Resources.TranslationES",
+            typeof(LocalizationService).Assembly);
+
+        /// <summary>ResourceManager lookups are cheap but the switch below is hit on every string.</summary>
+        private static readonly ConcurrentDictionary<string, ResourceManager> ManagerCache = new();
+
+        private readonly IHttpContextAccessor? httpContextAccessor;
+        private readonly string configuredLanguage;
+
+        /// <param name="httpContextAccessor">
+        /// Optional so the service can also be constructed outside the web host (tests, tooling).
+        /// When absent, every lookup falls back to the configured language.
+        /// </param>
+        public LocalizationService(IConfiguration configuration, IHttpContextAccessor? httpContextAccessor = null)
         {
-            this.fallbackResourceManager = TranslationEN.ResourceManager;
+            this.httpContextAccessor = httpContextAccessor;
 
-            string language = configuration.GetValue<string>("Language")!;
-
-            this.resourceManager = GetResourceManager(language);
+            // appsettings.json (production) does not define "Language" at all, so this is
+            // routinely null — English is the fallback, matching the previous behaviour.
+            this.configuredLanguage = Languages.Normalize(configuration.GetValue<string>("Language")) ?? Languages.English;
         }
+
+        /// <summary>String in the current request's language.</summary>
+        public string this[string key] => Resolve(key, this.CurrentLanguage);
+
+        /// <summary>
+        /// String in an explicitly chosen language. Used where the reader is not the caller —
+        /// push notifications and e-mails are written in the recipient's language.
+        /// </summary>
+        public string this[string key, string? language] => Resolve(key, Languages.Normalize(language) ?? this.configuredLanguage);
 
         public string PropertyIsEmptyMessage(string propertyName)
         {
@@ -34,23 +78,44 @@ namespace GameHubz.Localization
             return string.Format(this["CommonValidator.PropertyValueAlreadyExists"], objectName, propertyName);
         }
 
-        public string this[string key]
+        /// <summary>Request header when there is a request, otherwise the configured default.</summary>
+        public string CurrentLanguage => this.ReadLanguageHeader() ?? this.configuredLanguage;
+
+        private string? ReadLanguageHeader()
         {
-            get
+            HttpRequest? request = this.httpContextAccessor?.HttpContext?.Request;
+
+            if (request is null)
             {
-                string? value = this.resourceManager.GetString(key);
-
-                value ??= this.fallbackResourceManager.GetString(key);
-
-                return value ?? "(no translation)";
+                return null;
             }
+
+            if (!request.Headers.TryGetValue(LanguageHeader, out StringValues values) || values.Count == 0)
+            {
+                return null;
+            }
+
+            return Languages.Normalize(values[0]);
         }
 
-        private static ResourceManager GetResourceManager(string language)
+        private static string Resolve(string key, string language)
+        {
+            ResourceManager manager = ManagerCache.GetOrAdd(language, ManagerFor);
+
+            // A key missing from the translated set falls back to English rather than to the
+            // key name, so a partially translated resx never leaks "Exception.EmptyEmail".
+            string? value = manager.GetString(key) ?? EnglishResources.GetString(key);
+
+            return value ?? "(no translation)";
+        }
+
+        private static ResourceManager ManagerFor(string language)
             => language switch
             {
-                "sr" => TranslationEN.ResourceManager,
-                _ => TranslationEN.ResourceManager,
+                Languages.Spanish => SpanishResources,
+                // "sr" is the legacy header default and has no resource set; it has always
+                // rendered English, and still does.
+                _ => EnglishResources,
             };
     }
 }

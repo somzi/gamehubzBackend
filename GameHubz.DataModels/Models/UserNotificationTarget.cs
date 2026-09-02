@@ -8,6 +8,9 @@ namespace GameHubz.DataModels.Models
     {
         public string? PushToken { get; set; }
 
+        /// <summary>App language of this user — pushes are written in the RECIPIENT's language.</summary>
+        public string? Language { get; set; }
+
         public string? DiscordUserId { get; set; }
 
         public bool DiscordDmEnabled { get; set; }

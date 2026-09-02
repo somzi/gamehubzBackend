@@ -15,15 +15,18 @@ namespace GameHubz.Logic.Services
         private readonly IHttpClientFactory httpClientFactory;
         private readonly ILogger<NotificationService> logger;
         private readonly IServiceScopeFactory serviceScopeFactory;
+        private readonly ILocalizationService localizationService;
 
         public NotificationService(
             IHttpClientFactory httpClientFactory,
             ILogger<NotificationService> logger,
-            IServiceScopeFactory serviceScopeFactory)
+            IServiceScopeFactory serviceScopeFactory,
+            ILocalizationService localizationService)
         {
             this.httpClientFactory = httpClientFactory;
             this.logger = logger;
             this.serviceScopeFactory = serviceScopeFactory;
+            this.localizationService = localizationService;
         }
 
         public async Task SendToOneAsync(string pushToken, string title, string body, object? data = null)
@@ -67,6 +70,62 @@ namespace GameHubz.Logic.Services
             foreach (var chunk in allMessages.Chunk(MaxTokensPerRequest))
             {
                 await SendBatchAsync(chunk.ToList());
+            }
+        }
+
+        public Task SendLocalizedToOneAsync(
+            PushRecipient recipient,
+            PushText title,
+            PushText body,
+            object? data = null)
+            => this.SendLocalizedToManyAsync(new[] { recipient }, title, body, data);
+
+        public async Task SendLocalizedToManyAsync(
+            IEnumerable<PushRecipient> recipients,
+            PushText title,
+            PushText body,
+            object? data = null)
+        {
+            // One device may be registered once per language bucket at most: de-duplicate on the
+            // token so a user who somehow appears twice does not get two copies.
+            var byToken = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+            foreach (PushRecipient recipient in recipients)
+            {
+                if (string.IsNullOrWhiteSpace(recipient.PushToken))
+                {
+                    continue;
+                }
+
+                byToken[recipient.PushToken] = recipient.Language;
+            }
+
+            if (byToken.Count == 0)
+            {
+                return;
+            }
+
+            // Resolve the wording once per language rather than once per device.
+            foreach (var group in byToken.GroupBy(pair => pair.Value, StringComparer.OrdinalIgnoreCase))
+            {
+                string? language = group.Key;
+                string resolvedTitle = title.Resolve(this.localizationService, language);
+                string resolvedBody = body.Resolve(this.localizationService, language);
+
+                var messages = group
+                    .Select(pair => new ExpoPushMessage
+                    {
+                        To = pair.Key,
+                        Title = resolvedTitle,
+                        Body = resolvedBody,
+                        Data = data,
+                    })
+                    .ToList();
+
+                foreach (var chunk in messages.Chunk(MaxTokensPerRequest))
+                {
+                    await SendBatchAsync(chunk.ToList());
+                }
             }
         }
 

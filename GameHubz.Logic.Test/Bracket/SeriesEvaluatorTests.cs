@@ -5,10 +5,14 @@ using NUnit.Framework;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Exceptions;
+using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
+using GameHubz.Logic.Test.Factories;
 
 namespace GameHubz.Logic.Test.Bracket
 {
+    // The evaluator writes its rejections through the localization service, so the tests use a
+    // real one rather than a stub: the message a player would actually read is what gets built.
     // Pure unit tests over the series maths — no DB, no harness. These pin the rules the whole
     // best-of feature rests on: when a series is decided, what its headline score is, and which
     // submissions the server refuses. The mobile client mirrors this logic for its entry form, so
@@ -16,6 +20,9 @@ namespace GameHubz.Logic.Test.Bracket
     [TestFixture]
     internal sealed class SeriesEvaluatorTests
     {
+        private static readonly ILocalizationService Localization =
+            new LocalizationServiceFactory().CreateService();
+
         private static SeriesGame G(int home, int away, int series = 1)
             => new() { HomeScore = home, AwayScore = away, SeriesNumber = series };
 
@@ -220,7 +227,7 @@ namespace GameHubz.Logic.Test.Bracket
         public void Validate_RejectsEmptySubmission()
         {
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate([], TeamWinCondition.MatchWins, 3, null));
+                () => SeriesEvaluator.ValidateAndEvaluate([], TeamWinCondition.MatchWins, 3, null, Localization));
         }
 
         [Test]
@@ -229,7 +236,7 @@ namespace GameHubz.Logic.Test.Bracket
             var tooMany = new List<SeriesGame> { G(1, 0), G(1, 0), G(1, 0), G(1, 0) };
 
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate(tooMany, TeamWinCondition.MatchWins, 3, null));
+                () => SeriesEvaluator.ValidateAndEvaluate(tooMany, TeamWinCondition.MatchWins, 3, null, Localization));
         }
 
         // ── phase defaults ─────────────────────────────────────────────────────
@@ -284,7 +291,7 @@ namespace GameHubz.Logic.Test.Bracket
             var withDeadRubber = new List<SeriesGame> { G(1, 0), G(2, 1), G(0, 3) };
 
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate(withDeadRubber, TeamWinCondition.MatchWins, 3, null));
+                () => SeriesEvaluator.ValidateAndEvaluate(withDeadRubber, TeamWinCondition.MatchWins, 3, null, Localization));
         }
 
         [Test]
@@ -296,7 +303,8 @@ namespace GameHubz.Logic.Test.Bracket
                 [G(5, 0), G(4, 0), G(0, 1), G(0, 2)],
                 TeamWinCondition.AggregateScore,
                 matchBestOf: 4,
-                tiebreakBestOf: null);
+                tiebreakBestOf: null,
+                localization: Localization);
 
             Assert.Multiple(() =>
             {
@@ -315,7 +323,8 @@ namespace GameHubz.Logic.Test.Bracket
                     [G(5, 0), G(4, 0)],
                     TeamWinCondition.AggregateScore,
                     matchBestOf: 4,
-                    tiebreakBestOf: null));
+                    tiebreakBestOf: null,
+                    localization: Localization));
         }
 
         [Test]
@@ -323,7 +332,7 @@ namespace GameHubz.Logic.Test.Bracket
         {
             // 1–1 in a Bo3 still has a game to play.
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate([G(1, 0), G(0, 1)], TeamWinCondition.MatchWins, 3, null));
+                () => SeriesEvaluator.ValidateAndEvaluate([G(1, 0), G(0, 1)], TeamWinCondition.MatchWins, 3, null, Localization));
         }
 
         [Test]
@@ -333,7 +342,7 @@ namespace GameHubz.Logic.Test.Bracket
             var games = new List<SeriesGame> { G(1, 0), G(1, 0), G(1, 0, series: 2) };
 
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate(games, TeamWinCondition.MatchWins, 3, null));
+                () => SeriesEvaluator.ValidateAndEvaluate(games, TeamWinCondition.MatchWins, 3, null, Localization));
         }
 
         [Test]
@@ -342,21 +351,21 @@ namespace GameHubz.Logic.Test.Bracket
             var games = new List<SeriesGame> { G(1, 1), G(1, 0, series: 3) };
 
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate(games, TeamWinCondition.MatchWins, 1, null));
+                () => SeriesEvaluator.ValidateAndEvaluate(games, TeamWinCondition.MatchWins, 1, null, Localization));
         }
 
         [Test]
         public void Validate_RejectsNegativeScores()
         {
             Assert.Throws<BusinessRuleException>(
-                () => SeriesEvaluator.ValidateAndEvaluate([G(-1, 0)], TeamWinCondition.MatchWins, 1, null));
+                () => SeriesEvaluator.ValidateAndEvaluate([G(-1, 0)], TeamWinCondition.MatchWins, 1, null, Localization));
         }
 
         [Test]
         public void Validate_AcceptsACompleteSeries()
         {
             var outcome = SeriesEvaluator.ValidateAndEvaluate(
-                [G(2, 1), G(3, 0)], TeamWinCondition.MatchWins, 3, null);
+                [G(2, 1), G(3, 0)], TeamWinCondition.MatchWins, 3, null, Localization);
 
             Assert.That(outcome.HomeHeadline, Is.EqualTo(2));
             Assert.That(outcome.AwayHeadline, Is.EqualTo(0));

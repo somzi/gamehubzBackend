@@ -43,15 +43,15 @@ namespace GameHubz.Logic.Services
             var hub = await this.AppUnitOfWork.HubRepository.GetByIdOrThrowIfNull(hubId);
 
             if (hub.UserId == user.UserId)
-                throw new BusinessRuleException("You already own this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAlreadyOwnThisHub"]);
 
             var isBanned = await this.AppUnitOfWork.UserHubBanRepository.IsBanned(user.UserId, hubId);
             if (isBanned)
-                throw new BusinessRuleException("You are banned from this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAreBanned"]);
 
             var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(user.UserId, hubId);
             if (alreadyFollowing)
-                throw new BusinessRuleException("You are already a member of this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.YouAlreadyHubMember"]);
 
             if (hub.IsPublic)
             {
@@ -71,7 +71,7 @@ namespace GameHubz.Logic.Services
 
             var alreadyRequested = await this.AppUnitOfWork.UserHubRequestRepository.HasPendingRequest(hubId, user.UserId);
             if (alreadyRequested)
-                throw new BusinessRuleException("You already have a pending request for this hub.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.PendingRequestForHub"]);
 
             var request = new UserHubRequestEntity
             {
@@ -89,13 +89,13 @@ namespace GameHubz.Logic.Services
                 hubId,
                 hub.UserId,
                 excludeUserId: user.UserId,
-                hub.Name,
-                $"{user.Username} wants to join your hub.",
+                PushText.FromLiteral(hub.Name),
+                PushText.FromKey("Push.HubJoinRequest.Body", user.Username),
                 new { hubId = hubId.ToString(), type = "hubJoinRequest" });
         }
 
         // Pushes + badge-bumps every hub manager (owner + admins) about a new pending join request.
-        private async Task NotifyHubManagersAsync(Guid hubId, Guid ownerUserId, Guid excludeUserId, string title, string body, object data)
+        private async Task NotifyHubManagersAsync(Guid hubId, Guid ownerUserId, Guid excludeUserId, PushText title, PushText body, object data)
         {
             var members = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
             var managers = members
@@ -108,16 +108,15 @@ namespace GameHubz.Logic.Services
             foreach (var id in managerIds)
                 await this.badgeService.PushAsync(id);
 
-            var tokens = managers
+            var recipients = managers
                 .Where(m => !string.IsNullOrEmpty(m.PushToken))
-                .Select(m => m.PushToken!)
-                .Distinct()
+                .Select(m => new PushRecipient(m.PushToken!, m.Language))
                 .ToList();
 
-            if (tokens.Count == 0) return;
+            if (recipients.Count == 0) return;
             _ = Task.Run(async () =>
             {
-                try { await notificationService.SendToManyAsync(tokens, title, body, data); }
+                try { await notificationService.SendLocalizedToManyAsync(recipients, title, body, data); }
                 catch { /* fire-and-forget */ }
             });
         }
@@ -137,15 +136,15 @@ namespace GameHubz.Logic.Services
         }
 
         // Fire-and-forget push to a single user by id.
-        private async Task NotifyUserAsync(Guid userId, string title, string body, object data)
+        private async Task NotifyUserAsync(Guid userId, PushText title, PushText body, object data)
         {
             var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
             if (string.IsNullOrEmpty(target?.PushToken)) return;
 
-            var token = target.PushToken!;
+            var recipient = new PushRecipient(target.PushToken!, target.Language);
             _ = Task.Run(async () =>
             {
-                try { await notificationService.SendToOneAsync(token, title, body, data); }
+                try { await notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }
                 catch { /* fire-and-forget */ }
             });
         }
@@ -164,13 +163,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetByIdWithHub(requestId);
-            if (request == null) throw new BusinessRuleException("Request not found.");
-            if (request.Hub == null) throw new BusinessRuleException("Hub not found.");
+            if (request == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNotFound"]);
+            if (request.Hub == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.HubNotFound"]);
 
             await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
-                throw new BusinessRuleException("Request is no longer pending.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNoLongerPending"]);
 
             var alreadyFollowing = await this.AppUnitOfWork.HubRepository.IsUserFollowingHub(request.UserId!.Value, request.HubId!.Value);
             if (!alreadyFollowing)
@@ -196,8 +195,8 @@ namespace GameHubz.Logic.Services
             await BumpHubManagerBadgesAsync(request.HubId!.Value, request.Hub!.UserId);
             await NotifyUserAsync(
                 request.UserId!.Value,
-                request.Hub!.Name,
-                "Your request to join the hub was approved.",
+                PushText.FromLiteral(request.Hub!.Name),
+                PushText.FromKey("Push.HubJoinApproved.Body"),
                 new { hubId = request.HubId!.Value.ToString(), type = "hubJoinApproved" });
         }
 
@@ -206,13 +205,13 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetByIdWithHub(requestId);
-            if (request == null) throw new BusinessRuleException("Request not found.");
-            if (request.Hub == null) throw new BusinessRuleException("Hub not found.");
+            if (request == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNotFound"]);
+            if (request.Hub == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.HubNotFound"]);
 
             await this.userHubService.EnsureCallerCanManage(request.HubId!.Value, user.UserId);
 
             if (request.Status != JoinRequestStatus.Pending)
-                throw new BusinessRuleException("Request is no longer pending.");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestNoLongerPending"]);
 
             request.Status = JoinRequestStatus.Rejected;
             await this.AppUnitOfWork.UserHubRequestRepository.UpdateEntity(request, this.UserContextReader);
@@ -223,8 +222,8 @@ namespace GameHubz.Logic.Services
             await BumpHubManagerBadgesAsync(request.HubId!.Value, request.Hub!.UserId);
             await NotifyUserAsync(
                 request.UserId!.Value,
-                request.Hub!.Name,
-                "Your request to join the hub was declined.",
+                PushText.FromLiteral(request.Hub!.Name),
+                PushText.FromKey("Push.HubJoinRejected.Body"),
                 new { hubId = request.HubId!.Value.ToString(), type = "hubJoinRejected" });
         }
 
@@ -233,7 +232,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var request = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingByHubAndUser(hubId, user.UserId);
-            if (request == null) throw new BusinessRuleException("No pending request found.");
+            if (request == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoPendingRequest"]);
 
             await this.AppUnitOfWork.UserHubRequestRepository.HardDeleteEntity(request);
             await this.SaveAsync();

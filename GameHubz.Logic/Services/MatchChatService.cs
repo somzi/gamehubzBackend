@@ -59,7 +59,7 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException("Match not found");
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // F33: only a participant of this match — or a tournament manager moderating it (hub
             // owner / hub admin / platform admin) — may post to its chat. Managers step in via the
@@ -70,7 +70,7 @@ namespace GameHubz.Logic.Services
 
             // Completed matches keep their chat history visible but read-only.
             if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException("Chat is closed for completed matches");
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatClosedCompleted"]);
 
             var entity = new MatchChatEntity
             {
