@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Enums;
+﻿using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -115,8 +115,16 @@ namespace GameHubz.Logic.Services
             var unreadDms = await this.AppUnitOfWork.DirectMessageRepository.GetUnreadCountForUser(userId);
 
             var activeMatches = await this.AppUnitOfWork.MatchRepository.GetActiveForUserBadge(userId);
-            var matchIds = activeMatches.Select(m => m.Id).ToList();
-            var unreadByMatch = await this.AppUnitOfWork.MatchChatRepository.GetUnreadCountsByMatch(matchIds, userId);
+
+            // Chat badges cover the user's OWN matches only. Chats they merely moderate reach them
+            // through push / Discord instead: counting those here would light up a badge with
+            // nowhere to go, since a moderated match appears in no in-app list.
+            var chatMatchIds = new HashSet<Guid>(activeMatches.Select(m => m.Id));
+
+            // A muted thread must not drive the badge, however many messages it collects.
+            chatMatchIds.ExceptWith(await this.AppUnitOfWork.MatchChatReadRepository.GetMutedMatchIds(userId));
+
+            var unreadByMatch = await this.AppUnitOfWork.MatchChatRepository.GetUnreadCountsByMatch(chatMatchIds.ToList(), userId);
 
             // Results an opponent proposed that this user still has to confirm/dispute.
             // Folded into the already-loaded active matches — no extra DB query. A proposal

@@ -1,4 +1,4 @@
-using GameHubz.Common;
+﻿using GameHubz.Common;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Domain
@@ -86,5 +86,14 @@ namespace GameHubz.DataModels.Domain
         /// <summary>Per-user switch for showing the linked Discord as a public profile link
         /// (discord.com/users deep link); only meaningful while linked. Independent of DM notifications.</summary>
         public bool DiscordShowOnProfile { get; set; } = true;
+
+        /// <summary>
+        /// Whether the user wants to be notified about match chats they only moderate — threads
+        /// they stepped into as an organizer rather than as a player. Off means no push, no Discord
+        /// DM and no badge for those; chats on their OWN matches are unaffected, since missing a
+        /// scheduling message on a match you have to play is a different kind of harm. Per-thread
+        /// muting (MatchChatRead.IsMuted) is the finer tool and works on any chat.
+        /// </summary>
+        public bool ModeratedChatNotifications { get; set; } = true;
     }
 }

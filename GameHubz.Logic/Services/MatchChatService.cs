@@ -100,78 +100,108 @@ namespace GameHubz.Logic.Services
             await hubContext.Clients.Group(matchId.ToString())
                              .SendAsync("ReceiveMessage", dto);
 
-            // Push notification to the opponent (data resolved in-scope; see NotifyOpponentAsync).
-            await NotifyOpponentAsync(matchId, match, content, user);
+            // Push notification to everyone in the conversation (see NotifyChatRecipientsAsync).
+            await NotifyChatRecipientsAsync(matchId, match, content, user);
 
             return dto;
         }
 
-        // F109: the opponent, badge bump and push token are all resolved here while the request-scoped
-        // DbContext is alive; only the push send itself is fired-and-forgotten. The old version queried
-        // this.AppUnitOfWork inside Task.Run, racing against the disposed request-scoped context.
-        private async Task NotifyOpponentAsync(Guid matchId, MatchEntity match, string content, TokenUserInfo user)
+        // F109: the recipients, badge bumps and push tokens are all resolved here while the
+        // request-scoped DbContext is alive; only the push sends themselves are fired-and-forgotten.
+        //
+        // Recipients are the whole conversation, not just the opponent: both sides of the match
+        // PLUS anyone who has already posted in it. That second set is what keeps an organizer who
+        // stepped in to mediate in the loop -- before it, an admin who wrote into a match chat never
+        // heard about the replies, so the thread they opened went silent on them. Taking both sides
+        // (rather than "the other one") also fixes the admin-sender case, where the old opponent
+        // lookup resolved to a single player and left the other one uninformed.
+        private async Task NotifyChatRecipientsAsync(Guid matchId, MatchEntity match, string content, TokenUserInfo user)
         {
-            Guid? opponentUserId = match.HomeUserId == user.UserId
-                ? match.AwayUserId
-                : match.HomeUserId;
+            var recipientIds = new HashSet<Guid>();
 
-            if (opponentUserId == null)
+            // Team sub-matches carry the player ids on the match; solo matches resolve through the
+            // participants. A team participant row has no meaningful UserId -- hence the Empty guard.
+            foreach (var side in new[]
             {
-                opponentUserId = match.HomeParticipant?.UserId == user.UserId
-                    ? match.AwayParticipant?.UserId
-                    : match.HomeParticipant?.UserId;
+                match.HomeUserId ?? match.HomeParticipant?.UserId,
+                match.AwayUserId ?? match.AwayParticipant?.UserId,
+            })
+            {
+                if (side is { } sideUserId && sideUserId != Guid.Empty) recipientIds.Add(sideUserId);
             }
 
-            if (opponentUserId == null) return;
+            // Snapshot of who the two players are, so the blanket "chats I moderate" switch below
+            // can tell a player (never silenced by it) from an organizer who stepped in.
+            var playerIds = new HashSet<Guid>(recipientIds);
 
-            // Live badge bump for the opponent (unread match chat) — before the
-            // push-token early-out so it fires even when push isn't configured.
-            await this.badgeService.PushAsync(opponentUserId.Value);
+            foreach (var authorId in await this.AppUnitOfWork.MatchChatRepository.GetChatUserIds(matchId))
+                recipientIds.Add(authorId);
 
-            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-            if (opponent == null) return;
+            recipientIds.Remove(user.UserId);
+
+            // Per-thread mute wins over everything: no push, no DM, no badge for this match.
+            foreach (var mutedId in await this.AppUnitOfWork.MatchChatReadRepository.GetMutedUserIds(matchId))
+                recipientIds.Remove(mutedId);
+
+            if (recipientIds.Count == 0) return;
 
             var tournamentId = match.TournamentId.ToString();
 
-            if (!string.IsNullOrEmpty(opponent.PushToken))
+            foreach (var recipientId in recipientIds)
             {
-                var token = opponent.PushToken!;
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await notificationService.SendToOneAsync(
-                            token,
-                            user.Username,
-                            content,
-                            new
-                            {
-                                type = "matchMessage",
-                                matchId = matchId.ToString(),
-                                // Carried for team-tournament sub-matches so the mobile deep link can route
-                                // to the team-match modal (the solo modal renders empty for a sub-match id).
-                                teamMatchId = match.TeamMatchId?.ToString(),
-                                tournamentId,
-                            });
-                    }
-                    catch { /* fire-and-forget – swallow errors */ }
-                });
-            }
+                var recipient = await this.AppUnitOfWork.UserRepository.GetById(recipientId);
+                if (recipient == null) continue;
 
-            // Additive Discord DM (push stays the primary channel) — same trigger as the push.
-            // Throttled per match (see ChatDmCooldown); checked here in the request scope so the
-            // fire-and-forget send stays cache-free. Masked link keeps the raw URL out of the
-            // message; the <> also suppresses Discord's link-preview embed.
-            if (opponent.DiscordDmEnabled)
-            {
-                string cooldownKey = $"discord:dm_chat_cooldown:{opponentUserId.Value}:{matchId}";
-                if (await this.cacheService.GetAsync<string>(cooldownKey) == null)
+                // Blanket opt-out for threads the recipient only moderates. Deliberately does not
+                // touch their own matches: missing a scheduling message on a match you have to
+                // play is a different kind of harm than one dispute chat being noisy.
+                if (!playerIds.Contains(recipientId) && !recipient.ModeratedChatNotifications) continue;
+
+                // Live badge bump -- before the push-token early-out so it fires even when push
+                // isn't configured. For a moderator this counter is the only thing that surfaces
+                // the thread in-app, so it must not depend on them having a device token.
+                await this.badgeService.PushAsync(recipientId);
+
+                if (!string.IsNullOrEmpty(recipient.PushToken))
                 {
-                    await this.cacheService.SetAsync(cooldownKey, "1", ChatDmCooldown);
-                    string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
-                    this.discordDmService.SendDmInBackground(
-                        opponent.DiscordUserId,
-                        $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                    var token = recipient.PushToken!;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await notificationService.SendToOneAsync(
+                                token,
+                                user.Username,
+                                content,
+                                new
+                                {
+                                    type = "matchMessage",
+                                    matchId = matchId.ToString(),
+                                    // Carried for team-tournament sub-matches so the mobile deep link can route
+                                    // to the team-match modal (the solo modal renders empty for a sub-match id).
+                                    teamMatchId = match.TeamMatchId?.ToString(),
+                                    tournamentId,
+                                });
+                        }
+                        catch { /* fire-and-forget - swallow errors */ }
+                    });
+                }
+
+                // Additive Discord DM (push stays the primary channel) -- same trigger as the push.
+                // Throttled per recipient per match (see ChatDmCooldown); checked here in the request
+                // scope so the fire-and-forget send stays cache-free. Masked link keeps the raw URL
+                // out of the message; the <> also suppresses Discord's link-preview embed.
+                if (recipient.DiscordDmEnabled)
+                {
+                    string cooldownKey = $"discord:dm_chat_cooldown:{recipientId}:{matchId}";
+                    if (await this.cacheService.GetAsync<string>(cooldownKey) == null)
+                    {
+                        await this.cacheService.SetAsync(cooldownKey, "1", ChatDmCooldown);
+                        string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
+                        this.discordDmService.SendDmInBackground(
+                            recipient.DiscordUserId,
+                            $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                    }
                 }
             }
         }
@@ -204,6 +234,32 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchChatReadRepository.MarkRead(matchId, user.UserId, this.UserContextReader);
             await this.SaveAsync();
 
+            await this.badgeService.PushAsync(user.UserId);
+        }
+
+        /// <summary>Whether the caller has this match's chat muted.</summary>
+        public async Task<bool> GetMuted(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            return (await this.AppUnitOfWork.MatchChatReadRepository.GetMutedMatchIds(user.UserId))
+                .Contains(matchId);
+        }
+
+        /// <summary>
+        /// Mutes or unmutes this match's chat for the caller. Mute suppresses push, Discord DM and
+        /// the aggregate badge; the thread keeps its place — and its real unread count — in the
+        /// inbox. Anyone who can read the chat can mute it, so this needs no extra authorization
+        /// beyond the controller's [Authorize]: it only ever writes the caller's own row.
+        /// </summary>
+        public async Task SetMuted(Guid matchId, bool muted)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            await this.AppUnitOfWork.MatchChatReadRepository.SetMuted(matchId, user.UserId, muted, this.UserContextReader);
+            await this.SaveAsync();
+
+            // Muting should drop the counter immediately rather than at the next poll.
             await this.badgeService.PushAsync(user.UserId);
         }
 

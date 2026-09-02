@@ -115,6 +115,37 @@ namespace GameHubz.Logic.Services
             return cachedProfile;
         }
 
+        /// <summary>
+        /// The caller's own notification preferences. Its own endpoint rather than a field on the
+        /// profile DTO: the Settings screen needs it without pulling stats, socials and the rest.
+        /// </summary>
+        public async Task<NotificationSettingsDto> GetMyNotificationSettings()
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(caller.UserId);
+
+            return new NotificationSettingsDto
+            {
+                ModeratedChatNotifications = user.ModeratedChatNotifications,
+            };
+        }
+
+        public async Task<NotificationSettingsDto> UpdateMyNotificationSettings(NotificationSettingsDto settings)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(caller.UserId);
+
+            user.ModeratedChatNotifications = settings.ModeratedChatNotifications;
+
+            await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
+            await this.SaveAsync();
+
+            return new NotificationSettingsDto
+            {
+                ModeratedChatNotifications = user.ModeratedChatNotifications,
+            };
+        }
+
         public async Task UploadAvatar(IFormFile file)
         {
             var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(

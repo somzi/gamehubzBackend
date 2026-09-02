@@ -1,4 +1,4 @@
-namespace GameHubz.Logic.Interfaces
+﻿namespace GameHubz.Logic.Interfaces
 {
     public interface IMatchChatRepository : IRepository<MatchChatEntity>
     {
@@ -17,5 +17,13 @@ namespace GameHubz.Logic.Interfaces
         /// message appear in the result.
         /// </summary>
         Task<Dictionary<Guid, int>> GetUnreadCountsByMatch(List<Guid> matchIds, Guid userId);
+
+        /// <summary>
+        /// Everyone who has posted in this match's chat. The two players are only part of the
+        /// set — an organizer who stepped in to mediate is in it too, which is what lets a new
+        /// message notify the whole conversation instead of just the opponent.
+        /// </summary>
+        Task<List<Guid>> GetChatUserIds(Guid matchId);
+
     }
 }

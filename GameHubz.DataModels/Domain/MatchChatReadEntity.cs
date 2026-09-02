@@ -1,4 +1,4 @@
-using GameHubz.Common;
+﻿using GameHubz.Common;
 
 namespace GameHubz.DataModels.Domain
 {
@@ -19,5 +19,12 @@ namespace GameHubz.DataModels.Domain
         public UserEntity? User { get; set; }
 
         public DateTime LastReadAt { get; set; }
+
+        /// <summary>
+        /// Per-thread mute. Suppresses push, Discord DM and the aggregate unread badge for this
+        /// match while leaving the thread — and its real unread count — visible in the chat inbox,
+        /// the way a muted channel behaves elsewhere. Works on any chat, moderated or your own.
+        /// </summary>
+        public bool IsMuted { get; set; }
     }
 }

@@ -1,4 +1,4 @@
-using GameHubz.Data.Base;
+﻿using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
@@ -81,6 +81,15 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
 
             return rows.ToDictionary(x => x.MatchId, x => x.Count);
+        }
+
+        public async Task<List<Guid>> GetChatUserIds(Guid matchId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.MatchId == matchId && x.UserId != null)
+                .Select(x => x.UserId!.Value)
+                .Distinct()
+                .ToListAsync();
         }
     }
 }

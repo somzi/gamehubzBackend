@@ -22,18 +22,21 @@ namespace GameHubz.Api.Controllers
             this.chatService = chatService;
         }
 
-        [HttpGet("{matchId}/history")]
-        public async Task<IActionResult> GetHistory(Guid matchId, [FromQuery] int? take = null, [FromQuery] DateTime? before = null)
+        [HttpGet("{matchId}/mute")]
+        public async Task<IActionResult> GetMuted(Guid matchId)
         {
-            var history = await chatService.GetHistory(matchId, take, before);
-            return Ok(history);
+            return Ok(new { muted = await chatService.GetMuted(matchId) });
         }
 
-        [HttpPost("{matchId}")]
-        public async Task<IActionResult> SendMessage(Guid matchId, [FromBody] CreateMessageDto body)
+        /// <summary>
+        /// Mute / unmute this match's chat for the caller — no push, no Discord DM, no badge, while
+        /// the thread stays in the inbox with its real unread count.
+        /// </summary>
+        [HttpPut("{matchId}/mute")]
+        public async Task<IActionResult> SetMuted(Guid matchId, [FromBody] SetMatchChatMutedRequest body)
         {
-            var result = await chatService.SendMessage(matchId, body.Content);
-            return Ok(result);
+            await chatService.SetMuted(matchId, body.Muted);
+            return NoContent();
         }
 
         [HttpPost("{matchId}/read")]

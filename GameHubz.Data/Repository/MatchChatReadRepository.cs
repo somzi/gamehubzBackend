@@ -1,4 +1,4 @@
-using GameHubz.Common.Interfaces;
+﻿using GameHubz.Common.Interfaces;
 using GameHubz.Data.Base;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Domain;
@@ -51,6 +51,51 @@ namespace GameHubz.Data.Repository
                 existing.LastReadAt = now;
                 await this.UpdateEntity(existing, userContextReader);
             }
+        }
+
+        public async Task SetMuted(Guid matchId, Guid userId, bool muted, IUserContextReader userContextReader)
+        {
+            bool matchExists = await this.ContextBase.Set<MatchEntity>()
+                .AnyAsync(m => m.Id == matchId);
+            if (!matchExists) return;
+
+            var existing = await this.ContextBase.Set<MatchChatReadEntity>()
+                .FirstOrDefaultAsync(r => r.MatchId == matchId && r.UserId == userId);
+
+            if (existing == null)
+            {
+                // No cursor yet: mute without pretending the thread has been read. UnixEpoch keeps
+                // the Kind=Utc the timestamp column expects, and reads as "never read" downstream.
+                await this.AddEntity(
+                    new MatchChatReadEntity
+                    {
+                        MatchId = matchId,
+                        UserId = userId,
+                        LastReadAt = DateTime.UnixEpoch,
+                        IsMuted = muted,
+                    },
+                    userContextReader);
+                return;
+            }
+
+            existing.IsMuted = muted;
+            await this.UpdateEntity(existing, userContextReader);
+        }
+
+        public async Task<List<Guid>> GetMutedMatchIds(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(r => r.UserId == userId && r.IsMuted)
+                .Select(r => r.MatchId)
+                .ToListAsync();
+        }
+
+        public async Task<List<Guid>> GetMutedUserIds(Guid matchId)
+        {
+            return await this.BaseDbSet()
+                .Where(r => r.MatchId == matchId && r.IsMuted)
+                .Select(r => r.UserId)
+                .ToListAsync();
         }
     }
 }
