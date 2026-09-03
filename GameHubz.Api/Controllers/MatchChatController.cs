@@ -22,6 +22,20 @@ namespace GameHubz.Api.Controllers
             this.chatService = chatService;
         }
 
+        [HttpGet("{matchId}/history")]
+        public async Task<IActionResult> GetHistory(Guid matchId, [FromQuery] int? take = null, [FromQuery] DateTime? before = null)
+        {
+            var history = await chatService.GetHistory(matchId, take, before);
+            return Ok(history);
+        }
+
+        [HttpPost("{matchId}")]
+        public async Task<IActionResult> SendMessage(Guid matchId, [FromBody] CreateMessageDto body)
+        {
+            var result = await chatService.SendMessage(matchId, body.Content);
+            return Ok(result);
+        }
+
         [HttpGet("{matchId}/mute")]
         public async Task<IActionResult> GetMuted(Guid matchId)
         {
