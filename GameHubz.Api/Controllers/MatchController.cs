@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Domain;
+﻿using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -92,13 +92,15 @@ namespace GameHubz.Api.Controllers
                 ? await this.teamMatchService.GetTeamMatchDetails(match.TeamMatchId.Value)
                 : await this.Service.GetWithEvidence(id);
 
-            var (streams, availability) = await this.Service.GetStreamsAndAvailability(id, match.Status);
+            var (streams, availability, adminAvailability) =
+                await this.Service.GetStreamsAndAvailability(id, match.Status, match.TournamentId);
 
             return Ok(new MatchDetailsFullDto
             {
                 Details = details,
                 Streams = streams,
                 Availability = availability,
+                AdminAvailability = adminAvailability,
             });
         }
 

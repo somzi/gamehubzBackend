@@ -116,13 +116,15 @@ namespace GameHubz.Logic.Services
         /// already-loaded match status so we don't re-hit the DB just to check it — the caller
         /// (controller) has the entity in hand.
         /// </summary>
-        public async Task<(List<MatchStreamDto> Streams, MatchAvailabilityDto? Availability)> GetStreamsAndAvailability(Guid id, MatchStatus matchStatus)
+        public async Task<(List<MatchStreamDto> Streams, MatchAvailabilityDto? Availability, MatchAvailabilityAdminDto? AdminAvailability)>
+            GetStreamsAndAvailability(Guid id, MatchStatus matchStatus, Guid tournamentId)
         {
             List<MatchStreamDto> streams;
             try { streams = await GetStreams(id); }
             catch { streams = new List<MatchStreamDto>(); }
 
             MatchAvailabilityDto? availability = null;
+            MatchAvailabilityAdminDto? adminAvailability = null;
             if (matchStatus == MatchStatus.Pending || matchStatus == MatchStatus.Scheduled || matchStatus == MatchStatus.Live)
             {
                 try
@@ -131,12 +133,47 @@ namespace GameHubz.Logic.Services
                     if (user != null)
                     {
                         availability = await GetAvailability(id, user.UserId);
+
+                        // Organizers additionally get both sides named. Caught separately so a
+                        // failure here cannot take the caller's OWN availability down with it —
+                        // an admin playing their own tournament still needs their picker.
+                        try
+                        {
+                            if (await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
+                            {
+                                adminAvailability = await GetAdminAvailability(id);
+                            }
+                        }
+                        catch { adminAvailability = null; }
                     }
                 }
                 catch { availability = null; }
             }
 
-            return (streams, availability);
+            return (streams, availability, adminAvailability);
+        }
+
+        /// <summary>
+        /// Both sides' scheduling state for an organizer. Unlike <see cref="GetAvailability"/> this
+        /// is not caller-relative, so it answers "who answered, when, and do the two lists overlap"
+        /// for someone who is playing neither side. Authorization is the caller's to make — the
+        /// only entry point today (<see cref="GetStreamsAndAvailability"/>) gates it on
+        /// CanManageTournamentAsync.
+        /// </summary>
+        public async Task<MatchAvailabilityAdminDto?> GetAdminAvailability(Guid id)
+        {
+            var availability = await this.AppUnitOfWork.MatchRepository.GetAvailabilityForAdmin(id);
+            if (availability == null) return null;
+
+            // Intersect here rather than in SQL: the slots live in two JSON columns EF cannot
+            // compare mid-query. Ordered so the client can show the earliest mutual hour first —
+            // the one SetAvailability would have picked.
+            availability.OverlappingSlots = availability.Home.Slots
+                .Intersect(availability.Away.Slots)
+                .OrderBy(t => t)
+                .ToList();
+
+            return availability;
         }
 
         public async Task<MatchEntity?> GetMatchEntityById(Guid id)
@@ -173,13 +210,19 @@ namespace GameHubz.Logic.Services
                 .Select(s => DateTime.SpecifyKind(s, DateTimeKind.Utc))
                 .ToList();
 
+            // Stamped per side, not on the row: BaseEntity.ModifiedOn belongs to whoever wrote the
+            // match last (a result, a deadline move) and cannot say which player answered when.
+            var submittedOn = DateTime.UtcNow;
+
             if (isHome)
             {
                 match.HomeSlots = normalizedSlots;
+                match.HomeSlotsSetOn = submittedOn;
             }
             else
             {
                 match.AwaySlots = normalizedSlots;
+                match.AwaySlotsSetOn = submittedOn;
             }
 
             // 3. CHECK FOR OVERLAP (The Magic)

@@ -1,4 +1,4 @@
-using GameHubz.Common;
+﻿using GameHubz.Common;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -41,6 +41,12 @@ namespace GameHubz.DataModels.Domain
 
         public string? HomeSlotsJson { get; set; }
         public string? AwaySlotsJson { get; set; }
+
+        // When each side last submitted its availability. Null means "never submitted", EXCEPT on
+        // rows written before migration 78 — there the slots exist without a time, which is why
+        // readers must test the slots for presence and treat the stamp as decoration.
+        public DateTime? HomeSlotsSetOn { get; set; }
+        public DateTime? AwaySlotsSetOn { get; set; }
 
         [NotMapped]
         public List<DateTime> HomeSlots

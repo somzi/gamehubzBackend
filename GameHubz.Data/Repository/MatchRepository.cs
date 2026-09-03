@@ -52,6 +52,48 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync();
         }
 
+        // Organizer view of the same data: both sides named, so a manager who is neither player
+        // can see who answered and when. Team fixtures fall back to the team name — their slots
+        // are set by whichever member answers for the side.
+        public async Task<MatchAvailabilityAdminDto?> GetAvailabilityForAdmin(Guid id)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.Id == id)
+                .Select(x => new MatchAvailabilityAdminDto
+                {
+                    MatchId = x.Id!.Value,
+                    ConfirmedTime = x.ScheduledStartTime,
+                    MatchDeadline = x.RoundDeadline,
+                    Home = new MatchAvailabilitySideDto
+                    {
+                        UserId = x.HomeParticipant!.UserId,
+                        // Nickname is persisted as "" when never set, so blank falls through to the
+                        // username — same normalisation GetWithEvidence applies.
+                        Name = x.HomeParticipant!.User != null
+                            ? (string.IsNullOrWhiteSpace(x.HomeParticipant!.User!.Nickname)
+                                ? x.HomeParticipant!.User!.Username
+                                : x.HomeParticipant!.User!.Nickname)
+                            : (x.HomeParticipant!.Team != null ? x.HomeParticipant!.Team!.TeamName : null),
+                        AvatarUrl = x.HomeParticipant!.User != null ? x.HomeParticipant!.User!.AvatarUrl : null,
+                        SlotsJson = x.HomeSlotsJson,
+                        SubmittedOn = x.HomeSlotsSetOn,
+                    },
+                    Away = new MatchAvailabilitySideDto
+                    {
+                        UserId = x.AwayParticipant!.UserId,
+                        Name = x.AwayParticipant!.User != null
+                            ? (string.IsNullOrWhiteSpace(x.AwayParticipant!.User!.Nickname)
+                                ? x.AwayParticipant!.User!.Username
+                                : x.AwayParticipant!.User!.Nickname)
+                            : (x.AwayParticipant!.Team != null ? x.AwayParticipant!.Team!.TeamName : null),
+                        AvatarUrl = x.AwayParticipant!.User != null ? x.AwayParticipant!.User!.AvatarUrl : null,
+                        SlotsJson = x.AwaySlotsJson,
+                        SubmittedOn = x.AwaySlotsSetOn,
+                    },
+                })
+                .FirstOrDefaultAsync();
+        }
+
         public Task<List<MatchEntity>> GetByStageId(Guid groupStageId)
         {
             return this.BaseDbSet()

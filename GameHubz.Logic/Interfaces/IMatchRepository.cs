@@ -1,4 +1,4 @@
-namespace GameHubz.Logic.Interfaces
+﻿namespace GameHubz.Logic.Interfaces
 {
     public interface IMatchRepository : IRepository<MatchEntity>
     {
@@ -29,6 +29,8 @@ namespace GameHubz.Logic.Interfaces
         Task<MatchEntity?> GetWithParticipants(Guid matchId);
 
         Task<MatchAvailabilityDto?> GetAvailability(Guid id, Guid userId);
+
+        Task<MatchAvailabilityAdminDto?> GetAvailabilityForAdmin(Guid id);
 
         Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId);
 

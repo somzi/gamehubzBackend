@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace GameHubz.DataModels.Models
 {
@@ -21,5 +21,11 @@ namespace GameHubz.DataModels.Models
         // sub-matches and scheduled/completed matches don't ship an empty object.
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public MatchAvailabilityDto? Availability { get; set; }
+
+        // Both sides' scheduling state, named rather than caller-relative. Populated only for a
+        // caller who can manage the tournament, on a match still in play — so a player's response
+        // never carries it and the organizer gets it without a second round-trip.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public MatchAvailabilityAdminDto? AdminAvailability { get; set; }
     }
 }
