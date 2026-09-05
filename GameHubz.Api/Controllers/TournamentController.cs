@@ -180,6 +180,17 @@ namespace GameHubz.Api.Controllers
             return Ok();
         }
 
+        // Admin/owner-only bulk sibling: closes every fixture of ONE round that is still owed as a
+        // double walkover and answers with the counts, so the organizer sees what actually happened
+        // instead of a silent refresh. Authorization and eligibility live in the service.
+        [HttpPost("matchResult/roundWalkover")]
+        public async Task<IActionResult> ApplyRoundWalkover([FromBody] RoundWalkoverRequest request)
+        {
+            var result = await this.bracketService.ApplyRoundWalkover(request.StageId, request.RoundNumber);
+
+            return Ok(result);
+        }
+
         [HttpGet("{id}/details")]
         public async Task<IActionResult> GetDetails(Guid id)
         {

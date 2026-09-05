@@ -160,6 +160,18 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // Same round, with both sides resolved. The round-wide walkover rewrites every unplayed row
+        // of a round and then has to refresh the badge / stats cache of the players behind them, so
+        // it needs the participants in one query instead of N GetWithStage calls.
+        public Task<List<MatchEntity>> GetByStageAndRoundWithParticipants(Guid stageId, int roundNumber)
+        {
+            return this.BaseDbSet()
+                .Include(x => x.HomeParticipant)
+                .Include(x => x.AwayParticipant)
+                .Where(m => m.TournamentStageId == stageId && m.RoundNumber == roundNumber)
+                .ToListAsync();
+        }
+
         // The set of "active" matches for a user — in-progress tournament, not yet finished,
         // round open, and the user is one of the two sides (solo participant or team sub-match
         // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
