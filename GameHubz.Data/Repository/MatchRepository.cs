@@ -561,6 +561,9 @@ namespace GameHubz.Data.Repository
                     AwayUserScore = x.AwayUserScore ?? 0,
                     HomeUserScore = x.HomeUserScore ?? 0,
                     Evidences = x.MatchEvidences.Select(e => e.Url!).ToList(),
+                    EvidenceItems = x.MatchEvidences
+                        .Select(e => new MatchEvidenceItemDto { Url = e.Url!, MediaType = e.MediaType })
+                        .ToList(),
                     ScheduledTime = x.ScheduledStartTime,
                     HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
                     AwayUserAvatarUrl = x.AwayParticipant.User.AvatarUrl,

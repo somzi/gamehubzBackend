@@ -50,11 +50,16 @@ namespace GameHubz.Api.Controllers
             return matchAvailabilityDto;
         }
 
+        // Kestrel's 30MB default was sized for a batch of screenshots and would reject a request
+        // carrying a clip alongside them. Raised only here, rather than globally, so this stays
+        // the one endpoint in the API that may accept a body this large. Per-file limits are
+        // enforced in the storage layer (20MB an image, 32MB a video); this is the envelope.
+        [RequestSizeLimit(60 * 1024 * 1024)]
         [HttpPost("{id}/evidence")]
         public async Task<IActionResult> UploadEvidence(Guid id, List<IFormFile> files)
         {
             await this.Service.UploadMatchEvidence(id, files);
-            return Ok(new { message = "Screenshot uploaded successfully" });
+            return Ok(new { message = "Evidence uploaded successfully" });
         }
 
         [HttpGet("{id}/details")]

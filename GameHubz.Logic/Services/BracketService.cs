@@ -2917,6 +2917,9 @@ namespace GameHubz.Logic.Services
                         if (tournament.Status == TournamentStatus.Completed)
                         {
                             tournament.Status = TournamentStatus.InProgress;
+                            // Reverted out of a finish: the tournament has no ending any more, and its evidence goes
+                            // back to being live material.
+                            tournament.EndedOn = null;
                             tournament.WinnerUserId = null;
                             tournament.WinnerTeamId = null;
                             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
@@ -4368,6 +4371,9 @@ namespace GameHubz.Logic.Services
                 if (tournament.Status == TournamentStatus.Completed)
                 {
                     tournament.Status = TournamentStatus.InProgress;
+                    // Reverted out of a finish: the tournament has no ending any more, and its evidence goes
+                    // back to being live material.
+                    tournament.EndedOn = null;
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
@@ -4407,6 +4413,9 @@ namespace GameHubz.Logic.Services
                 if (tournament.Status == TournamentStatus.Completed)
                 {
                     tournament.Status = TournamentStatus.InProgress;
+                    // Reverted out of a finish: the tournament has no ending any more, and its evidence goes
+                    // back to being live material.
+                    tournament.EndedOn = null;
                     tournament.WinnerUserId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
                     await this.SaveAsync();
@@ -4425,6 +4434,9 @@ namespace GameHubz.Logic.Services
                     if (tournament.Status == TournamentStatus.Completed)
                     {
                         tournament.Status = TournamentStatus.InProgress;
+                        // Reverted out of a finish: the tournament has no ending any more, and its evidence goes
+                        // back to being live material.
+                        tournament.EndedOn = null;
                         tournament.WinnerUserId = null;
                         await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
                         // Save+detach NOW. The previous detach-without-save dropped the Modified
@@ -4618,6 +4630,9 @@ namespace GameHubz.Logic.Services
                 if (tournament.Status == TournamentStatus.Completed)
                 {
                     tournament.Status = TournamentStatus.InProgress;
+                    // Reverted out of a finish: the tournament has no ending any more, and its evidence goes
+                    // back to being live material.
+                    tournament.EndedOn = null;
                     tournament.WinnerUserId = null;
                     tournament.WinnerTeamId = null;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
@@ -4702,6 +4717,9 @@ namespace GameHubz.Logic.Services
                         ? winnerUserId
                         : await ResolveParticipantUserId(finalMatch.WinnerParticipantId);
                     tournament.Status = TournamentStatus.Completed;
+                    // Retention clock for match evidence starts here. Left alone if it is already set, so a
+                    // re-finalize of an already-completed tournament cannot slide the window forward.
+                    tournament.EndedOn ??= DateTime.UtcNow;
                     await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
 
                     if (!wasCompleted)
@@ -4722,6 +4740,9 @@ namespace GameHubz.Logic.Services
             bool wasCompleted = tournament.Status == TournamentStatus.Completed;
             tournament.WinnerUserId = winnerUserId;
             tournament.Status = TournamentStatus.Completed;
+            // Retention clock for match evidence starts here. Left alone if it is already set, so a
+            // re-finalize of an already-completed tournament cannot slide the window forward.
+            tournament.EndedOn ??= DateTime.UtcNow;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
             {
@@ -4824,6 +4845,9 @@ namespace GameHubz.Logic.Services
             // emit a second "tournament completed" activity / notification.
             bool wasCompleted = tournament.Status == TournamentStatus.Completed;
             tournament.Status = TournamentStatus.Completed;
+            // Retention clock for match evidence starts here. Left alone if it is already set, so a
+            // re-finalize of an already-completed tournament cannot slide the window forward.
+            tournament.EndedOn ??= DateTime.UtcNow;
 
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
@@ -5136,6 +5160,9 @@ namespace GameHubz.Logic.Services
 
             tournament.WinnerUserId = winner.UserId;
             tournament.Status = TournamentStatus.Completed;
+            // Retention clock for match evidence starts here. Left alone if it is already set, so a
+            // re-finalize of an already-completed tournament cannot slide the window forward.
+            tournament.EndedOn ??= DateTime.UtcNow;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             await this.SaveAsync();
 
@@ -5532,6 +5559,9 @@ namespace GameHubz.Logic.Services
 
                         bool wasCompleted = tournament.Status == TournamentStatus.Completed;
                         tournament.Status = TournamentStatus.Completed;
+                        // Retention clock for match evidence starts here. Left alone if it is already set, so a
+                        // re-finalize of an already-completed tournament cannot slide the window forward.
+                        tournament.EndedOn ??= DateTime.UtcNow;
                         await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
                         if (!wasCompleted)
                         {
@@ -5557,6 +5587,9 @@ namespace GameHubz.Logic.Services
 
             bool wasCompleted = tournament.Status == TournamentStatus.Completed;
             tournament.Status = TournamentStatus.Completed;
+            // Retention clock for match evidence starts here. Left alone if it is already set, so a
+            // re-finalize of an already-completed tournament cannot slide the window forward.
+            tournament.EndedOn ??= DateTime.UtcNow;
             await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             if (!wasCompleted)
             {
@@ -6862,6 +6895,9 @@ namespace GameHubz.Logic.Services
                 MatchOpensAt = m.RoundOpenAt,
                 CanRevert = canRevert,
                 Evidences = m.MatchEvidences?.Select(x => x.Url!).ToList() ?? [],
+                EvidenceItems = m.MatchEvidences?
+                    .Select(x => new MatchEvidenceItemDto { Url = x.Url!, MediaType = x.MediaType })
+                    .ToList() ?? [],
                 ProposedHomeScore = m.ProposedHomeScore,
                 ProposedAwayScore = m.ProposedAwayScore,
                 ProposedByUserId = m.ProposedByUserId,

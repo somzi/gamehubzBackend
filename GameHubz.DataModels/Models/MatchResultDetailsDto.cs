@@ -59,6 +59,9 @@ namespace GameHubz.DataModels.Models
         public int HomeUserScore { get; set; }
         public int AwayUserScore { get; set; }
         public List<string> Evidences { get; set; } = [];
+
+        /// <summary>Same evidence, typed. See MatchEvidenceItemDto for why both exist.</summary>
+        public List<MatchEvidenceItemDto> EvidenceItems { get; set; } = [];
         public DateTime? ScheduledTime { get; set; }
         public string? AwayUserAvatarUrl { get; set; }
         public string? HomeUserAvatarUrl { get; set; }

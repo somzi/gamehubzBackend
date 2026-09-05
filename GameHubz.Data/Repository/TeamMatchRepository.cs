@@ -171,6 +171,9 @@ namespace GameHubz.Data.Repository
                         Evidences = sm.MatchEvidences != null
                             ? sm.MatchEvidences.Select(e => e.Url!).ToList()
                             : new List<string>(),
+                        EvidenceItems = sm.MatchEvidences != null
+                            ? sm.MatchEvidences.Select(e => new MatchEvidenceItemDto { Url = e.Url!, MediaType = e.MediaType }).ToList()
+                            : new List<MatchEvidenceItemDto>(),
                         ProposedHomeScore = sm.ProposedHomeScore,
                         ProposedAwayScore = sm.ProposedAwayScore,
                         ProposedByUserId = sm.ProposedByUserId,

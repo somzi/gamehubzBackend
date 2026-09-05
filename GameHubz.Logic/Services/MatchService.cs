@@ -8,7 +8,7 @@ namespace GameHubz.Logic.Services
 {
     public class MatchService : AppBaseServiceGeneric<MatchEntity, MatchDto, MatchPost, MatchEdit>
     {
-        private readonly CloudinaryStorageService storageService;
+        private readonly IStorageService storageService;
         private readonly INotificationService notificationService;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly StreamVodResolver streamVodResolver;
@@ -25,7 +25,7 @@ namespace GameHubz.Logic.Services
             SearchService searchService,
             ServiceFunctions serviceFunctions,
             IUserContextReader userContextReader,
-            CloudinaryStorageService storageService,
+            IStorageService storageService,
             INotificationService notificationService,
             TournamentAuthorizationService tournamentAuth,
             StreamVodResolver streamVodResolver,
@@ -317,6 +317,38 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
+        // One clip is evidence, several are a video host. Kept low on purpose: video is the only
+        // part of evidence whose storage and bandwidth we actually feel.
+        private const int MaxVideosPerMatch = 3;
+
+        // Video is enumerated rather than prefix-matched: "video/" must not become a way to park
+        // arbitrary files on the account, and these are the containers a phone actually produces.
+        private static readonly HashSet<string> AllowedVideoTypes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "video/mp4", "video/quicktime", "video/x-m4v", "video/3gpp", "video/webm"
+        };
+
+        /// <summary>
+        /// Classifies an upload and rejects anything that is neither picture nor clip.
+        ///
+        /// This used to be implicit: the storage layer hardcoded an image upload, so the provider
+        /// bounced everything else. Now that video is a legitimate answer, the check has to be ours.
+        ///
+        /// Images stay a prefix match on purpose. Narrowing them to a list would newly reject the
+        /// long tail of formats that has always worked (bmp, tiff, whatever a given phone emits),
+        /// and the provider still validates the actual bytes on that path — so an explicit list
+        /// would buy nothing and break uploads that are fine today.
+        /// </summary>
+        private EvidenceMediaType ResolveMediaType(IFormFile file)
+        {
+            string contentType = file.ContentType ?? string.Empty;
+
+            if (AllowedVideoTypes.Contains(contentType)) return EvidenceMediaType.Video;
+            if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) return EvidenceMediaType.Image;
+
+            throw new BusinessRuleException(this.LocalizationService["BusinessRule.EvidenceUnsupportedType"]);
+        }
+
         public async Task UploadMatchEvidence(Guid matchId, List<IFormFile> files)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
@@ -334,23 +366,79 @@ namespace GameHubz.Logic.Services
             var match = await this.AppUnitOfWork.MatchRepository.GetForMatchEvidence(matchId);
             if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
+            // Classify and validate the WHOLE batch before a single byte is uploaded.
+            //
+            // Rejecting halfway through would leave the files already sent sitting in storage with
+            // no row to point at them: the exception skips SaveAsync, so nothing is persisted, and
+            // the retention sweep works off rows and could never find them. Everything that can be
+            // known up front is therefore decided up front.
+            //
+            // Videos are capped per match, images are not. One clip settles a dispute; a dozen is
+            // somebody using the match as a video host, and unlike screenshots that costs real
+            // storage and bandwidth.
+            var pending = new List<(IFormFile File, EvidenceMediaType MediaType)>();
+            int videoCount = await this.AppUnitOfWork.MatchEvidenceRepository.CountVideosForMatch(matchId);
+
             foreach (var file in files)
             {
-                if (file.Length > 0)
+                if (file.Length == 0) continue;
+
+                EvidenceMediaType mediaType = ResolveMediaType(file);
+
+                if (mediaType == EvidenceMediaType.Video && ++videoCount > MaxVideosPerMatch)
+                {
+                    throw new BusinessRuleException(string.Format(
+                        this.LocalizationService["BusinessRule.EvidenceVideoLimit"], MaxVideosPerMatch));
+                }
+
+                pending.Add((file, mediaType));
+            }
+
+            if (pending.Count == 0) return;
+
+            string folderPath = $"hub/{match.HubName}/tournaments/{match.TournamentName}/matches/{matchId}";
+            var uploaded = new List<(StoredAsset Asset, EvidenceMediaType MediaType)>();
+
+            try
+            {
+                foreach (var (file, mediaType) in pending)
                 {
                     string fileName = $"evidence_{matchId}_{DateTime.UtcNow.Ticks}";
-                    string folderPath = $"hub/{match.HubName}/tournaments/{match.TournamentName}/matches/{matchId}";
 
-                    string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+                    StoredAsset? stored = mediaType == EvidenceMediaType.Video
+                        ? await storageService.UploadVideoAsync(file, folderPath, fileName)
+                        : await storageService.UploadImageAsync(file, folderPath, fileName);
 
-                    var screenshot = new MatchEvidenceEntity
-                    {
-                        MatchId = matchId,
-                        Url = url,
-                    };
-
-                    await this.AppUnitOfWork.MatchEvidenceRepository.AddEntity(screenshot, this.UserContextReader);
+                    if (stored != null) uploaded.Add((stored, mediaType));
                 }
+            }
+            catch
+            {
+                // The provider rejected one of the later files. Take back the ones that did land,
+                // for the same reason as above: without a row they are invisible to every cleanup
+                // path we have. Best-effort — a failure here is logged by the storage layer and
+                // must not replace the error the caller actually needs to see.
+                foreach (var (asset, mediaType) in uploaded)
+                {
+                    try { await storageService.DeleteAsync(asset.StorageKey, mediaType); }
+                    catch { /* nothing further to do; the original exception matters more */ }
+                }
+
+                throw;
+            }
+
+            foreach (var (asset, mediaType) in uploaded)
+            {
+                var screenshot = new MatchEvidenceEntity
+                {
+                    MatchId = matchId,
+                    Url = asset.Url,
+                    StorageKey = asset.StorageKey,
+                    Provider = asset.Provider,
+                    MediaType = mediaType,
+                };
+
+                await this.AppUnitOfWork.MatchEvidenceRepository.AddEntity(screenshot, this.UserContextReader);
             }
 
             await this.SaveAsync();

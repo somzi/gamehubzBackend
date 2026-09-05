@@ -14,6 +14,14 @@ namespace GameHubz.DataModels.Domain
         public DateTime? StartDate { get; set; }
         public DateTime? RegistrationDeadline { get; set; }
 
+        // When the tournament reached a terminal state (Completed / Cancelled / Deleted), UTC.
+        // Cleared on a revert back to InProgress, so it always describes the *current* ending.
+        // The evidence cleanup sweep keys its retention window off this: ModifiedOn cannot serve,
+        // because any later edit to the row would silently push the window forward.
+        // Null on every tournament that ended before migration 79 — the sweep's age backstop is
+        // what eventually collects those.
+        public DateTime? EndedOn { get; set; }
+
         // Scheduled registration opening (UTC). When set on creation, the tournament is saved as
         // Draft — invisible in the feed and closed to sign-ups — and the background sweep flips it
         // to RegistrationOpen at this moment, firing the same announcement a manual open would.

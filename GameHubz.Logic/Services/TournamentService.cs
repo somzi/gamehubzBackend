@@ -12,6 +12,7 @@ namespace GameHubz.Logic.Services
         private readonly TournamentNotifier tournamentNotifier;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly UserHubService userHubService;
+        private readonly EvidenceRetentionService evidenceRetention;
 
         public TournamentService(
             IUnitOfWorkFactory factory,
@@ -25,7 +26,8 @@ namespace GameHubz.Logic.Services
             ICacheService cacheService,
             TournamentNotifier tournamentNotifier,
             TournamentAuthorizationService tournamentAuth,
-            UserHubService userHubService) : base(
+            UserHubService userHubService,
+            EvidenceRetentionService evidenceRetention) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -39,6 +41,7 @@ namespace GameHubz.Logic.Services
             this.tournamentNotifier = tournamentNotifier;
             this.tournamentAuth = tournamentAuth;
             this.userHubService = userHubService;
+            this.evidenceRetention = evidenceRetention;
         }
 
         public async Task<TournamentPagedResponse> GetTournamentsPagedForHub(Guid hubId, TournamentRequest request)
@@ -422,8 +425,25 @@ namespace GameHubz.Logic.Services
 
             tournament.Status = newStatus;
 
+            // Cancel and delete are both endings, so they start the same retention clock a natural
+            // finish does. Only set if unset, matching the completion path: a tournament that is
+            // cancelled after having been completed keeps the earlier, truer date.
+            if (newStatus is TournamentStatus.Cancelled or TournamentStatus.Deleted or TournamentStatus.Completed)
+            {
+                tournament.EndedOn ??= DateTime.UtcNow;
+            }
+
             await AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, UserContextReader);
             await SaveAsync();
+
+            // A cancelled or deleted tournament has no result left to dispute, so its clips skip
+            // the grace window entirely. After the save and never fatal: a storage failure must
+            // not stop the tournament from being cancelled, and the periodic sweep is the retry.
+            // The call absorbs and logs its own errors rather than throwing here.
+            if (newStatus is TournamentStatus.Cancelled or TournamentStatus.Deleted)
+            {
+                await evidenceRetention.PurgeTournamentVideosAsync(id);
+            }
 
             await InvalidateTournamentCache(id, tournament.HubId!.Value);
 

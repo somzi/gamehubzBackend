@@ -63,6 +63,10 @@ namespace GameHubz.Api
             builder.Services.AddScoped<DeadlineNotificationRunner>();
             builder.Services.AddHostedService<DeadlineNotificationTask>();
 
+            // Retires match video once its tournament is settled, plus an age backstop for
+            // tournaments that are abandoned rather than finished.
+            builder.Services.AddHostedService<EvidenceRetentionTask>();
+
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");
@@ -170,6 +174,11 @@ namespace GameHubz.Api
             services.AddTransient<IUserContextReader, UserContextReader>();
             services.AddScoped<IUnitOfWorkFactory, UnitOfWorkFactory>();
             services.AddScoped<CloudinaryStorageService>();
+            // Everything new goes through the interface; the concrete registration stays for the
+            // avatar call sites that still take it directly. Both resolve to the same instance,
+            // so swapping the implementation later is a one-line change here.
+            services.AddScoped<IStorageService>(sp => sp.GetRequiredService<CloudinaryStorageService>());
+            services.AddScoped<EvidenceRetentionService>();
         }
 
         private static void ConfigureAutomapper(IServiceCollection services)

@@ -1,4 +1,4 @@
-using GameHubz.DataModels.Domain;
+﻿using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
@@ -216,6 +216,7 @@ namespace GameHubz.Logic.Services
                     WinnerUserId = winnerUserId,
                     IsTieBreakMatch = isTieBreakMatch,
                     Evidences = sm.Evidences,
+                    EvidenceItems = sm.EvidenceItems,
                     ProposedHomeScore = sm.ProposedHomeScore,
                     ProposedAwayScore = sm.ProposedAwayScore,
                     ProposedByUserId = sm.ProposedByUserId,

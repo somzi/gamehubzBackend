@@ -154,7 +154,7 @@ namespace GameHubz.Logic.Services
             string fileName = $"avatar";
             string folderPath = $"users/{user!.Username}";
 
-            string url = await storageService.UploadFileAsync(file, folderPath, fileName);
+            string? url = await storageService.UploadFileAsync(file, folderPath, fileName);
 
             user.AvatarUrl = url;
 

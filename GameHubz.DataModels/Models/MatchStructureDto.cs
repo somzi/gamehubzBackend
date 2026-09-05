@@ -27,6 +27,9 @@ namespace GameHubz.DataModels.Models
         public MatchParticipantDto? Home { get; set; }
         public MatchParticipantDto? Away { get; set; }
         public List<string> Evidences { get; set; }
+
+        /// <summary>Same evidence, typed. See MatchEvidenceItemDto for why both exist.</summary>
+        public List<MatchEvidenceItemDto> EvidenceItems { get; set; } = [];
         public bool IsRoundLocked { get; set; }
         public DateTime? MatchOpensAt { get; set; }
         public bool CanRevert { get; set; }
