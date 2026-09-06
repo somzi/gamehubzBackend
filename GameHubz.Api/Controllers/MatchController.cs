@@ -116,6 +116,16 @@ namespace GameHubz.Api.Controllers
             return Ok(new { message = "Match scheduled successfully." });
         }
 
+        // Organizer-only: drops the confirmed kick-off AND both sides' availability, putting the
+        // match back to Pending so the two can schedule again. Authorization and the state check
+        // live in the service.
+        [HttpPost("{id}/schedule/clear")]
+        public async Task<IActionResult> ClearSchedule(Guid id)
+        {
+            await this.Service.ClearSchedule(id);
+            return Ok(new { message = "Scheduled time cleared." });
+        }
+
         [HttpPost("{id}/adminHelp")]
         public async Task<IActionResult> RequestAdminHelp(Guid id)
         {

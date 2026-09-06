@@ -317,6 +317,78 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
         }
 
+        /// <summary>
+        /// Organizer-only undo of a confirmed kick-off. Both sides' offered hours are dropped along
+        /// with the time itself, so the pair start the scheduler from scratch instead of re-confirming
+        /// the same overlap the moment one of them touches the picker again (SetAvailability schedules
+        /// on the first intersection it finds). The match goes back to Pending — the state it was in
+        /// before the two lists met.
+        /// </summary>
+        public async Task ClearSchedule(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            // Deliberately narrower than SetScheduled: a player must not be able to walk away from a
+            // time they agreed to. 400 rather than 401 — see GetAdminHelpRequests for why.
+            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsClearSchedule"]);
+
+            // Only a scheduled fixture can be unscheduled. A played, forfeited or tie-break match
+            // keeps its ScheduledStartTime as the record of when it was actually played.
+            if (match.Status != MatchStatus.Scheduled)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotScheduled"]);
+
+            match.ScheduledStartTime = null;
+            match.Status = MatchStatus.Pending;
+
+            // Null, not "[]": HomeSlots/AwaySlots serialize an empty list to a literal empty array,
+            // and every reader (including the organizer panel) treats a null column as "never answered".
+            match.HomeSlotsJson = null;
+            match.AwaySlotsJson = null;
+            match.HomeSlotsSetOn = null;
+            match.AwaySlotsSetOn = null;
+
+            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            await this.SaveAsync();
+
+            await NotifyScheduleClearedAsync(match);
+        }
+
+        /// <summary>
+        /// Tells both players their time is gone. Without this the pair keep the old kick-off in their
+        /// heads while their availability silently empties. Team participants carry no single user id —
+        /// those sides are skipped rather than guessed at.
+        /// </summary>
+        private async Task NotifyScheduleClearedAsync(MatchEntity match)
+        {
+            var userIds = new[] { GetParticipantUserId(match, isHome: true), GetParticipantUserId(match, isHome: false) }
+                .Where(id => id != null)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            if (userIds.Count == 0) return;
+
+            var recipients = new List<PushRecipient>();
+
+            // Resolved here, while the request-scoped DbContext is alive — see F109 on the sibling notifier.
+            foreach (var userId in userIds)
+            {
+                var player = await this.AppUnitOfWork.UserRepository.GetById(userId);
+                if (!string.IsNullOrEmpty(player?.PushToken))
+                    recipients.Add(new PushRecipient(player!.PushToken!, player.Language));
+            }
+
+            FireAndForgetPush(
+                recipients,
+                PushText.FromKey("Push.MatchScheduleCleared.Title"),
+                PushText.FromKey("Push.MatchScheduleCleared.Body"),
+                new { matchId = match.Id!.Value.ToString(), type = "scheduleCleared" });
+        }
+
         // One clip is evidence, several are a video host. Kept low on purpose: video is the only
         // part of evidence whose storage and bandwidth we actually feel.
         private const int MaxVideosPerMatch = 3;

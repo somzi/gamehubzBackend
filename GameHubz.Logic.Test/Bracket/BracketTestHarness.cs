@@ -21,8 +21,11 @@ using GameHubz.Logic.Interfaces;
 using GameHubz.Logic.Services;
 using GameHubz.Logic.SignalR;
 using GameHubz.Logic.Test.Factories;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Net.Http;
 
 namespace GameHubz.Logic.Test.Bracket
 {
@@ -176,6 +179,63 @@ namespace GameHubz.Logic.Test.Bracket
                 localization,
                 Cache,
                 new TournamentAuthorizationService(factory, userContext, localization, Cache, userHubService: null!));
+        }
+
+        /// <summary>
+        /// MatchService acting as a specific user — drives the scheduling flow (availability,
+        /// clear-schedule). Storage and the two streaming collaborators are inert stand-ins:
+        /// nothing on the scheduling path reaches them. Same fresh-context-per-operation rule as
+        /// <see cref="NewService"/>; for a caller who must NOT be a manager, pre-seed the authz
+        /// cache with <see cref="DenyManageFor"/> (same null-UserHubService caveat as
+        /// <see cref="BuildService"/>).
+        /// </summary>
+        public MatchService NewMatchServiceAsUser(Guid userId, string role = "User")
+        {
+            var factory = new TestUnitOfWorkFactory(newContext(), localization);
+            var userContext = BuildReader(userId, role);
+
+            IConfiguration configuration = new ConfigurationBuilder().Build();
+
+            var badgeService = new BadgeService(
+                factory, userContext, localization,
+                new Mock<IHubContext<UserHub>>().Object,
+                new Mock<IServiceScopeFactory>().Object);
+
+            return new MatchService(
+                factory,
+                mapper,
+                localization,
+                new Mock<IValidator<MatchEntity>>().Object,
+                searchService,
+                serviceFunctions,
+                userContext,
+                new Mock<IStorageService>().Object,
+                Notifications,
+                new TournamentAuthorizationService(factory, userContext, localization, Cache, userHubService: null!),
+                new StreamVodResolver(Array.Empty<IStreamPlatformClient>(), configuration, NullLogger<StreamVodResolver>.Instance),
+                new YouTubeStreamClient(new Mock<IHttpClientFactory>().Object, configuration, NullLogger<YouTubeStreamClient>.Instance),
+                badgeService,
+                new Mock<IDiscordDmService>().Object,
+                Options.Create(new ShareLinksConfig()));
+        }
+
+        /// <summary>
+        /// Leaves a match in the state SetAvailability produces once both sides overlap: a confirmed
+        /// kick-off, Scheduled, and both slot columns filled.
+        /// </summary>
+        public void MarkScheduled(Guid matchId, DateTime kickOff)
+        {
+            using var ctx = ReadContext();
+            var match = ctx.Set<MatchEntity>().Single(m => m.Id == matchId);
+
+            match.Status = MatchStatus.Scheduled;
+            match.ScheduledStartTime = kickOff;
+            match.HomeSlots = new List<DateTime> { kickOff, kickOff.AddHours(1) };
+            match.AwaySlots = new List<DateTime> { kickOff };
+            match.HomeSlotsSetOn = DateTime.UtcNow;
+            match.AwaySlotsSetOn = DateTime.UtcNow;
+
+            ctx.SaveChanges();
         }
 
         private static IUserContextReader BuildReader(Guid userId, string role)
