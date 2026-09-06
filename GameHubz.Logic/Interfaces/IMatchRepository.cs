@@ -55,6 +55,8 @@
 
         Task<List<MatchEntity>> GetByStageAndRound(Guid stageId, int roundNumber);
 
+        Task<List<MatchEntity>> GetByStageAndRoundWithParticipants(Guid stageId, int roundNumber);
+
         Task<MatchResultDetailDto?> GetWithEvidence(Guid id);
 
         Task<MatchUploadDto> GetForMatchEvidence(Guid matchId);

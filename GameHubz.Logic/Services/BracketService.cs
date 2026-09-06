@@ -3567,6 +3567,182 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Round-wide sibling of <see cref="ApplyDoubleWalkover"/>: closes EVERY fixture of one round
+        /// that is still owed, in a single pass. This is the organizer action for a deadline that has
+        /// come and gone with ten — or a hundred — fixtures never played; the alternative is opening
+        /// each one by hand. A round is scoped to its stage, so Winners-Bracket round 2 and
+        /// Losers-Bracket round 2 are different rounds.
+        /// <para>
+        /// Semantically identical to applying <see cref="ApplyDoubleWalkover"/> to each qualifying
+        /// fixture: League / GroupStage / Swiss rows close as <see cref="MatchStatus.NoShow"/> (nothing
+        /// awarded to either side) and elimination rows close Completed-with-no-winner so the surviving
+        /// opponent advances. What differs is the tail: the advancement hooks and the cache / badge
+        /// invalidation run ONCE for the whole round rather than once per fixture — nineteen closed
+        /// fixtures must not mean nineteen bracket settle passes.
+        /// </para>
+        /// <para>
+        /// SOLO tournaments only. A team fixture is a tie of several games, each closable on its own,
+        /// and voiding a whole tie in bulk is a different decision from voiding a solo match — the
+        /// organizer does those game by game through <see cref="ApplyDoubleWalkover"/>. Team games in
+        /// the round are left untouched and reported as skipped.
+        /// </para>
+        /// Deliberately left open, and counted in <see cref="RoundWalkoverResultDto.Skipped"/>:
+        /// <list type="bullet">
+        /// <item>a fixture carrying a pending result proposal, or parked in TieBreakRequired — a result
+        /// WAS reported there, so it is the organizer's to approve, reject or resolve; a bulk action
+        /// must never silently throw one away;</item>
+        /// <item>a bracket slot still missing a side — nobody to forfeit;</item>
+        /// <item>every game of a team tie — see above;</item>
+        /// <item>an elimination fixture with no downstream (the final) — a walkover there would advance
+        /// nobody, the same guard the single-match action applies.</item>
+        /// </list>
+        /// Caller must be able to manage the tournament; play-in stages are rejected outright, exactly
+        /// as they are for a single walkover.
+        /// </summary>
+        public async Task<RoundWalkoverResultDto> ApplyRoundWalkover(Guid stageId, int roundNumber)
+        {
+            var stage = await this.AppUnitOfWork.TournamentStageRepository.GetById(stageId);
+            var tournamentId = stage?.TournamentId
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundNotFound"]);
+
+            var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffDoubleWalkover"]);
+
+            // A voided play-in match would leave a knockout slot without a qualifier.
+            if (stage!.Type == StageType.PlayIn)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNotForPlayIn"]);
+
+            bool isGroupMachinery = stage.Type == StageType.League
+                || stage.Type == StageType.GroupStage
+                || stage.Type == StageType.Swiss;
+
+            if (!isGroupMachinery && !IsElimination(stage.Type))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverEliminationOnly"]);
+
+            // Committed state only: the tracker may still hold instances from an earlier call on this
+            // unit of work, and every row below is about to be attached and rewritten.
+            this.AppUnitOfWork.MatchRepository.DetachAll();
+            var roundMatches = await this.AppUnitOfWork.MatchRepository
+                .GetByStageAndRoundWithParticipants(stageId, roundNumber);
+
+            var open = roundMatches
+                .Where(m => m.Status != MatchStatus.Completed && m.Status != MatchStatus.NoShow)
+                .ToList();
+            var eligible = open.Where(m => IsRoundWalkoverCandidate(m, isGroupMachinery)).ToList();
+
+            // Skipped counts what the organizer SEES, so the games of an untouched team tie collapse
+            // back into the one fixture they belong to.
+            var closedIds = eligible.Select(m => m.Id!.Value).ToHashSet();
+            var result = new RoundWalkoverResultDto
+            {
+                Closed = eligible.Count,
+                Skipped = open.Where(m => !closedIds.Contains(m.Id!.Value))
+                    .Select(m => m.TeamMatchId ?? m.Id!.Value)
+                    .Distinct()
+                    .Count(),
+            };
+
+            if (eligible.Count == 0) return result;
+
+            // Serialised per tournament exactly like FinalizeMatchResult: closing the round and the
+            // advancement it forces is check-then-act over many rows and must not race a report.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
+            try
+            {
+                foreach (var match in eligible)
+                {
+                    // Elimination rows close Completed-with-no-winner — the "dead feeder" signal
+                    // SettleForcedWalkovers reads. Group machinery closes NoShow, which awards
+                    // nothing; a completed no-winner row would score as a DRAW in the standings
+                    // resync (see ApplyGroupNoShowWalkover).
+                    match.Status = isGroupMachinery ? MatchStatus.NoShow : MatchStatus.Completed;
+                    ClearSeriesResult(match);
+                    match.ScheduledStartTime ??= DateTime.UtcNow;
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                }
+
+                await this.SaveAsync();
+
+                // Swiss pairs its next round off one closed match. Captured before the detach,
+                // which drops the instances the loop attached so every hook below reads committed
+                // state through its own query.
+                var anchor = eligible[0];
+                this.AppUnitOfWork.MatchRepository.DetachAll();
+
+                // The same advancement hooks a single walkover runs — once, for the whole round.
+                if (isGroupMachinery)
+                {
+                    if (stage.Type == StageType.Swiss)
+                    {
+                        await CheckAndAdvanceSwissStage(anchor);
+                    }
+                    else
+                    {
+                        if (stage.Type == StageType.GroupStage)
+                            await CheckAndAdvanceGroupStage(tournamentId, stageId);
+                        else
+                            await CheckAndCompleteLeague(tournamentId);
+
+                        await CheckAndUnlockNextRound(tournamentId, stageId, roundNumber);
+                    }
+                }
+                else
+                {
+                    // Advance every survivor the voids force, cascading across rounds and stages.
+                    await SettleForcedWalkovers(tournamentId);
+                }
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(tournamentId);
+            }
+
+            // Cache / badge invalidation — the same set the single-match walkover clears, once for the
+            // whole round. The rows are detached by now, but their loaded sides are still in memory.
+            var affectedUserIds = new HashSet<Guid>();
+            foreach (var match in eligible)
+            {
+                if (match.HomeParticipant?.UserId != null) affectedUserIds.Add(match.HomeParticipant.UserId.Value);
+                if (match.AwayParticipant?.UserId != null) affectedUserIds.Add(match.AwayParticipant.UserId.Value);
+            }
+
+            foreach (var userId in affectedUserIds)
+            {
+                await cacheService.RemoveAsync($"player_stats:{userId}");
+                await this.badgeService.PushAsync(userId);
+            }
+
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+
+            return result;
+        }
+
+        // The per-match gate ApplyDoubleWalkover applies, minus what the round-level caller has already
+        // checked (stage type, permission). A fixture qualifies only when NOTHING has been reported on
+        // it: a pending proposal or a TieBreakRequired parking slot means a result exists, and closing
+        // it in bulk would throw away a played series behind the organizer's back.
+        private bool IsRoundWalkoverCandidate(MatchEntity match, bool isGroupMachinery)
+        {
+            if (match.Status == MatchStatus.Completed || match.Status == MatchStatus.NoShow) return false;
+            if (match.Status == MatchStatus.TieBreakRequired) return false;
+            if (match.ProposedByUserId.HasValue) return false;
+            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue) return false;
+
+            // Solo only: a team game is one of several in a tie, and voiding a whole tie in bulk is
+            // the organizer's call to make game by game through the single-match action.
+            if (match.TeamMatchId.HasValue) return false;
+
+            // Elimination: the surviving opponent needs somewhere to advance into. A final has
+            // nowhere, so it stays open — the same guard the single-match action applies.
+            return isGroupMachinery || match.NextMatchId.HasValue || match.NextMatchLoserBracketId.HasValue;
+        }
+
+        /// <summary>
         /// Settles every elimination match whose outcome is now forced by a "dead feeder" — a
         /// Completed-with-no-winner match (a double walkover, or a void left by an upstream one).
         /// A match is forced when its empty slot(s) have no live feeder left to fill them:
