@@ -106,6 +106,11 @@ namespace GameHubz.Logic.Services
         {
             if (string.IsNullOrWhiteSpace(storageKey)) return false;
 
+            // One asset per call, deliberately, even though the sweep deletes in batches and
+            // Cloudinary offers a bulk delete. Bulk delete lives on the Admin API, which is rate
+            // limited per hour; destroy is an Upload API call and is not. A sweep working off a
+            // backlog would burn that hourly budget and start failing, so the chattier path is the
+            // safer one here.
             var deletionParams = new DeletionParams(storageKey)
             {
                 ResourceType = mediaType == EvidenceMediaType.Video ? ResourceType.Video : ResourceType.Image,

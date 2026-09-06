@@ -399,6 +399,10 @@ namespace GameHubz.Logic.Services
             string folderPath = $"hub/{match.HubName}/tournaments/{match.TournamentName}/matches/{matchId}";
             var uploaded = new List<(StoredAsset Asset, EvidenceMediaType MediaType)>();
 
+            // Upload and persist together, so the guarantee is all-or-nothing: either every
+            // uploaded asset has a row pointing at it, or the asset is taken back off storage.
+            // A file with no row is invisible to every cleanup path we have — the sweep and the
+            // tournament purge both work off rows — so it would sit there being paid for forever.
             try
             {
                 foreach (var (file, mediaType) in pending)
@@ -411,13 +415,28 @@ namespace GameHubz.Logic.Services
 
                     if (stored != null) uploaded.Add((stored, mediaType));
                 }
+
+                foreach (var (asset, mediaType) in uploaded)
+                {
+                    var screenshot = new MatchEvidenceEntity
+                    {
+                        MatchId = matchId,
+                        Url = asset.Url,
+                        StorageKey = asset.StorageKey,
+                        Provider = asset.Provider,
+                        MediaType = mediaType,
+                    };
+
+                    await this.AppUnitOfWork.MatchEvidenceRepository.AddEntity(screenshot, this.UserContextReader);
+                }
+
+                await this.SaveAsync();
             }
             catch
             {
-                // The provider rejected one of the later files. Take back the ones that did land,
-                // for the same reason as above: without a row they are invisible to every cleanup
-                // path we have. Best-effort — a failure here is logged by the storage layer and
-                // must not replace the error the caller actually needs to see.
+                // The provider rejected a later file, or the rows failed to save. Take back
+                // whatever did land. Best-effort: a failure in here must not replace the error
+                // the caller actually needs to see.
                 foreach (var (asset, mediaType) in uploaded)
                 {
                     try { await storageService.DeleteAsync(asset.StorageKey, mediaType); }
@@ -426,22 +445,6 @@ namespace GameHubz.Logic.Services
 
                 throw;
             }
-
-            foreach (var (asset, mediaType) in uploaded)
-            {
-                var screenshot = new MatchEvidenceEntity
-                {
-                    MatchId = matchId,
-                    Url = asset.Url,
-                    StorageKey = asset.StorageKey,
-                    Provider = asset.Provider,
-                    MediaType = mediaType,
-                };
-
-                await this.AppUnitOfWork.MatchEvidenceRepository.AddEntity(screenshot, this.UserContextReader);
-            }
-
-            await this.SaveAsync();
 
             // 4. Obriši keš (jer se meč promenio)
             // await _cacheService.RemoveAsync($"match:{matchId}");

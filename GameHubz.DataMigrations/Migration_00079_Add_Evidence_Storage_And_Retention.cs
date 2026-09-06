@@ -44,12 +44,22 @@ namespace GameHubz.DataMigrations
                 WHERE ""EndedOn"" IS NULL
                   AND ""Status"" IN (4, 5, 6);");
 
-            // The sweep scans video rows only. Videos are the minority of evidence, so a partial
-            // index keeps it small while letting the scan skip the whole image archive.
+            // The sweep reads "oldest live videos first", with no match or tournament filter of its
+            // own, so the index has to lead with CreatedOn — leading with MatchId would force a
+            // full scan and sort every tick. Partial on video + live: clips are the minority of
+            // evidence, so this stays small and the whole image archive is skipped outright.
             Execute.Sql(@"
                 CREATE INDEX IF NOT EXISTS ""IX_MatchEvidence_Video_Live""
-                    ON ""MatchEvidence"" (""MatchId"", ""CreatedOn"")
+                    ON ""MatchEvidence"" (""CreatedOn"")
                     WHERE ""MediaType"" = 1 AND ""IsDeleted"" = FALSE;");
+
+            // Postgres does not index a foreign key on its own, so MatchId has had none since the
+            // table was created in migration 18. Every per-match evidence read has been a
+            // sequential scan; the per-match video count now runs on each upload, and the
+            // cancel/delete purge joins through this column.
+            Execute.Sql(@"
+                CREATE INDEX IF NOT EXISTS ""IX_MatchEvidence_MatchId""
+                    ON ""MatchEvidence"" (""MatchId"");");
         }
     }
 }

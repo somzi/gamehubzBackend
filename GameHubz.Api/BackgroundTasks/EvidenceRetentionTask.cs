@@ -29,6 +29,18 @@ namespace GameHubz.Api.BackgroundTasks
                 configuration.GetValue("BackgroundTasks:EvidenceRetentionTask:IntervalSeconds", 3600));
             var interval = TimeSpan.FromSeconds(intervalSeconds);
 
+            // Nothing here is time-critical — the windows are days wide — so the first sweep waits
+            // rather than racing schema migrations at boot. Without it, a deploy that adds the
+            // columns this reads would log a failed sweep before the migration lands.
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
