@@ -49,6 +49,21 @@ namespace GameHubz.DataModels.Models
         public bool RequireResultApproval { get; set; }
 
         /// <summary>
+        /// Ready check: matches with an agreed kick-off require both sides to confirm they are
+        /// there, and the side that shows up alone wins by forfeit. Nullable for the same reason as
+        /// <see cref="BestOf"/> — absence means "not sent", which preserves the persisted value on
+        /// an edit from a client that predates the feature. Null on create = off.
+        /// </summary>
+        public bool? RequireMatchCheckIn { get; set; }
+
+        /// <summary>
+        /// Minutes the opponent has to check in before forfeiting. Travels with
+        /// <see cref="RequireMatchCheckIn"/>, so absence preserves it too. Null with the check on
+        /// means the system default.
+        /// </summary>
+        public int? CheckInGraceMinutes { get; set; }
+
+        /// <summary>
         /// When true, the tournament is exclusive-only: visible/joinable only to hub members whose
         /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
         /// </summary>

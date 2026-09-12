@@ -128,6 +128,19 @@ namespace GameHubz.DataModels.Domain
         // (or an admin / hub owner) must approve before the bracket advances.
         public bool RequireResultApproval { get; set; }
 
+        // When true, a match with an agreed kick-off time runs a ready check: both sides confirm
+        // they are at the keyboard, and the side that shows up alone wins by forfeit once the
+        // grace period runs out. Only ever applies to matches that actually have a scheduled time
+        // — a fixture the pair arranged in chat is reported exactly as it always was.
+        public bool RequireMatchCheckIn { get; set; }
+
+        // How long the opponent of a checked-in player has to check in before losing the match by
+        // forfeit, in minutes. Counted from the kick-off time, or from the first check-in when that
+        // lands later (a player who is late himself cannot burn the other's grace). Null = the
+        // system default (see MatchCheckInRules.DefaultGraceMinutes); meaningless while
+        // RequireMatchCheckIn is off.
+        public int? CheckInGraceMinutes { get; set; }
+
         // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
         // can see this tournament in their feed and register. Default false = open to all members.
         public bool IsExclusive { get; set; }

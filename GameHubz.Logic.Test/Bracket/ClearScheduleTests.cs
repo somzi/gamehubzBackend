@@ -103,5 +103,35 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(played.Status, Is.EqualTo(MatchStatus.Completed));
             Assert.That(played.ScheduledStartTime, Is.Not.Null);
         }
+
+        // The organizer is looking at the bracket when they cancel a time, and the bracket is served
+        // from a five-minute cache. Without an eviction the board keeps the kick-off — and its ready
+        // check — for the rest of that window, so the cancel looks like it never happened.
+        [Test]
+        public async Task ClearSchedule_EvictsTheCachedBracketSoTheBoardStopsShowingTheOldKickOff()
+        {
+            var harness = new BracketTestHarness();
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
+            await harness.NewService().GenerateLeagueTournament(tid);
+
+            var match = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            harness.MarkScheduled(match.Id!.Value, DateTime.UtcNow.AddDays(1));
+
+            // Warm the cache with the scheduled state — this is the payload the board is holding.
+            var before = Card(await harness.NewService().GetTournamentStructure(tid), match.Id!.Value);
+            Assert.That(before.Status, Is.EqualTo(MatchStatus.Scheduled), "precondition: the cached board says scheduled");
+            Assert.That(before.StartTime, Is.Not.Null);
+
+            await harness.NewMatchServiceAsUser(BracketTestHarness.OwnerUserId, "Admin")
+                .ClearSchedule(match.Id!.Value);
+
+            var after = Card(await harness.NewService().GetTournamentStructure(tid), match.Id!.Value);
+            Assert.That(after.Status, Is.EqualTo(MatchStatus.Pending), "the re-read must not be served the stale entry");
+            Assert.That(after.StartTime, Is.Null, "and the cancelled kick-off is gone from the card");
+        }
+
+        private static DataModels.Models.MatchStructureDto Card(
+            DataModels.Models.TournamentStructureDto structure, Guid matchId)
+            => structure.Stages.Single().Groups!.Single().Matches.Single(m => m.Id == matchId);
     }
 }

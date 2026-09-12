@@ -2,6 +2,7 @@ using GameHubz.Common.Consts;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Config;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.Interfaces;
@@ -21,6 +22,13 @@ namespace GameHubz.Api.BackgroundTasks
     /// </summary>
     public class DeadlineNotificationRunner
     {
+        // How far back the ready-check sweep will rule. A verdict is about a kick-off that has
+        // just been and gone; past this the fixture is history an organizer has to settle by hand.
+        // Two things depend on it: an organizer who switches the ready check ON mid-tournament must
+        // not have every long-stale scheduled fixture voided in the next tick, and an API that was
+        // down for a day must not come back and mass-forfeit what it slept through.
+        private const int CheckInRulingWindowHours = 24;
+
         // The last-call lead is capped at RoundFinalLeadTimeMinutes but shrinks to this fraction
         // of the round length for short rounds, so it always lands after the round opens (a fixed
         // 3h last-call would never fire on a 1-hour round — its players would get nothing).
@@ -31,6 +39,7 @@ namespace GameHubz.Api.BackgroundTasks
         private readonly IDiscordDmService discordDmService;
         private readonly ILocalizationService localizationService;
         private readonly TournamentNotifier tournamentNotifier;
+        private readonly BracketService bracketService;
         private readonly ICacheService cacheService;
         private readonly ShareLinksConfig shareLinksConfig;
         private readonly ILogger<DeadlineNotificationRunner> logger;
@@ -44,6 +53,7 @@ namespace GameHubz.Api.BackgroundTasks
             IDiscordDmService discordDmService,
             ILocalizationService localizationService,
             TournamentNotifier tournamentNotifier,
+            BracketService bracketService,
             ICacheService cacheService,
             IOptions<ShareLinksConfig> shareLinksOptions,
             IConfiguration configuration,
@@ -54,6 +64,7 @@ namespace GameHubz.Api.BackgroundTasks
             this.discordDmService = discordDmService;
             this.localizationService = localizationService;
             this.tournamentNotifier = tournamentNotifier;
+            this.bracketService = bracketService;
             this.cacheService = cacheService;
             this.shareLinksConfig = shareLinksOptions.Value;
             this.logger = logger;
@@ -100,6 +111,24 @@ namespace GameHubz.Api.BackgroundTasks
             catch (Exception ex)
             {
                 logger.LogError(ex, "Round-deadline sweep failed.");
+            }
+
+            try
+            {
+                await SweepCheckInDeadlinesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Check-in deadline sweep failed.");
+            }
+
+            try
+            {
+                await SweepOpponentReadyAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Opponent-ready sweep failed.");
             }
         }
 
@@ -425,6 +454,280 @@ namespace GameHubz.Api.BackgroundTasks
                     logger.LogWarning(ex, "Failed round reminder for match {MatchId}.", match.Id);
                 }
             }
+        }
+
+        /// <summary>
+        /// Rules the ready check on every scheduled match whose grace period has run out.
+        ///
+        ///   • one side checked in  → that side wins by forfeit, scored as a walkover of the
+        ///     match's own Best-of (Bo1 1-0, Bo3 2-0, Bo5 3-0)
+        ///   • neither did          → the fixture is voided as a double walkover, exactly as the
+        ///     organizer's own button would (both out of an elimination, a no-points NoShow in a
+        ///     league / group / Swiss, a nothing-game inside a team tie)
+        ///   • both did             → nothing to rule; they are playing
+        ///
+        /// The ruling itself lives in BracketService so a forfeit advances the bracket, resyncs
+        /// standings and re-aggregates a team tie like any other result. Everything it does is
+        /// reversible by an organizer: delete the awarded result and enter the real one.
+        /// </summary>
+        private async Task SweepCheckInDeadlinesAsync(CancellationToken ct)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            // Kick-off already passed is the cheap pre-filter — the real deadline is kick-off plus
+            // the grace (or later, if the side that did turn up was itself late), so it can only
+            // ever be after this. The exact arithmetic runs per row below.
+            DateTime oldestRulable = now.AddHours(-CheckInRulingWindowHours);
+
+            var due = await context.Set<MatchEntity>()
+                .AsNoTracking()
+                .Where(m => m.Status == MatchStatus.Scheduled
+                    && m.ScheduledStartTime != null
+                    && m.ScheduledStartTime <= now
+                    && m.ScheduledStartTime >= oldestRulable
+                    && m.CheckInResolvedOn == null
+                    && (m.HomeCheckedInOn == null || m.AwayCheckedInOn == null)
+                    && m.Tournament!.RequireMatchCheckIn
+                    && m.Tournament!.Status == TournamentStatus.InProgress)
+                .Select(m => new
+                {
+                    Id = m.Id!.Value,
+                    m.TournamentId,
+                    TournamentName = m.Tournament!.Name,
+                    m.TeamMatchId,
+                    Start = m.ScheduledStartTime!.Value,
+                    m.HomeCheckedInOn,
+                    m.AwayCheckedInOn,
+                    GraceMinutes = m.Tournament!.CheckInGraceMinutes,
+                    // Team sub-matches carry the player ids directly; solo matches go via participants.
+                    HomeUserId = m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null),
+                    AwayUserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
+                })
+                .ToListAsync(ct);
+
+            foreach (var match in due)
+            {
+                if (ct.IsCancellationRequested) return;
+
+                try
+                {
+                    int grace = MatchCheckInRules.ResolveGraceMinutes(match.GraceMinutes);
+                    DateTime deadline = MatchCheckInRules.Deadline(
+                        match.Start, match.HomeCheckedInOn, match.AwayCheckedInOn, grace);
+
+                    if (now < deadline) continue;
+
+                    bool homeIn = match.HomeCheckedInOn != null;
+                    bool awayIn = match.AwayCheckedInOn != null;
+
+                    if (homeIn || awayIn)
+                    {
+                        if (!await bracketService.ApplyCheckInForfeit(match.Id, homeWins: homeIn)) continue;
+
+                        logger.LogInformation(
+                            "Check-in forfeit awarded on match {MatchId} to the {Side} side.",
+                            match.Id, homeIn ? "home" : "away");
+
+                        await NotifyCheckInForfeitAsync(
+                            match.TournamentId,
+                            match.TournamentName,
+                            match.Id,
+                            match.TeamMatchId,
+                            winnerUserId: homeIn ? match.HomeUserId : match.AwayUserId,
+                            loserUserId: homeIn ? match.AwayUserId : match.HomeUserId,
+                            ct);
+                    }
+                    else
+                    {
+                        if (!await bracketService.ApplyCheckInDoubleWalkover(match.Id)) continue;
+
+                        logger.LogInformation("Check-in double walkover applied on match {MatchId}.", match.Id);
+
+                        await NotifyCheckInVoidAsync(
+                            match.TournamentId,
+                            match.TournamentName,
+                            match.Id,
+                            match.TeamMatchId,
+                            new[] { match.HomeUserId, match.AwayUserId },
+                            ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // The claim inside the ruling is what stops a failure here from being retried
+                    // every tick; the fixture is left for the organizer instead.
+                    logger.LogWarning(ex, "Failed check-in ruling for match {MatchId}.", match.Id);
+                }
+            }
+        }
+
+        // Winner and loser hear different things, so this is two sends rather than one broadcast.
+        private async Task NotifyCheckInForfeitAsync(
+            Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
+            Guid? winnerUserId, Guid? loserUserId, CancellationToken ct)
+        {
+            await SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
+                new[] { winnerUserId }, "Push.MatchCheckInWin.Body", ct);
+
+            await SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
+                new[] { loserUserId }, "Push.MatchCheckInLoss.Body", ct);
+        }
+
+        private Task NotifyCheckInVoidAsync(
+            Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
+            IEnumerable<Guid?> userIds, CancellationToken ct)
+            => SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
+                userIds, "Push.MatchCheckInVoid.Body", ct);
+
+        private async Task SendCheckInPushAsync(
+            Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
+            IEnumerable<Guid?> userIds, string bodyKey, CancellationToken ct)
+        {
+            var ids = userIds.Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
+            if (ids.Count == 0) return;
+
+            var recipients = await context.Set<UserEntity>()
+                .AsNoTracking()
+                .Where(u => ids.Contains(u.Id!.Value) && u.IsActive && u.PushToken != null)
+                .Select(u => new PushRecipient(u.PushToken!, u.Language))
+                .ToListAsync(ct);
+
+            if (recipients.Count == 0) return;
+
+            await notificationService.SendLocalizedToManyAsync(
+                recipients,
+                PushText.FromLiteral(tournamentName),
+                PushText.FromKey(bodyKey),
+                // teamMatchId rides along so a sub-match deep link opens the tie, not an empty
+                // solo modal — same contract as the round-deadline push.
+                new { tournamentId, matchId, teamMatchId, type = "checkIn" });
+        }
+
+        /// <summary>
+        /// Tells both players that a fixture which had an empty slot now has an opponent in it.
+        ///
+        /// This is the gap the app had: a player knocked out of the group stage into a knockout
+        /// draw, or sitting on round 5 of a Swiss waiting for somebody else's match to finish, had
+        /// no way of learning that their next match had become playable short of opening the
+        /// bracket and checking. The fixture would sit there until the round deadline reminder
+        /// eventually mentioned it.
+        ///
+        /// Only fixtures whose opponent was genuinely unknown qualify — an elimination bracket, a
+        /// Swiss pairing, a play-in. League and group fixtures are drawn in full the day the stage
+        /// is generated, so announcing them would be telling players something they have been
+        /// looking at all along. Round 1 of the opening stage is skipped for the same reason: that
+        /// is the tournament starting, which already has its own announcement.
+        ///
+        /// Deliberately a sweep rather than a hook on the advancement code. A pairing can be
+        /// completed from a dozen places — bracket advancement, losers-bracket drop-in, knockout
+        /// seeding out of groups or Swiss, a grand-final reset, the third-place play-off, a play-in
+        /// feed, an organizer editing a result and the cascade re-draw that follows. Reading the
+        /// finished state once a minute catches all of them, including the ones written next year.
+        /// </summary>
+        private async Task SweepOpponentReadyAsync(CancellationToken ct)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            var due = await context.Set<MatchEntity>()
+                .AsNoTracking()
+                .Where(m => m.OpponentNotifiedOn == null
+                    && m.Status == MatchStatus.Pending
+                    && m.HomeParticipantId != null
+                    && m.AwayParticipantId != null
+                    && m.WinnerParticipantId == null
+                    // A round the organizer has scheduled for next week is not news yet; the round
+                    // reminders own that conversation.
+                    && (m.RoundOpenAt == null || m.RoundOpenAt <= now)
+                    && m.Tournament!.Status == TournamentStatus.InProgress
+                    // Fixtures that were drawn, not scheduled up front.
+                    && m.TournamentStage!.Type != StageType.League
+                    && m.TournamentStage!.Type != StageType.GroupStage
+                    // The opening round of the opening stage IS the tournament starting, and
+                    // Push.TournamentLive already says so.
+                    && !(m.TournamentStage!.Order == 1 && m.RoundNumber == 1))
+                .Select(m => new
+                {
+                    Id = m.Id!.Value,
+                    m.TournamentId,
+                    TournamentName = m.Tournament!.Name,
+                    m.TeamMatchId,
+                    // Team sub-matches carry the player ids directly; solo matches go via participants.
+                    HomeUserId = m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null),
+                    AwayUserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
+                    HomeTeamName = m.HomeParticipant != null && m.HomeParticipant.Team != null
+                        ? m.HomeParticipant.Team.TeamName : null,
+                    AwayTeamName = m.AwayParticipant != null && m.AwayParticipant.Team != null
+                        ? m.AwayParticipant.Team.TeamName : null,
+                })
+                .ToListAsync(ct);
+
+            foreach (var match in due)
+            {
+                if (ct.IsCancellationRequested) return;
+
+                try
+                {
+                    // Claimed before the sends, not after: a push that fails must not put the
+                    // fixture back in the queue for another try a minute later, and a second API
+                    // instance sweeping the same tick updates no rows and stands down.
+                    int claimed = await context.Set<MatchEntity>()
+                        .Where(m => m.Id == match.Id && m.OpponentNotifiedOn == null)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.OpponentNotifiedOn, now), ct);
+
+                    if (claimed == 0) continue;
+
+                    // Each player hears their OWN opponent's name, so this is two sends rather than
+                    // one broadcast. A team side is named by its team; a solo side by its username.
+                    string homeName = match.HomeTeamName ?? await ResolveUsernameAsync(match.HomeUserId, ct);
+                    string awayName = match.AwayTeamName ?? await ResolveUsernameAsync(match.AwayUserId, ct);
+
+                    await SendOpponentReadyPushAsync(match.TournamentId, match.TournamentName, match.Id,
+                        match.TeamMatchId, match.HomeUserId, awayName, ct);
+
+                    await SendOpponentReadyPushAsync(match.TournamentId, match.TournamentName, match.Id,
+                        match.TeamMatchId, match.AwayUserId, homeName, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed opponent-ready notification for match {MatchId}.", match.Id);
+                }
+            }
+        }
+
+        private async Task<string> ResolveUsernameAsync(Guid? userId, CancellationToken ct)
+        {
+            if (userId == null) return "—";
+
+            var name = await context.Set<UserEntity>()
+                .AsNoTracking()
+                .Where(u => u.Id == userId.Value)
+                .Select(u => u.Username)
+                .FirstOrDefaultAsync(ct);
+
+            return string.IsNullOrWhiteSpace(name) ? "—" : name;
+        }
+
+        private async Task SendOpponentReadyPushAsync(
+            Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
+            Guid? recipientUserId, string opponentName, CancellationToken ct)
+        {
+            if (recipientUserId == null) return;
+
+            var recipients = await context.Set<UserEntity>()
+                .AsNoTracking()
+                .Where(u => u.Id == recipientUserId.Value && u.IsActive && u.PushToken != null)
+                .Select(u => new PushRecipient(u.PushToken!, u.Language))
+                .ToListAsync(ct);
+
+            if (recipients.Count == 0) return;
+
+            await notificationService.SendLocalizedToManyAsync(
+                recipients,
+                PushText.FromLiteral(tournamentName),
+                PushText.FromKey("Push.OpponentReady.Body", opponentName),
+                // teamMatchId rides along so a sub-match deep link opens the tie, not an empty solo
+                // modal — same contract as the round-deadline and check-in pushes.
+                new { tournamentId, matchId, teamMatchId, type = "opponentReady" });
         }
 
         private async Task MarkRegistrationRemindedAsync(Guid tournamentId, DateTime now, CancellationToken ct)

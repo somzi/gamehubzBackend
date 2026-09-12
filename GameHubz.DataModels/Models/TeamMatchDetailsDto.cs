@@ -23,6 +23,13 @@ namespace GameHubz.DataModels.Models
         public TeamAggregateScoreDto? AggregateScore { get; set; }
         public TeamTieBreakInfoDto? TieBreak { get; set; }
         public bool RequireResultApproval { get; set; }
+
+        /// <summary>
+        /// Ready check for this tournament, with its grace window. Each GAME of the tie runs its
+        /// own check (see TeamSubMatchDto) — the tie itself has no kick-off to turn up for.
+        /// </summary>
+        public bool RequireMatchCheckIn { get; set; }
+        public int? CheckInGraceMinutes { get; set; }
     }
 
     public class TeamMatchTeamInfoDto
@@ -62,6 +69,18 @@ namespace GameHubz.DataModels.Models
         public List<SeriesGame>? Games { get; set; }
 
         public List<SeriesGame>? ProposedGames { get; set; }
+
+        /// <summary>Agreed kick-off for this individual game, when the pair have settled on one.</summary>
+        public DateTime? ScheduledStartTime { get; set; }
+
+        /// <summary>
+        /// Ready-check state of this game. The two computed moments are null unless the game is
+        /// actually running a check (tournament setting on, kick-off agreed, nothing decided yet).
+        /// </summary>
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+        public DateTime? CheckInOpensAt { get; set; }
+        public DateTime? CheckInDeadline { get; set; }
     }
 
     public class TeamAggregateScoreDto

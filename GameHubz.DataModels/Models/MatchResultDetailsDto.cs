@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
@@ -66,7 +67,36 @@ namespace GameHubz.DataModels.Models
         public string? AwayUserAvatarUrl { get; set; }
         public string? HomeUserAvatarUrl { get; set; }
 
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country of each player, or null where they never set one. The point
+        /// is ping: two players agreeing a match want to know whether they are a hop apart or a
+        /// continent, and the flag says it faster than any label. Region is deliberately NOT sent
+        /// alongside — it is derived from the country and nothing else (UserService.ApplyCountry),
+        /// so a player with no country has no region either, just the GLOBAL default.
+        /// </summary>
+        public string? HomeUserCountry { get; set; }
+        public string? AwayUserCountry { get; set; }
+
+        /// <summary>Flag emoji for the codes above, resolved from the catalog. Null without one.</summary>
+        public string? HomeUserCountryFlag => CountryCatalog.Get(HomeUserCountry)?.Flag;
+        public string? AwayUserCountryFlag => CountryCatalog.Get(AwayUserCountry)?.Flag;
+
+        /// <summary>Human country name for the codes above ("Serbia"), for a11y and tooltips.</summary>
+        public string? HomeUserCountryName => CountryCatalog.Get(HomeUserCountry)?.Name;
+        public string? AwayUserCountryName => CountryCatalog.Get(AwayUserCountry)?.Name;
+
         public bool RequireResultApproval { get; set; }
+
+        /// <summary>
+        /// Ready check state for this match. <see cref="RequireMatchCheckIn"/> is the tournament
+        /// setting; the rest is null unless this match actually runs one (it needs a kick-off time).
+        /// </summary>
+        public bool RequireMatchCheckIn { get; set; }
+        public int? CheckInGraceMinutes { get; set; }
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+        public DateTime? CheckInOpensAt { get; set; }
+        public DateTime? CheckInDeadline { get; set; }
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }

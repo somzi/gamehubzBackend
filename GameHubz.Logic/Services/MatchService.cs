@@ -1,5 +1,6 @@
 ﻿using FluentValidation;
 using GameHubz.DataModels.Config;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,7 @@ namespace GameHubz.Logic.Services
         private readonly YouTubeStreamClient youTubeStreamClient;
         private readonly BadgeService badgeService;
         private readonly IDiscordDmService discordDmService;
+        private readonly ICacheService cacheService;
         private readonly ShareLinksConfig shareLinksConfig;
 
         public MatchService(
@@ -32,6 +34,7 @@ namespace GameHubz.Logic.Services
             YouTubeStreamClient youTubeStreamClient,
             BadgeService badgeService,
             IDiscordDmService discordDmService,
+            ICacheService cacheService,
             IOptions<ShareLinksConfig> shareLinksOptions) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
@@ -48,6 +51,7 @@ namespace GameHubz.Logic.Services
             this.youTubeStreamClient = youTubeStreamClient;
             this.badgeService = badgeService;
             this.discordDmService = discordDmService;
+            this.cacheService = cacheService;
             this.shareLinksConfig = shareLinksOptions.Value;
         }
 
@@ -94,6 +98,24 @@ namespace GameHubz.Logic.Services
             // turn them into the parsed lists the client actually consumes.
             detail.Games = DeserializeGames(detail.GamesJson);
             detail.ProposedGames = DeserializeGames(detail.ProposedGamesJson);
+
+            // The projection can only carry the stored columns; the ready-check window around them
+            // is arithmetic. Resolved here so the client is handed the same moments the sweep will
+            // act on, and the grace it needs to re-derive them after its own check-in.
+            if (detail.RequireMatchCheckIn)
+            {
+                detail.CheckInGraceMinutes = MatchCheckInRules.ResolveGraceMinutes(detail.CheckInGraceMinutes);
+
+                if (detail.ScheduledTime.HasValue && detail.Status == MatchStatus.Scheduled)
+                {
+                    detail.CheckInOpensAt = MatchCheckInRules.OpensAt(detail.ScheduledTime.Value);
+                    detail.CheckInDeadline = MatchCheckInRules.Deadline(
+                        detail.ScheduledTime.Value,
+                        detail.HomeCheckedInOn,
+                        detail.AwayCheckedInOn,
+                        detail.CheckInGraceMinutes.Value);
+                }
+            }
 
             return detail;
         }
@@ -243,6 +265,12 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
+            // Only when the two lists just met. The offered hours themselves never reach the bracket,
+            // but the kick-off and the Scheduled status this branch wrote do — the same cached state
+            // ClearSchedule drops on the way back out.
+            if (intersection.Count > 0)
+                await InvalidateBracketCacheAsync(match.TournamentId);
+
             await NotifyOpponentOfAvailabilityAsync(matchId, user, match, isHome);
 
             // 4. Return DTO for UI
@@ -313,8 +341,21 @@ namespace GameHubz.Logic.Services
             match.ScheduledStartTime = DateTime.UtcNow;
             match.Status = MatchStatus.Scheduled;
 
+            // "We agreed outside the app" is bookkeeping, not a kick-off anyone is being held to:
+            // the timestamp is simply now, and the opponent is told nothing. Left unruled, the ready
+            // check treats it as a fixture that has already started — the window is open, the
+            // deadline is now + grace, and one sweep later the opponent who never heard about any
+            // of it loses the match by forfeit (or both do, as a double no-show). It would also
+            // refuse the pair the very report this button exists to unlock.
+            //
+            // So the check is closed here rather than run: this path means the two have sorted the
+            // match out between themselves, which is precisely the case the feature stays out of.
+            match.CheckInResolvedOn = DateTime.UtcNow;
+
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
+
+            await InvalidateBracketCacheAsync(match.TournamentId);
         }
 
         /// <summary>
@@ -351,10 +392,40 @@ namespace GameHubz.Logic.Services
             match.HomeSlotsSetOn = null;
             match.AwaySlotsSetOn = null;
 
+            // The ready check belonged to the time that just went away: a player who confirmed for
+            // 17:00 has not confirmed for whatever the pair agree next, and leaving his stamp
+            // behind would hand him a forfeit win at the new kick-off without him doing anything.
+            match.HomeCheckedInOn = null;
+            match.AwayCheckedInOn = null;
+
+            // The verdict marker goes with them. It says "this kick-off has been ruled on" — and
+            // this kick-off no longer exists. Kept, it would silently exempt the fixture from the
+            // ready check for the rest of the tournament, however many times the pair reschedule.
+            match.CheckInResolvedOn = null;
+
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
 
+            // The board is still holding the kick-off that just went away: bracket cards read their
+            // Scheduled pill, their report affordance and the ready-check counter out of a payload
+            // cached for five minutes. Dropped here so an organizer who cancels a time sees the
+            // fixture fall back to unscheduled at once, rather than on the next expiry.
+            await InvalidateBracketCacheAsync(match.TournamentId);
+
             await NotifyScheduleClearedAsync(match);
+        }
+
+        /// <summary>
+        /// Drops the cached bracket payload for a tournament. Every match write in this service that
+        /// the board draws — a kick-off appearing or disappearing, a ready check landing — has to go
+        /// through here, because <see cref="BracketService.GetTournamentStructure"/> serves that
+        /// payload from a five-minute entry and would otherwise keep showing the state it replaced.
+        /// v3 keeps its own key (team group cards are shaped differently), so both are dropped.
+        /// </summary>
+        private async Task InvalidateBracketCacheAsync(Guid tournamentId)
+        {
+            await this.cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await this.cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
         }
 
         /// <summary>
@@ -387,6 +458,171 @@ namespace GameHubz.Logic.Services
                 PushText.FromKey("Push.MatchScheduleCleared.Title"),
                 PushText.FromKey("Push.MatchScheduleCleared.Body"),
                 new { matchId = match.Id!.Value.ToString(), type = "scheduleCleared" });
+        }
+
+        /// <summary>
+        /// "I am at the keyboard." Stamps the caller's side of a scheduled match so the ready check
+        /// can tell who turned up. Idempotent - pressing it again keeps the original stamp, because
+        /// that stamp is evidence, not a toggle.
+        ///
+        /// The window opens <see cref="MatchCheckInRules.OpensBeforeMinutes"/> before kick-off and
+        /// closes at the forfeit deadline; after that the sweep owns the match and a late arrival
+        /// must not be able to walk into a decision that has already been made. Nothing here awards
+        /// anything: checking in alone is not a win, it is what makes the win possible when the
+        /// deadline passes with the other side still missing.
+        /// </summary>
+        public async Task<MatchCheckInDto> CheckIn(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            // GetApprovalContext is the one-query tournament slice the match paths already share;
+            // it carries the ready-check settings alongside the approval / series ones.
+            var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
+
+            if (!settings.RequireMatchCheckIn)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInNotEnabled"]);
+
+            // No agreed kick-off, no ready check: a pair who arranged the match in chat play and
+            // report it exactly as they always have.
+            if (match.Status != MatchStatus.Scheduled || !match.ScheduledStartTime.HasValue)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInNeedsSchedule"]);
+
+            if (match.CheckInResolvedOn.HasValue)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+
+            int grace = MatchCheckInRules.ResolveGraceMinutes(settings.CheckInGraceMinutes);
+            DateTime now = DateTime.UtcNow;
+            DateTime start = match.ScheduledStartTime.Value;
+
+            if (now < MatchCheckInRules.OpensAt(start))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInNotOpenYet"]);
+
+            if (now > MatchCheckInRules.Deadline(start, match.HomeCheckedInOn, match.AwayCheckedInOn, grace))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+
+            bool? isHome = ResolveCheckInSide(match, user.UserId);
+            if (isHome == null)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
+
+            bool opponentWasWaiting = isHome.Value
+                ? match.AwayCheckedInOn == null
+                : match.HomeCheckedInOn == null;
+            bool alreadyIn = isHome.Value ? match.HomeCheckedInOn.HasValue : match.AwayCheckedInOn.HasValue;
+
+            if (!alreadyIn)
+            {
+                if (isHome.Value) match.HomeCheckedInOn = now;
+                else match.AwayCheckedInOn = now;
+
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                // The bracket renders the check-in state on its cards, and that payload is cached
+                // for five minutes — long enough for a player to confirm, look at the bracket and
+                // be told he has not. Dropped here rather than left to expire, exactly as a
+                // reported result does.
+                await InvalidateBracketCacheAsync(match.TournamentId);
+
+                // Only the first side's check-in is news: it starts the clock the opponent is now
+                // racing. Telling the second player "your opponent is ready" right after they
+                // confirmed themselves would be noise.
+                if (opponentWasWaiting)
+                    await NotifyOpponentOfCheckInAsync(match, user, isHome.Value, grace);
+            }
+
+            return BuildCheckInDto(match, grace, isHome);
+        }
+
+        /// <summary>
+        /// Which side of the match this user may check in for, or null when they are on neither.
+        ///
+        /// Solo matches are the participant themselves. On a team sub-match the side is the team on
+        /// paper, but the check is about a body in a chair, so ONLY the player nominated for THIS
+        /// game may answer for it — not a team-mate, and deliberately not the captain. A captain
+        /// confirming for someone who is not there would hand his team a forfeit win it did not
+        /// turn up for, which is the exact thing the ready check exists to stop. A slot with nobody
+        /// nominated cannot be checked in at all: no player, no show.
+        /// </summary>
+        private static bool? ResolveCheckInSide(MatchEntity match, Guid userId)
+        {
+            if (match.TeamMatchId.HasValue)
+            {
+                if (match.HomeUserId == userId) return true;
+                if (match.AwayUserId == userId) return false;
+
+                return null;
+            }
+
+            if (match.HomeParticipant?.UserId == userId) return true;
+            if (match.AwayParticipant?.UserId == userId) return false;
+
+            return null;
+        }
+
+        private static MatchCheckInDto BuildCheckInDto(MatchEntity match, int graceMinutes, bool? isHome)
+        {
+            var dto = new MatchCheckInDto
+            {
+                MatchId = match.Id!.Value,
+                RequireMatchCheckIn = true,
+                GraceMinutes = graceMinutes,
+                ScheduledStartTime = match.ScheduledStartTime,
+                HomeCheckedInOn = match.HomeCheckedInOn,
+                AwayCheckedInOn = match.AwayCheckedInOn,
+                ResolvedOn = match.CheckInResolvedOn,
+                IsHome = isHome
+            };
+
+            if (match.ScheduledStartTime.HasValue)
+            {
+                dto.CheckInOpensAt = MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value);
+                dto.CheckInDeadline = MatchCheckInRules.Deadline(
+                    match.ScheduledStartTime.Value, match.HomeCheckedInOn, match.AwayCheckedInOn, graceMinutes);
+            }
+
+            return dto;
+        }
+
+        /// <summary>
+        /// Tells the missing side that the clock is running, with the minutes it has left. This is
+        /// the notification the whole feature leans on - a forfeit nobody was warned about is just
+        /// a match lost to a notification setting. Resolved in the request scope, sent
+        /// fire-and-forget, exactly like the availability nudge above.
+        /// </summary>
+        private async Task NotifyOpponentOfCheckInAsync(MatchEntity match, TokenUserInfo user, bool checkedInHome, int graceMinutes)
+        {
+            Guid? opponentUserId = GetParticipantUserId(match, isHome: !checkedInHome);
+            if (opponentUserId == null) return;
+
+            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            if (opponent == null) return;
+
+            var deadline = MatchCheckInRules.Deadline(
+                match.ScheduledStartTime!.Value, match.HomeCheckedInOn, match.AwayCheckedInOn, graceMinutes);
+
+            // Round up: "2 minutes left" reads better than "1" when 1m40s remain, and it is the
+            // honest direction to round a deadline the player is racing.
+            int minutesLeft = Math.Max(1, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalMinutes));
+
+            if (!string.IsNullOrEmpty(opponent.PushToken))
+            {
+                FireAndForgetPush(
+                    new List<PushRecipient> { new(opponent.PushToken!, opponent.Language) },
+                    PushText.FromKey("Push.MatchCheckIn.Title"),
+                    PushText.FromKey("Push.MatchCheckIn.Body", user.Username, minutesLeft.ToString()),
+                    new { matchId = match.Id!.Value.ToString(), type = "checkIn" });
+            }
+
+            if (opponent.DiscordDmEnabled)
+            {
+                string dmContent = $"\u2705 **{user.Username}** checked in - you have **{minutesLeft} min** to confirm or you forfeit.\n"
+                    + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
+                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent);
+            }
         }
 
         // One clip is evidence, several are a video host. Kept low on purpose: video is the only

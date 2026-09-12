@@ -1,5 +1,6 @@
 ﻿using GameHubz.Common.Consts;
 using GameHubz.DataModels.Config;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Enums;
 using Microsoft.Extensions.Options;
 
@@ -179,6 +180,10 @@ namespace GameHubz.Logic.Services
                 HubOwnerId = tournament.Hub?.UserId ?? Guid.Empty,
                 QualifiersPerGroup = tournament.QualifiersPerGroup,
                 RequireResultApproval = tournament.RequireResultApproval,
+                RequireMatchCheckIn = tournament.RequireMatchCheckIn,
+                CheckInGraceMinutes = tournament.RequireMatchCheckIn
+                    ? MatchCheckInRules.ResolveGraceMinutes(tournament.CheckInGraceMinutes)
+                    : null,
                 BestOf = SeriesEvaluator.Normalize(tournament.BestOf),
                 SeriesWinCondition = tournament.SeriesWinCondition,
                 TiebreakBestOf = tournament.TiebreakBestOf,
@@ -224,6 +229,7 @@ namespace GameHubz.Logic.Services
             // Resolve every one against the tournament default here, in one pass, so the client
             // never has to coalesce — and so the resolved format is what gets cached.
             ResolveSeriesFormat(response, tournament);
+            ResolveCheckInWindows(response, tournament);
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
 
@@ -238,6 +244,32 @@ namespace GameHubz.Logic.Services
         /// Resolved per stage, not per tournament: a two-phase tournament can run its knockout over
         /// a different Best-of than the group stage or Swiss rounds that fed it.
         /// </remarks>
+        /// <summary>
+        /// Fills each card's ready-check window. Like <see cref="ResolveSeriesFormat"/>, this runs
+        /// once over the mapped cards because the arithmetic needs the tournament (its grace) while
+        /// the cards themselves are mapped without it. A card only gets a window when the check is
+        /// on, the match has an agreed kick-off, and nothing has been decided yet — otherwise every
+        /// finished match in a season-long bracket would carry a stale countdown.
+        /// </summary>
+        private static void ResolveCheckInWindows(TournamentStructureDto response, TournamentEntity tournament)
+        {
+            if (!tournament.RequireMatchCheckIn) return;
+
+            int grace = MatchCheckInRules.ResolveGraceMinutes(tournament.CheckInGraceMinutes);
+
+            foreach (var match in response.Stages
+                .SelectMany(s => (s.Rounds ?? Enumerable.Empty<BracketRoundDto>()).SelectMany(r => r.Matches)
+                    .Concat((s.Groups ?? Enumerable.Empty<GroupDto>()).SelectMany(g => g.Matches))))
+            {
+                if (match.StartTime == null) continue;
+                if (match.Status != MatchStatus.Scheduled) continue;
+
+                match.CheckInOpensAt = MatchCheckInRules.OpensAt(match.StartTime.Value);
+                match.CheckInDeadline = MatchCheckInRules.Deadline(
+                    match.StartTime.Value, match.HomeCheckedInOn, match.AwayCheckedInOn, grace);
+            }
+        }
+
         private static void ResolveSeriesFormat(TournamentStructureDto response, TournamentEntity tournament)
         {
             foreach (var stage in response.Stages)
@@ -2476,6 +2508,21 @@ namespace GameHubz.Logic.Services
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
+            // Ready check: a scheduled match still waiting on a check-in is not the participants'
+            // to score. Either the missing side is about to forfeit, or it turns up and both are
+            // in — letting one player report in the meantime would decide the match on his word
+            // alone, which is the exact thing the check exists to prevent. Organizers are outside
+            // this: they are the escape hatch when the pair played anyway.
+            if (approvalCtx.RequireMatchCheckIn
+                && !isPrivileged
+                && match.Status == MatchStatus.Scheduled
+                && match.ScheduledStartTime.HasValue
+                && match.CheckInResolvedOn == null
+                && (match.HomeCheckedInOn == null || match.AwayCheckedInOn == null))
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInRequiredToReport"]);
+            }
+
             // Resolve the series format in force for this match and read the submission through it.
             // Everything downstream works off `series` instead of the raw request scores, so the v1
             // and v2 paths converge here and only differ in what they were allowed to send.
@@ -3357,6 +3404,16 @@ namespace GameHubz.Logic.Services
             if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffDoubleWalkover"]);
 
+            await ApplyDoubleWalkoverCore(match);
+        }
+
+        /// <summary>
+        /// The double walkover itself, with no opinion about who asked for it. Split out so the
+        /// ready-check sweep can void a fixture nobody turned up to without an HTTP caller to
+        /// authorize — there, the expired deadline IS the authority.
+        /// </summary>
+        private async Task ApplyDoubleWalkoverCore(MatchEntity match)
+        {
             if (match.TeamMatchId.HasValue)
             {
                 await ApplyTeamSubMatchWalkover(match);
@@ -3437,6 +3494,128 @@ namespace GameHubz.Logic.Services
 
             // Discord-only announcement (no Expo equivalent exists for double walkovers).
             await this.matchNotifier.DoubleWalkover(match, opponentAdvances: !isGroupMachinery);
+        }
+
+        /// <summary>
+        /// Ready check, ruled: one side confirmed it was there and the other never did, so the
+        /// match is awarded to whoever turned up. System-invoked from the deadline sweep — there is
+        /// no HTTP caller to authorize, and the expired deadline is the authority.
+        ///
+        /// The award goes through the ordinary result path (<see cref="FinalizeMatchResult"/>), so
+        /// the bracket advances, standings resync and the tie of a team game re-aggregates exactly
+        /// as they would for a played match. It is an ordinary result afterwards too: an organizer
+        /// who learns the pair actually played can delete it and enter the real score.
+        ///
+        /// Returns false when the match slipped out of reach first — a result landed, an organizer
+        /// ruled on it, or another instance's sweep got there — so the caller can stay quiet.
+        /// </summary>
+        public async Task<bool> ApplyCheckInForfeit(Guid matchId, bool homeWins)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) return false;
+            if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
+
+            var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+            if (approvalCtx == null) return false;
+
+            // Re-read the stamps off the row we just loaded rather than trusting the verdict we
+            // were handed: the sweep listed this match a moment ago, and a player who checked in
+            // since then must not be forfeited. Awarding a match against someone who did turn up
+            // is the one mistake this feature cannot make.
+            bool homeIn = match.HomeCheckedInOn.HasValue;
+            bool awayIn = match.AwayCheckedInOn.HasValue;
+            if (homeIn == awayIn) return false;
+            if (homeWins != homeIn) return false;
+
+            // Claim the match before acting, so a failure further down leaves the fixture for the
+            // organizer instead of handing out the same win every minute — and so a second
+            // instance's sweep can't award it in parallel.
+            if (!await ClaimCheckInResolutionAsync(match)) return false;
+
+            var series = BuildForfeitSeries(match, approvalCtx, homeWins);
+            var (nextMatch, loserBracketMatch) = await LoadDownstreamRefsAsync(match);
+
+            await FinalizeMatchResult(match, nextMatch, loserBracketMatch, series, match.TournamentId);
+            return true;
+        }
+
+        /// <summary>
+        /// Ready check, ruled the other way: nobody turned up, so the fixture is voided exactly as
+        /// the organizer's own double-walkover button would (both out of an elimination, a
+        /// no-points NoShow in a league / group / Swiss, a nothing-game inside a team tie).
+        /// System-invoked from the sweep; see <see cref="ApplyCheckInForfeit"/> on why the match is
+        /// claimed before it is acted on.
+        /// </summary>
+        public async Task<bool> ApplyCheckInDoubleWalkover(Guid matchId)
+        {
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
+            if (match == null) return false;
+            if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
+
+            // Same re-read as the forfeit path: somebody arriving between the sweep's query and
+            // this call turns "nobody came" into a fixture that still has a live check to run.
+            if (match.HomeCheckedInOn.HasValue || match.AwayCheckedInOn.HasValue) return false;
+
+            if (!await ClaimCheckInResolutionAsync(match)) return false;
+
+            // A play-in match (and a final with nothing downstream) refuses to be voided — every
+            // play-in slot owes the knockout draw a qualifier. Those stay open for the organizer,
+            // and the claim above means the sweep won't keep trying.
+            await ApplyDoubleWalkoverCore(match);
+            return true;
+        }
+
+        /// <summary>
+        /// Takes ownership of the ruling. The database decides: whoever's conditional update lands
+        /// first rules the match, everyone else walks away. The in-memory mirror matters — the
+        /// finalize path writes the whole entity back, and would otherwise null the claim it just won.
+        /// </summary>
+        private async Task<bool> ClaimCheckInResolutionAsync(MatchEntity match)
+        {
+            var now = DateTime.UtcNow;
+            if (!await this.AppUnitOfWork.MatchRepository.TryClaimCheckInResolution(match.Id!.Value, now)) return false;
+
+            match.CheckInResolvedOn = now;
+            return true;
+        }
+
+        /// <summary>
+        /// The scoreline a forfeit is recorded as: the minimum number of games the winner needs,
+        /// each 1-0. A Bo1 reads 1-0, a Bo3 2-0, a Bo5 3-0 — the convention players already expect
+        /// from a walkover, and honest arithmetic rather than a fixed number that would invent
+        /// games a Bo1 never had. Total-score tournaments need every game of the series to settle
+        /// it (a series is only over there once it is fully played), so those get the full Best-of.
+        /// </summary>
+        private static SubmittedSeries BuildForfeitSeries(MatchEntity match, TournamentApprovalContext approvalCtx, bool homeWins)
+        {
+            var condition = approvalCtx.SeriesWinCondition;
+            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
+                approvalCtx.Format, match.TournamentStage?.Type, approvalCtx.BestOf, approvalCtx.KnockoutBestOf));
+            var tiebreakBestOf = match.TiebreakBestOf ?? approvalCtx.TiebreakBestOf;
+
+            int gamesToWrite = bestOf <= 1 || condition == TeamWinCondition.AggregateScore
+                ? bestOf
+                : bestOf / 2 + 1;
+
+            var games = Enumerable.Range(0, gamesToWrite)
+                .Select(_ => new SeriesGame
+                {
+                    HomeScore = homeWins ? 1 : 0,
+                    AwayScore = homeWins ? 0 : 1,
+                    SeriesNumber = 1
+                })
+                .ToList();
+
+            return new SubmittedSeries
+            {
+                Games = games,
+                Outcome = SeriesEvaluator.Evaluate(games, condition, bestOf, tiebreakBestOf),
+                BestOf = bestOf,
+                TiebreakBestOf = tiebreakBestOf,
+                // A forfeit is decided by definition: there is nothing here that could finish level
+                // and ask for a tiebreak.
+                AllowsTieBreak = false,
+            };
         }
 
         // Group-machinery double forfeit (League / GroupStage / Swiss): the fixture closes as
@@ -7078,6 +7257,10 @@ namespace GameHubz.Logic.Services
                 ProposedAwayScore = m.ProposedAwayScore,
                 ProposedByUserId = m.ProposedByUserId,
                 ProposedGames = m.ProposedGamesJson == null ? null : m.ProposedGames,
+                // Raw stamps only — the window around them is computed once the tournament (and
+                // its grace) is in scope. See ResolveCheckInWindows.
+                HomeCheckedInOn = m.HomeCheckedInOn,
+                AwayCheckedInOn = m.AwayCheckedInOn,
                 // 0 = "no override" — ResolveSeriesFormat swaps in the tournament default.
                 BestOf = m.BestOf ?? 0,
                 TiebreakBestOf = m.TiebreakBestOf,
@@ -7090,7 +7273,9 @@ namespace GameHubz.Logic.Services
                     Score = m.HomeUserScore,
                     Seed = m.HomeParticipant.Seed,
                     IsWinner = m.WinnerParticipantId == m.HomeParticipant.Id,
-                    TeamName = m.HomeParticipant.Team?.TeamName
+                    TeamName = m.HomeParticipant.Team?.TeamName,
+                    // Null on team slots (User is null there) — the client draws its team icon then.
+                    AvatarUrl = m.HomeParticipant.User?.AvatarUrl
                 },
                 Away = m.AwayParticipant == null ? null : new MatchParticipantDto
                 {
@@ -7100,7 +7285,8 @@ namespace GameHubz.Logic.Services
                     Score = m.AwayUserScore,
                     Seed = m.AwayParticipant.Seed,
                     IsWinner = m.WinnerParticipantId == m.AwayParticipant.Id,
-                    TeamName = m.AwayParticipant.Team?.TeamName
+                    TeamName = m.AwayParticipant.Team?.TeamName,
+                    AvatarUrl = m.AwayParticipant.User?.AvatarUrl
                 }
             };
         }

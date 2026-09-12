@@ -13,6 +13,11 @@ namespace GameHubz.DataModels.Models
         public Guid? AwayTeamRepresentativeUserId { get; set; }
         public int? MatchOrder { get; set; }
         public bool RequireResultApproval { get; set; }
+
+        /// <summary>Ready check, read off the tournament — see TournamentEntity.RequireMatchCheckIn.</summary>
+        public bool RequireMatchCheckIn { get; set; }
+        public int? CheckInGraceMinutes { get; set; }
+
         public TeamWinCondition WinCondition { get; set; }
 
         /// <summary>
@@ -42,6 +47,15 @@ namespace GameHubz.DataModels.Models
         public int? HomeUserScore { get; set; }
         public int? AwayUserScore { get; set; }
         public Guid? WinnerParticipantId { get; set; }
+
+        // The ready check runs per GAME of a tie, not per tie: each pairing agrees its own kick-off
+        // and each player answers for himself, so a team-mate who does not turn up loses his own
+        // game rather than the whole tie.
+        public DateTime? ScheduledStartTime { get; set; }
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+        public DateTime? CheckInResolvedOn { get; set; }
+
         public Guid? HomeParticipantId { get; set; }
         public Guid? AwayParticipantId { get; set; }
         public Guid? HomeUserId { get; set; }

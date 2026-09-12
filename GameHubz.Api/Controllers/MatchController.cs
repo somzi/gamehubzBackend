@@ -126,6 +126,15 @@ namespace GameHubz.Api.Controllers
             return Ok(new { message = "Scheduled time cleared." });
         }
 
+        // Ready check: "I am here" for the caller's side of a scheduled match. Idempotent, and
+        // the service owns every rule (check enabled, window open, caller on one of the sides).
+        [HttpPost("{id}/checkin")]
+        public async Task<IActionResult> CheckIn(Guid id)
+        {
+            var result = await this.Service.CheckIn(id);
+            return Ok(result);
+        }
+
         [HttpPost("{id}/adminHelp")]
         public async Task<IActionResult> RequestAdminHelp(Guid id)
         {

@@ -107,6 +107,12 @@ namespace GameHubz.DataModels.Models
         public int? MaxReserves { get; set; }
         public bool HasThirdPlaceMatch { get; set; }
         public bool RequireResultApproval { get; set; }
+
+        /// <summary>Ready check on scheduled matches — see TournamentEntity.RequireMatchCheckIn.</summary>
+        public bool RequireMatchCheckIn { get; set; }
+
+        /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
+        public int? CheckInGraceMinutes { get; set; }
         public bool DoubleRoundRobin { get; set; }
         public int? GroupsCount { get; set; }
         public int? QualifiersPerGroup { get; set; }

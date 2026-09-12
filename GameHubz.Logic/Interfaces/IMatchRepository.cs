@@ -8,6 +8,12 @@
 
         Task<MatchEntity?> GetWithStage(Guid userId);
 
+        /// <summary>
+        /// Stamps CheckInResolvedOn on a still-scheduled, still-unruled match and reports whether
+        /// this caller is the one that got it. The ready-check sweep's claim.
+        /// </summary>
+        Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn);
+
         Task<MatchEntity?> GetWithTournamentStage(Guid id);
 
         Task<bool> IsExistingByStageId(Guid? id);

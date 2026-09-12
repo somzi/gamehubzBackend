@@ -1,4 +1,5 @@
-﻿using GameHubz.DataModels.Domain;
+﻿using GameHubz.DataModels.Consts;
+using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
@@ -173,6 +174,15 @@ namespace GameHubz.Logic.Services
 
             int baseTieBreakOrder = (projection.MatchOrder ?? 0) + 1000;
 
+            // Ready check, resolved once for the whole tie: every game of it runs under the same
+            // tournament setting and the same grace window.
+            int checkInGrace = MatchCheckInRules.ResolveGraceMinutes(projection.CheckInGraceMinutes);
+            bool runsCheckIn(SubMatchProjection sm) =>
+                projection.RequireMatchCheckIn
+                && sm.ScheduledStartTime.HasValue
+                && sm.Status == MatchStatus.Scheduled
+                && sm.CheckInResolvedOn == null;
+
             var subMatchDtos = projection.SubMatches.Select(sm =>
             {
                 bool isTieBreakMatch = (sm.MatchOrder ?? 0) >= baseTieBreakOrder;
@@ -225,7 +235,17 @@ namespace GameHubz.Logic.Services
                     BestOf = sm.BestOf,
                     TiebreakBestOf = sm.TiebreakBestOf,
                     Games = DeserializeGames(sm.GamesJson),
-                    ProposedGames = DeserializeGames(sm.ProposedGamesJson)
+                    ProposedGames = DeserializeGames(sm.ProposedGamesJson),
+                    ScheduledStartTime = sm.ScheduledStartTime,
+                    HomeCheckedInOn = sm.HomeCheckedInOn,
+                    AwayCheckedInOn = sm.AwayCheckedInOn,
+                    // Only a game that can still be turned up for gets a window: the check is on,
+                    // a kick-off was agreed, and nothing has ruled on it yet.
+                    CheckInOpensAt = runsCheckIn(sm) ? MatchCheckInRules.OpensAt(sm.ScheduledStartTime!.Value) : null,
+                    CheckInDeadline = runsCheckIn(sm)
+                        ? MatchCheckInRules.Deadline(
+                            sm.ScheduledStartTime!.Value, sm.HomeCheckedInOn, sm.AwayCheckedInOn, checkInGrace)
+                        : null,
                 };
             }).ToList();
 
@@ -280,7 +300,9 @@ namespace GameHubz.Logic.Services
                     HomeRepresentative = homeRepresentative,
                     AwayRepresentative = awayRepresentative
                 },
-                RequireResultApproval = projection.RequireResultApproval
+                RequireResultApproval = projection.RequireResultApproval,
+                RequireMatchCheckIn = projection.RequireMatchCheckIn,
+                CheckInGraceMinutes = projection.RequireMatchCheckIn ? checkInGrace : null
             };
         }
 

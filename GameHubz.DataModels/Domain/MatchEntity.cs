@@ -68,6 +68,24 @@ namespace GameHubz.DataModels.Domain
             set => AwaySlotsJson = JsonSerializer.Serialize(value);
         }
 
+        // Ready check (tournaments with RequireMatchCheckIn): when each side confirmed it was at
+        // the keyboard for the agreed kick-off. Null = has not checked in. On a team sub-match the
+        // side is the team, stamped by the player nominated for that game (or their captain).
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+
+        // Set the moment the ready check decided this match — a forfeit win for the side that
+        // showed up, or a double walkover when neither did. Purely a marker so the sweep never
+        // touches the match twice: an organizer who deletes the awarded result is asking the pair
+        // to sort it out (or to enter the real score), not for another automatic verdict.
+        public DateTime? CheckInResolvedOn { get; set; }
+
+        // Set once both players have been told who they are playing. Only fixtures whose opponent
+        // was genuinely unknown until someone else finished carry this — a knockout drawn out of a
+        // group stage, the next round of a bracket, a Swiss pairing. League and group fixtures are
+        // known from the day they are generated and are never announced this way.
+        public DateTime? OpponentNotifiedOn { get; set; }
+
         // Per-match series format. Null falls back to the tournament default, so the organizer can
         // override a whole round (SetRoundBestOf stamps every unplayed match in it) or a single
         // fixture. Locked the moment the match has any recorded game — see GamesJson.

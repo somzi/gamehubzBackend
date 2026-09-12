@@ -49,6 +49,15 @@ namespace GameHubz.DataModels.Models
         public TeamWinCondition SeriesWinCondition { get; set; }
         public List<SeriesGame>? Games { get; set; }
 
+        // Ready check (tournaments with RequireMatchCheckIn, matches that have a kick-off time).
+        // The two stamps are the state; the two computed moments save every client from
+        // re-deriving the same arithmetic — and from disagreeing with the server about it.
+        // All four are null when the match has no ready check to run.
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+        public DateTime? CheckInOpensAt { get; set; }
+        public DateTime? CheckInDeadline { get; set; }
+
         // Live progress of a TEAM card: how many of its sub-matches are decided, and the running
         // win tally. Deliberately separate from Home/Away.Score, which stays null until the whole
         // fixture is settled — the client keys "already reported" (and therefore whether to offer

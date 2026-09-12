@@ -1,3 +1,5 @@
+﻿using System.Text.Json.Serialization;
+using GameHubz.DataModels.Catalog;
 using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
@@ -44,6 +46,22 @@ namespace GameHubz.DataModels.Models
         public string? Nickname { get; set; }
 
         public string? AvatarUrl { get; set; }
+
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country, or null when the member never set one. Populated only where
+        /// it earns its place — the team-match projection, so the two players of a sub-match can
+        /// see how far apart they are before agreeing a time. Every other roster projection leaves
+        /// it null rather than paying for a column nothing renders.
+        /// </summary>
+        public string? Country { get; set; }
+
+        /// <summary>Flag emoji for <see cref="Country"/>, resolved from the catalog.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? CountryFlag => CountryCatalog.Get(Country)?.Flag;
+
+        /// <summary>Display name for <see cref="Country"/> ("Serbia"), for a11y and tooltips.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? CountryName => CountryCatalog.Get(Country)?.Name;
 
         /// <summary>
         /// True when this member is on the bench and plays no sub-match. Always false in

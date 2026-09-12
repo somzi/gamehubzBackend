@@ -320,6 +320,8 @@ namespace GameHubz.Data.Repository
                       MaxReserves = x.MaxReserves,
                       HasThirdPlaceMatch = x.HasThirdPlaceMatch,
                       RequireResultApproval = x.RequireResultApproval,
+                      RequireMatchCheckIn = x.RequireMatchCheckIn,
+                      CheckInGraceMinutes = x.CheckInGraceMinutes,
                       IsExclusive = x.IsExclusive,
                       DoubleRoundRobin = x.DoubleRoundRobin,
                       GroupsCount = x.GroupsCount,
@@ -467,6 +469,8 @@ namespace GameHubz.Data.Repository
                 {
                     HubOwnerUserId = t.Hub!.UserId,
                     RequireResultApproval = t.RequireResultApproval,
+                    RequireMatchCheckIn = t.RequireMatchCheckIn,
+                    CheckInGraceMinutes = t.CheckInGraceMinutes,
                     BestOf = t.BestOf,
                     SeriesWinCondition = t.SeriesWinCondition,
                     TiebreakBestOf = t.TiebreakBestOf,

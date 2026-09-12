@@ -21,6 +21,15 @@ namespace GameHubz.DataModels.Models
         public bool RequireResultApproval { get; set; }
 
         /// <summary>
+        /// Mirrors <see cref="TournamentEntity.RequireMatchCheckIn"/>, with the grace window, so a
+        /// bracket card can render the ready check without a second request.
+        /// </summary>
+        public bool RequireMatchCheckIn { get; set; }
+
+        /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
+        public int? CheckInGraceMinutes { get; set; }
+
+        /// <summary>
         /// Tournament default series format. Every <see cref="MatchStructureDto"/> already carries
         /// its own resolved Best-of, so these are here for the organizer surfaces (round editor,
         /// format labels) rather than for rendering a card.

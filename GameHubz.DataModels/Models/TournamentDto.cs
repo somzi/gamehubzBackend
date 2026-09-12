@@ -60,6 +60,12 @@ namespace GameHubz.DataModels.Models
 
         public bool RequireResultApproval { get; set; }
 
+        /// <summary>Ready check on scheduled matches — see TournamentEntity.RequireMatchCheckIn.</summary>
+        public bool RequireMatchCheckIn { get; set; }
+
+        /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
+        public int? CheckInGraceMinutes { get; set; }
+
         /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
         public bool IsExclusive { get; set; }
 

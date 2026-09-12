@@ -216,6 +216,7 @@ namespace GameHubz.Logic.Test.Bracket
                 new YouTubeStreamClient(new Mock<IHttpClientFactory>().Object, configuration, NullLogger<YouTubeStreamClient>.Instance),
                 badgeService,
                 new Mock<IDiscordDmService>().Object,
+                Cache,
                 Options.Create(new ShareLinksConfig()));
         }
 

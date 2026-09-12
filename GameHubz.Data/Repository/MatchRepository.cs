@@ -1,5 +1,6 @@
 ﻿using GameHubz.Data.Base;
 using GameHubz.Data.Context;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
@@ -172,23 +173,50 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        // The user's own participant rows. A solo match is keyed by HomeParticipantId /
+        // AwayParticipantId rather than by user, so this is the only way in from a user id.
+        //
+        // It is a separate round trip on purpose. Resolved inline as a join, the disjunction
+        // "mine as home OR mine as away" crosses an outer-join boundary, and Postgres cannot
+        // build a BitmapOr through that: it loses every participant-side path and falls back to
+        // the Status index, reading every active match in the database and probing
+        // TournamentParticipant by primary key for each survivor. Measured against production
+        // data that plan read 4,497 index entries and did 376 PK probes to return 4 rows, at
+        // 1,490 buffer hits. Keeping all four OR operands on Match's own columns reads 134 and
+        // probes none, at 132 — and the join shape grew as O(active matches) per call against
+        // O(calls) growth, so it was quadratic even though both fit in cache today.
+        private async Task<List<Guid>> GetMyParticipantIds(Guid userId)
+        {
+            return await this.ContextBase.Set<TournamentParticipantEntity>()
+                .AsNoTracking()
+                .Where(p => p.UserId == userId)
+                .Select(p => p.Id!.Value)
+                .ToListAsync();
+        }
+
         // The set of "active" matches for a user — in-progress tournament, not yet finished,
         // round open, and the user is one of the two sides (solo participant or team sub-match
         // player). Shared by the My-Matches list and the Tournaments-tab badge projection.
-        private static System.Linq.Expressions.Expression<Func<MatchEntity, bool>> ActiveForUserPredicate(Guid userId, DateTime now)
+        // myParticipantIds must come from GetMyParticipantIds — see the note there for why the
+        // solo side is matched by id set instead of joined.
+        private static System.Linq.Expressions.Expression<Func<MatchEntity, bool>> ActiveForUserPredicate(
+            Guid userId, List<Guid> myParticipantIds, DateTime now)
             => x =>
                 x.Tournament!.Status == TournamentStatus.InProgress &&
                 // TieBreakRequired is still an active match: the series was reported but finished
-                // level, so the players owe a tiebreak. Leaving it out would drop the match off
-                // "My Matches" (and the badge) exactly when the players need to act on it.
+                // level, so the match is reported but undecided and awaiting a tiebreak. Leaving
+                // it out would drop the match off "My Matches" (and the badge) exactly when the
+                // players need to act on it.
                 (x.Status == MatchStatus.Pending || x.Status == MatchStatus.Scheduled
                     || x.Status == MatchStatus.TieBreakRequired) &&
                 // Round must have started: no RoundOpenAt set is fine, but if set it must not be in the future
                 (x.RoundOpenAt == null || x.RoundOpenAt <= now) &&
                 (
-                    // SOLO matches: HomeUserId/AwayUserId are null, fall back to Participant.UserId
+                    // SOLO matches: HomeUserId/AwayUserId are null, so match on the user's own
+                    // participant ids. Both sides must be set — a half-filled slot is not playable.
                     (x.TeamMatchId == null && x.HomeParticipantId != null && x.AwayParticipantId != null &&
-                        (x.HomeParticipant!.UserId == userId || x.AwayParticipant!.UserId == userId))
+                        (myParticipantIds.Contains(x.HomeParticipantId.Value)
+                            || myParticipantIds.Contains(x.AwayParticipantId.Value)))
                     ||
                     // TEAM sub-matches: use the explicit user columns
                     (x.TeamMatchId != null && (x.HomeUserId == userId || x.AwayUserId == userId))
@@ -197,10 +225,11 @@ namespace GameHubz.Data.Repository
         public async Task<List<MatchBadgeRow>> GetActiveForUserBadge(Guid userId)
         {
             var now = DateTime.UtcNow;
+            var myParticipantIds = await GetMyParticipantIds(userId);
 
             return await this.BaseDbSet()
                 .AsNoTracking()
-                .Where(ActiveForUserPredicate(userId, now))
+                .Where(ActiveForUserPredicate(userId, myParticipantIds, now))
                 .Select(x => new MatchBadgeRow
                 {
                     Id = x.Id!.Value,
@@ -280,13 +309,21 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        /// <summary>Whether this match is currently running a ready check the user can act on.</summary>
+        private static bool RunsCheckIn(MatchEntity match)
+            => match.Tournament!.RequireMatchCheckIn
+            && match.ScheduledStartTime.HasValue
+            && match.Status == MatchStatus.Scheduled
+            && match.CheckInResolvedOn == null;
+
         public async Task<List<MatchOverviewDto>> GetByUser(Guid userId)
         {
             var now = DateTime.UtcNow;
+            var myParticipantIds = await GetMyParticipantIds(userId);
 
             var matches = await this.BaseDbSet()
                 .AsNoTracking()
-                .Where(ActiveForUserPredicate(userId, now))
+                .Where(ActiveForUserPredicate(userId, myParticipantIds, now))
                 .Include(x => x.Tournament).ThenInclude(t => t!.Hub)
                 // Needed to tell a knockout match from a group one — they can be played over
                 // different lengths in a two-phase tournament.
@@ -336,7 +373,24 @@ namespace GameHubz.Data.Repository
                     BestOf = match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
                         match.Tournament!.Format, match.TournamentStage?.Type,
                         match.Tournament.BestOf, match.Tournament.KnockoutBestOf),
-                    SeriesWinCondition = match.Tournament!.SeriesWinCondition
+                    SeriesWinCondition = match.Tournament!.SeriesWinCondition,
+                    IsHome = iAmHome,
+                    RequireMatchCheckIn = match.Tournament!.RequireMatchCheckIn,
+                    CheckInGraceMinutes = match.Tournament!.RequireMatchCheckIn
+                        ? MatchCheckInRules.ResolveGraceMinutes(match.Tournament.CheckInGraceMinutes)
+                        : null,
+                    HomeCheckedInOn = match.HomeCheckedInOn,
+                    AwayCheckedInOn = match.AwayCheckedInOn,
+                    // Only a match that can still be turned up for carries a window; a played or
+                    // already-ruled one would otherwise hand the card a stale countdown.
+                    CheckInOpensAt = RunsCheckIn(match) ? MatchCheckInRules.OpensAt(match.ScheduledStartTime!.Value) : null,
+                    CheckInDeadline = RunsCheckIn(match)
+                        ? MatchCheckInRules.Deadline(
+                            match.ScheduledStartTime!.Value,
+                            match.HomeCheckedInOn,
+                            match.AwayCheckedInOn,
+                            MatchCheckInRules.ResolveGraceMinutes(match.Tournament.CheckInGraceMinutes))
+                        : null,
                 });
             }
 
@@ -579,7 +633,18 @@ namespace GameHubz.Data.Repository
                     ScheduledTime = x.ScheduledStartTime,
                     HomeUserAvatarUrl = x.HomeParticipant.User.AvatarUrl,
                     AwayUserAvatarUrl = x.AwayParticipant.User.AvatarUrl,
+                    // Raw ISO codes only — the flag and the country name are catalog lookups on the
+                    // DTO, which do not translate to SQL.
+                    HomeUserCountry = x.HomeParticipant.User.Country,
+                    AwayUserCountry = x.AwayParticipant.User.Country,
                     RequireResultApproval = x.Tournament!.RequireResultApproval,
+                    // Ready check: the setting plus the raw stamps. The window around them is
+                    // arithmetic (MatchCheckInRules) the service applies after materialization —
+                    // it does not translate to SQL.
+                    RequireMatchCheckIn = x.Tournament!.RequireMatchCheckIn,
+                    CheckInGraceMinutes = x.Tournament!.CheckInGraceMinutes,
+                    HomeCheckedInOn = x.HomeCheckedInOn,
+                    AwayCheckedInOn = x.AwayCheckedInOn,
                     ProposedHomeScore = x.ProposedHomeScore,
                     ProposedAwayScore = x.ProposedAwayScore,
                     ProposedByUserId = x.ProposedByUserId,
@@ -715,6 +780,24 @@ namespace GameHubz.Data.Repository
                         .ThenInclude(t => t!.Members)
                 .Where(x => x.Id == matchId)
                 .FirstOrDefaultAsync();
+        }
+
+        /// <summary>
+        /// Claims a scheduled match for a ready-check ruling: stamps CheckInResolvedOn, but only
+        /// while it is still null and the match is still scheduled. The stamp doubles as the claim,
+        /// so a second API instance sweeping the same tick updates 0 rows and stands down instead
+        /// of awarding the same forfeit twice. Callers holding the entity must mirror the stamp in
+        /// memory — ExecuteUpdate goes straight to the database, past the change tracker.
+        /// </summary>
+        public async Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(m => m.Id == matchId
+                    && m.CheckInResolvedOn == null
+                    && m.Status == MatchStatus.Scheduled)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.CheckInResolvedOn, resolvedOn));
+
+            return affected > 0;
         }
 
         public async Task<MatchEntity?> GetWithStage(Guid id)

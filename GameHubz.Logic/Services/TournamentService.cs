@@ -558,6 +558,16 @@ namespace GameHubz.Logic.Services
                 inputDto.KnockoutBestOf = existing.KnockoutBestOf;
             }
 
+            // The ready check travels the same way, and for the same reason: a client that predates
+            // it sends nothing, and a null read as "off" would silently disable the check on every
+            // edit an older app makes. It stays editable for the whole life of a tournament — like
+            // the series format, a change can only ever reach fixtures still to be played.
+            if (inputDto.RequireMatchCheckIn == null)
+            {
+                inputDto.RequireMatchCheckIn = existing.RequireMatchCheckIn;
+                inputDto.CheckInGraceMinutes = existing.CheckInGraceMinutes;
+            }
+
             // The scheduled opening travels under its own opt-in flag rather than
             // AllowStructuralEdits: the currently shipped client already sets that flag and knows
             // nothing about this field, so folding the two together would let its edits null the

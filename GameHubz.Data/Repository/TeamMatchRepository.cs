@@ -85,6 +85,8 @@ namespace GameHubz.Data.Repository
                     AwayTeamRepresentativeUserId = tm.AwayTeamRepresentativeUserId,
                     MatchOrder = tm.MatchOrder,
                     RequireResultApproval = tm.Tournament!.RequireResultApproval,
+                    RequireMatchCheckIn = tm.Tournament!.RequireMatchCheckIn,
+                    CheckInGraceMinutes = tm.Tournament!.CheckInGraceMinutes,
                     WinCondition = tm.Tournament!.TeamWinCondition,
                     HomeTeam = tm.HomeTeamParticipant != null && tm.HomeTeamParticipant.Team != null
                         ? new TeamMatchTeamProjection
@@ -102,6 +104,9 @@ namespace GameHubz.Data.Repository
                                     Username = m.User != null ? m.User.Username : "Unknown",
                                     Nickname = m.User != null && !string.IsNullOrWhiteSpace(m.User.Nickname) ? m.User.Nickname : null,
                                     AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
+                                    // Ping context for the two players of a sub-match. Raw code
+                                    // only — flag and name are catalog lookups on the DTO.
+                                    Country = m.User != null ? m.User.Country : null,
                                     IsReserve = m.IsReserve
                                 }).ToList()
                         }
@@ -120,6 +125,9 @@ namespace GameHubz.Data.Repository
                                     Username = m.User != null ? m.User.Username : "Unknown",
                                     Nickname = m.User != null && !string.IsNullOrWhiteSpace(m.User.Nickname) ? m.User.Nickname : null,
                                     AvatarUrl = m.User != null ? m.User.AvatarUrl : null,
+                                    // Ping context for the two players of a sub-match. Raw code
+                                    // only — flag and name are catalog lookups on the DTO.
+                                    Country = m.User != null ? m.User.Country : null,
                                     IsReserve = m.IsReserve
                                 }).ToList()
                         }
@@ -132,6 +140,10 @@ namespace GameHubz.Data.Repository
                         HomeUserScore = sm.HomeUserScore,
                         AwayUserScore = sm.AwayUserScore,
                         WinnerParticipantId = sm.WinnerParticipantId,
+                        ScheduledStartTime = sm.ScheduledStartTime,
+                        HomeCheckedInOn = sm.HomeCheckedInOn,
+                        AwayCheckedInOn = sm.AwayCheckedInOn,
+                        CheckInResolvedOn = sm.CheckInResolvedOn,
                         HomeParticipantId = sm.HomeParticipantId,
                         AwayParticipantId = sm.AwayParticipantId,
                         HomeUserId = sm.HomeUserId ?? (sm.HomeParticipant != null ? sm.HomeParticipant.UserId : null),

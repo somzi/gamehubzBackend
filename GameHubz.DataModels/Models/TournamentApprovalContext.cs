@@ -11,6 +11,16 @@ namespace GameHubz.DataModels.Models
         public Guid HubOwnerUserId { get; set; }
         public bool RequireResultApproval { get; set; }
 
+        /// <summary>
+        /// Ready check. The result path needs it to refuse a participant's report while the match
+        /// is still waiting on a check-in — the whole point of the feature is that the score is
+        /// entered by two players who both said they were there.
+        /// </summary>
+        public bool RequireMatchCheckIn { get; set; }
+
+        /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
+        public int? CheckInGraceMinutes { get; set; }
+
         /// <summary>Tournament default Best-of. 1 for every tournament created before series existed.</summary>
         public int BestOf { get; set; } = 1;
 

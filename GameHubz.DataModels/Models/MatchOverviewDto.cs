@@ -35,5 +35,23 @@ namespace GameHubz.DataModels.Models
         public int BestOf { get; set; } = 1;
 
         public TeamWinCondition SeriesWinCondition { get; set; }
+
+        /// <summary>
+        /// Which side of the fixture the requesting user plays. The list is built per user, so the
+        /// card can label "you" without a second lookup — and knows whose ready-check stamp is whose.
+        /// </summary>
+        public bool IsHome { get; set; }
+
+        /// <summary>
+        /// Ready check, so the card can run its countdown (and offer the button) without the user
+        /// opening the match. The two computed moments are null unless this match is actually
+        /// running one: setting on, kick-off agreed, nothing ruled yet.
+        /// </summary>
+        public bool RequireMatchCheckIn { get; set; }
+        public int? CheckInGraceMinutes { get; set; }
+        public DateTime? HomeCheckedInOn { get; set; }
+        public DateTime? AwayCheckedInOn { get; set; }
+        public DateTime? CheckInOpensAt { get; set; }
+        public DateTime? CheckInDeadline { get; set; }
     }
 }

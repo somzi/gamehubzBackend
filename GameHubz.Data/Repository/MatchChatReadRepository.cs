@@ -20,37 +20,50 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        // Both writers below are atomic PostgreSQL upserts rather than the natural EF
+        // "SELECT, then INSERT-or-UPDATE". Two reasons:
+        //
+        //  1. Concurrency. The mobile panel fires POST /read on open AND on every incoming
+        //     SignalR message; on a slow link two of those can be in flight at once. Both
+        //     requests saw "no row yet" and both INSERTed, and the second one died on
+        //     UQ_MatchChatRead_Match_User (23505 -> DbUpdateException -> 500). A mute toggle
+        //     racing a mark-read collided the same way.
+        //  2. Soft delete. The entity carries a global IsDeleted == false query filter, but the
+        //     unique constraint does not - so a soft-deleted row is invisible to the lookup yet
+        //     still blocks the insert, which would 500 that (match, user) pair forever.
+        //
+        // ON CONFLICT settles both in one round trip; the DO UPDATE branch also revives a
+        // soft-deleted cursor, which is the right recovery for a row that is bookkeeping
+        // rather than user content.
+        private const string UpsertConflictTarget = @"ON CONFLICT (""MatchId"", ""UserId"") DO UPDATE SET ";
+
         public async Task MarkRead(Guid matchId, Guid userId, IUserContextReader userContextReader)
         {
             // The read marker FKs to Match. A stale client can POST /read for a match that was
             // already deleted (e.g. a double-elim cascade delete), and the insert below would blow
-            // up with a foreign-key violation (FK_MatchChatRead_Match → 500). There is nothing to
+            // up with a foreign-key violation (FK_MatchChatRead_Match -> 500). There is nothing to
             // mark read on a match that no longer exists, so silently no-op.
             bool matchExists = await this.ContextBase.Set<MatchEntity>()
                 .AnyAsync(m => m.Id == matchId);
             if (!matchExists) return;
 
-            // Tracked lookup (not AsNoTracking) so the update is persisted on save.
-            var existing = await this.ContextBase.Set<MatchChatReadEntity>()
-                .FirstOrDefaultAsync(r => r.MatchId == matchId && r.UserId == userId);
-
             var now = DateTime.UtcNow;
 
-            if (existing == null)
-            {
-                var row = new MatchChatReadEntity
-                {
-                    MatchId = matchId,
-                    UserId = userId,
-                    LastReadAt = now,
-                };
-                await this.AddEntity(row, userContextReader);
-            }
-            else
-            {
-                existing.LastReadAt = now;
-                await this.UpdateEntity(existing, userContextReader);
-            }
+            await this.ContextBase.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ""MatchChatRead""
+                      (""Id"", ""MatchId"", ""UserId"", ""LastReadAt"", ""IsMuted"",
+                       ""IsDeleted"", ""CreatedOn"", ""ModifiedOn"", ""CreatedBy"", ""ModifiedBy"")
+                  VALUES ({0}, {1}, {2}, {3}, FALSE, FALSE, {3}, {3}, {4}, {4})
+                  " + UpsertConflictTarget + @"
+                      ""LastReadAt"" = EXCLUDED.""LastReadAt"",
+                      ""ModifiedOn"" = EXCLUDED.""ModifiedOn"",
+                      ""ModifiedBy"" = EXCLUDED.""ModifiedBy"",
+                      ""IsDeleted""  = FALSE;",
+                Guid.NewGuid(),
+                matchId,
+                userId,
+                now,
+                await ActorId(userId, userContextReader));
         }
 
         public async Task SetMuted(Guid matchId, Guid userId, bool muted, IUserContextReader userContextReader)
@@ -59,27 +72,40 @@ namespace GameHubz.Data.Repository
                 .AnyAsync(m => m.Id == matchId);
             if (!matchExists) return;
 
-            var existing = await this.ContextBase.Set<MatchChatReadEntity>()
-                .FirstOrDefaultAsync(r => r.MatchId == matchId && r.UserId == userId);
+            var now = DateTime.UtcNow;
 
-            if (existing == null)
-            {
-                // No cursor yet: mute without pretending the thread has been read. UnixEpoch keeps
-                // the Kind=Utc the timestamp column expects, and reads as "never read" downstream.
-                await this.AddEntity(
-                    new MatchChatReadEntity
-                    {
-                        MatchId = matchId,
-                        UserId = userId,
-                        LastReadAt = DateTime.UnixEpoch,
-                        IsMuted = muted,
-                    },
-                    userContextReader);
-                return;
-            }
+            // On insert the cursor starts at UnixEpoch: muting must not pretend the thread has been
+            // read. UnixEpoch keeps the Kind=Utc the timestamp column expects and reads as "never
+            // read" downstream. On conflict only the mute flag moves - LastReadAt is left alone.
+            await this.ContextBase.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ""MatchChatRead""
+                      (""Id"", ""MatchId"", ""UserId"", ""LastReadAt"", ""IsMuted"",
+                       ""IsDeleted"", ""CreatedOn"", ""ModifiedOn"", ""CreatedBy"", ""ModifiedBy"")
+                  VALUES ({0}, {1}, {2}, {3}, {4}, FALSE, {5}, {5}, {6}, {6})
+                  " + UpsertConflictTarget + @"
+                      ""IsMuted""    = EXCLUDED.""IsMuted"",
+                      ""ModifiedOn"" = EXCLUDED.""ModifiedOn"",
+                      ""ModifiedBy"" = EXCLUDED.""ModifiedBy"",
+                      ""IsDeleted""  = FALSE;",
+                Guid.NewGuid(),
+                matchId,
+                userId,
+                DateTime.UnixEpoch,
+                muted,
+                now,
+                await ActorId(userId, userContextReader));
+        }
 
-            existing.IsMuted = muted;
-            await this.UpdateEntity(existing, userContextReader);
+        /// <summary>
+        /// CreatedBy/ModifiedBy stamp, normally set by AddEntity/UpdateEntity — the raw upserts
+        /// above bypass those. Both callers only ever write the caller's own row, so the token
+        /// user and <paramref name="userId"/> are the same id; the fallback just keeps the column
+        /// non-null if the token is somehow unavailable.
+        /// </summary>
+        private static async Task<Guid> ActorId(Guid userId, IUserContextReader userContextReader)
+        {
+            var token = await userContextReader.GetTokenUserInfoFromContext();
+            return token?.UserId ?? userId;
         }
 
         public async Task<List<Guid>> GetMutedMatchIds(Guid userId)
