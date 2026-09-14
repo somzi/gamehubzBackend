@@ -52,6 +52,19 @@ namespace GameHubz.Data.Context
             ShareConfigurator(modelBuilder);
             StreamConfigurator(modelBuilder);
             MatchChatReadConfigurator(modelBuilder);
+            NotificationConfigurator(modelBuilder);
+        }
+
+        private static void NotificationConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<NotificationEntity>().ToTable("Notification")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<NotificationEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         }
 
         private static void MatchChatReadConfigurator(ModelBuilder modelBuilder)

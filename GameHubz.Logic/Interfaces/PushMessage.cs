@@ -8,8 +8,18 @@ namespace GameHubz.Logic.Interfaces
     /// <see cref="Language"/> comes from <c>UserEntity.Language</c>; null means "unknown",
     /// which resolves to the server default.
     /// </para>
+    /// <para>
+    /// <see cref="UserId"/> is the account the notification is for. When it is set the notification is
+    /// also written to that user's inbox — even with an empty <see cref="PushToken"/>, which is exactly
+    /// the user who would otherwise never hear about it. Build those with <see cref="ForUser"/>.
+    /// </para>
     /// </summary>
-    public readonly record struct PushRecipient(string PushToken, string? Language);
+    public readonly record struct PushRecipient(string PushToken, string? Language, Guid? UserId = null)
+    {
+        /// <summary>Always gets an inbox row; gets a push too when the user has a token.</summary>
+        public static PushRecipient ForUser(Guid userId, string? pushToken, string? language)
+            => new(pushToken ?? string.Empty, language, userId);
+    }
 
     /// <summary>
     /// One line of a push — either a translation key, or literal text that must not be

@@ -210,7 +210,8 @@ namespace GameHubz.Logic.Services
                 isExclusive,
                 PushText.FromLiteral(title),
                 PushText.FromKey("Push.RegistrationOpen.Body"),
-                new { tournamentId });
+                // type is for the inbox's icon; routing still falls back on tournamentId.
+                new { tournamentId, type = "registrationOpen" });
 
         // Recipient rule shared by every hub-wide tournament announcement: members of the hub,
         // minus the owner (who triggered it), minus plain members when the tournament is exclusive.
@@ -226,11 +227,12 @@ namespace GameHubz.Logic.Services
             var hubMembers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(hubId);
             if (hubMembers == null || hubMembers.Count == 0) return;
 
+            // Members without a push token stay in: they get the inbox row instead of the push.
             var recipients = hubMembers
-                .Where(m => m.HubRole != HubRole.HubOwner && !string.IsNullOrEmpty(m.PushToken))
+                .Where(m => m.HubRole != HubRole.HubOwner)
                 // Exclusive tournaments are invisible to plain members, so don't notify them.
                 .Where(m => !isExclusive || m.HubRole == HubRole.HubAdmin || m.HubRole == HubRole.HubExclusive)
-                .Select(m => new PushRecipient(m.PushToken!, m.Language))
+                .Select(m => PushRecipient.ForUser(m.UserId, m.PushToken, m.Language))
                 .ToList();
 
             if (recipients.Count == 0) return;

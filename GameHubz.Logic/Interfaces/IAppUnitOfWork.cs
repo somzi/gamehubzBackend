@@ -61,6 +61,8 @@ namespace GameHubz.Logic.Interfaces
 
         IUserBlockRepository UserBlockRepository { get; }
 
+        INotificationRepository NotificationRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

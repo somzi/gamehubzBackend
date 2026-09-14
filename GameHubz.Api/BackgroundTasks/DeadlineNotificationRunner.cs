@@ -280,17 +280,16 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (targetIds.Count > 0)
                     {
-                        // Both channels in one query: push token (primary) + linked Discord DM (additive).
+                        // Every eligible member with whatever channels they have: the inbox always, a push
+                        // when there is a token, and a linked Discord DM on top.
                         var targets = await context.Set<UserEntity>()
                             .AsNoTracking()
-                            .Where(u => targetIds.Contains(u.Id!.Value) && u.IsActive
-                                && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
-                            .Select(u => new { u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
+                            .Where(u => targetIds.Contains(u.Id!.Value) && u.IsActive)
+                            .Select(u => new { Id = u.Id!.Value, u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
 
                         var recipients = targets
-                            .Where(t => t.PushToken != null)
-                            .Select(t => new PushRecipient(t.PushToken!, t.Language))
+                            .Select(t => PushRecipient.ForUser(t.Id, t.PushToken, t.Language))
                             .ToList();
 
                         if (recipients.Count > 0)
@@ -412,17 +411,16 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (userIds.Count > 0)
                     {
-                        // Both channels in one query: push token (primary) + linked Discord DM (additive).
+                        // Both players with whatever channels they have: the inbox always, a push when there
+                        // is a token, and a linked Discord DM on top.
                         var targets = await context.Set<UserEntity>()
                             .AsNoTracking()
-                            .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive
-                                && (u.PushToken != null || (u.DiscordUserId != null && u.DiscordDmEnabled)))
-                            .Select(u => new { u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
+                            .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive)
+                            .Select(u => new { Id = u.Id!.Value, u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
                             .ToListAsync(ct);
 
                         var recipients = targets
-                            .Where(t => t.PushToken != null)
-                            .Select(t => new PushRecipient(t.PushToken!, t.Language))
+                            .Select(t => PushRecipient.ForUser(t.Id, t.PushToken, t.Language))
                             .ToList();
 
                         if (recipients.Count > 0)
@@ -586,10 +584,11 @@ namespace GameHubz.Api.BackgroundTasks
             var ids = userIds.Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
             if (ids.Count == 0) return;
 
+            // No push token is no reason to skip anyone: they still get the inbox row.
             var recipients = await context.Set<UserEntity>()
                 .AsNoTracking()
-                .Where(u => ids.Contains(u.Id!.Value) && u.IsActive && u.PushToken != null)
-                .Select(u => new PushRecipient(u.PushToken!, u.Language))
+                .Where(u => ids.Contains(u.Id!.Value) && u.IsActive)
+                .Select(u => PushRecipient.ForUser(u.Id!.Value, u.PushToken, u.Language))
                 .ToListAsync(ct);
 
             if (recipients.Count == 0) return;
@@ -715,8 +714,8 @@ namespace GameHubz.Api.BackgroundTasks
 
             var recipients = await context.Set<UserEntity>()
                 .AsNoTracking()
-                .Where(u => u.Id == recipientUserId.Value && u.IsActive && u.PushToken != null)
-                .Select(u => new PushRecipient(u.PushToken!, u.Language))
+                .Where(u => u.Id == recipientUserId.Value && u.IsActive)
+                .Select(u => PushRecipient.ForUser(u.Id!.Value, u.PushToken, u.Language))
                 .ToListAsync(ct);
 
             if (recipients.Count == 0) return;

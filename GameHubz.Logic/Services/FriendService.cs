@@ -496,9 +496,10 @@ namespace GameHubz.Logic.Services
         // to whoever triggered this, and they are not the one reading the notification.
         private void SendNotification(UserEntity? target, string fromUsername, PushText title, PushText body, object data)
         {
-            if (target?.PushToken == null) return;
+            if (target?.Id == null) return;
 
-            var recipient = new PushRecipient(target.PushToken, target.Language);
+            // Sent even without a push token: the inbox row is written regardless.
+            var recipient = PushRecipient.ForUser(target.Id.Value, target.PushToken, target.Language);
             _ = Task.Run(async () =>
             {
                 try

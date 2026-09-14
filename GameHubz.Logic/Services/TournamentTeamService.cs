@@ -263,7 +263,7 @@ namespace GameHubz.Logic.Services
         private async Task NotifyLineupInAsync(Guid reserveUserId, TournamentTeamEntity team, TournamentEntity tournament, int upcomingGames)
         {
             var target = await this.AppUnitOfWork.UserRepository.GetById(reserveUserId);
-            if (string.IsNullOrEmpty(target?.PushToken)) return;
+            if (target == null) return;
 
             string? language = target.Language;
 
@@ -281,7 +281,8 @@ namespace GameHubz.Logic.Services
                 body = PushText.FromKey("Push.TeamLineupIn.BodyNoGames");
             }
 
-            var recipient = new PushRecipient(target.PushToken!, language);
+            // Sent even without a push token: the inbox row is written regardless.
+            var recipient = PushRecipient.ForUser(reserveUserId, target.PushToken, language);
             var data = new { teamId = team.Id.ToString(), tournamentId = tournament.Id!.Value.ToString(), type = "teamLineupIn" };
 
             _ = Task.Run(async () =>
@@ -294,9 +295,10 @@ namespace GameHubz.Logic.Services
         private async Task NotifyUserAsync(Guid userId, PushText title, PushText body, object data)
         {
             var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
-            if (string.IsNullOrEmpty(target?.PushToken)) return;
+            if (target == null) return;
 
-            var recipient = new PushRecipient(target.PushToken!, target.Language);
+            // Sent even without a push token: the inbox row is written regardless.
+            var recipient = PushRecipient.ForUser(userId, target.PushToken, target.Language);
             _ = Task.Run(async () =>
             {
                 try { await notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }

@@ -42,7 +42,7 @@ namespace GameHubz.Logic.Interfaces
 
         Task<List<string>> GetPushTokensByUserIds(List<Guid> userIds);
 
-        /// <summary>Push tokens plus each user's language, for pushes written in the recipient's language.</summary>
+        /// <summary>Every requested user as a push recipient (token, language, id) — tokenless users included, for the inbox.</summary>
         Task<List<PushRecipient>> GetPushRecipientsByUserIds(List<Guid> userIds);
 
         Task<UserEntity?> GetByDiscordUserId(string discordUserId);

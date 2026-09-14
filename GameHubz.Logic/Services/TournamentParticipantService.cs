@@ -614,9 +614,10 @@ namespace GameHubz.Logic.Services
         // send is fired and forgotten — a failed notification must never break a committed swap.
         private void SendPush(UserEntity? target, PushText title, PushText body, object data)
         {
-            if (string.IsNullOrEmpty(target?.PushToken)) return;
+            if (target?.Id == null) return;
 
-            var recipient = new PushRecipient(target.PushToken!, target.Language);
+            // Sent even without a push token: the inbox row is written regardless.
+            var recipient = PushRecipient.ForUser(target.Id.Value, target.PushToken, target.Language);
             _ = Task.Run(async () =>
             {
                 try { await this.notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }

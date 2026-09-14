@@ -4287,22 +4287,20 @@ namespace GameHubz.Logic.Services
             var matchId = match.Id!.Value;
             var proposerName = proposer.Username;
 
-            if (!string.IsNullOrEmpty(opponent.PushToken))
+            // Sent even without a push token: the opponent still gets it in their inbox.
+            var recipient = PushRecipient.ForUser(opponentUserId.Value, opponent.PushToken, opponent.Language);
+            _ = Task.Run(async () =>
             {
-                var recipient = new PushRecipient(opponent.PushToken!, opponent.Language);
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
-                    {
-                        await notificationService.SendLocalizedToOneAsync(
-                            recipient,
-                            PushText.FromKey("Push.ResultToConfirm.Title"),
-                            PushText.FromKey("Push.ResultToConfirm.Body", proposerName),
-                            new { matchId = matchId.ToString(), type = "resultProposed" });
-                    }
-                    catch { /* fire-and-forget */ }
-                });
-            }
+                    await notificationService.SendLocalizedToOneAsync(
+                        recipient,
+                        PushText.FromKey("Push.ResultToConfirm.Title"),
+                        PushText.FromKey("Push.ResultToConfirm.Body", proposerName),
+                        new { matchId = matchId.ToString(), type = "resultProposed" });
+                }
+                catch { /* fire-and-forget */ }
+            });
 
             // Additive Discord DM (push stays the primary channel).
             if (opponent.DiscordDmEnabled)
@@ -4352,9 +4350,9 @@ namespace GameHubz.Logic.Services
                 // Push tokens + linked Discord accounts in one query — push is the primary channel.
                 var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(captainIds);
 
+                // Captains without a push token stay in: they get the inbox row instead of the push.
                 var recipients = targets
-                    .Where(t => !string.IsNullOrEmpty(t.PushToken))
-                    .Select(t => new PushRecipient(t.PushToken!, t.Language))
+                    .Select(t => PushRecipient.ForUser(t.UserId, t.PushToken, t.Language))
                     .ToList();
                 if (recipients.Count > 0)
                 {
@@ -4412,9 +4410,9 @@ namespace GameHubz.Logic.Services
                 // Push tokens + linked Discord accounts in one query — push stays the primary
                 // channel, the bot DM is additive for winners who linked Discord.
                 var targets = await this.AppUnitOfWork.UserRepository.GetNotificationTargetsByUserIds(winnerUserIds);
+                // Winners without a push token stay in: they get the inbox row instead of the push.
                 var winnerRecipients = targets
-                    .Where(t => !string.IsNullOrEmpty(t.PushToken))
-                    .Select(t => new PushRecipient(t.PushToken!, t.Language))
+                    .Select(t => PushRecipient.ForUser(t.UserId, t.PushToken, t.Language))
                     .ToList();
                 var discordUserIds = targets
                     .Where(t => t.DiscordDmEnabled && !string.IsNullOrEmpty(t.DiscordUserId))

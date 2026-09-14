@@ -108,9 +108,9 @@ namespace GameHubz.Logic.Services
             foreach (var id in managerIds)
                 await this.badgeService.PushAsync(id);
 
+            // Managers without a push token stay in: they get the inbox row instead of the push.
             var recipients = managers
-                .Where(m => !string.IsNullOrEmpty(m.PushToken))
-                .Select(m => new PushRecipient(m.PushToken!, m.Language))
+                .Select(m => PushRecipient.ForUser(m.UserId, m.PushToken, m.Language))
                 .ToList();
 
             if (recipients.Count == 0) return;
@@ -139,9 +139,10 @@ namespace GameHubz.Logic.Services
         private async Task NotifyUserAsync(Guid userId, PushText title, PushText body, object data)
         {
             var target = await this.AppUnitOfWork.UserRepository.GetById(userId);
-            if (string.IsNullOrEmpty(target?.PushToken)) return;
+            if (target == null) return;
 
-            var recipient = new PushRecipient(target.PushToken!, target.Language);
+            // Sent even without a push token: the inbox row is written regardless.
+            var recipient = PushRecipient.ForUser(userId, target.PushToken, target.Language);
             _ = Task.Run(async () =>
             {
                 try { await notificationService.SendLocalizedToOneAsync(recipient, title, body, data); }

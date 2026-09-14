@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace GameHubz.Logic.Services
@@ -11,6 +12,16 @@ namespace GameHubz.Logic.Services
     {
         private const string ExpoPushUrl = "https://exp.host/--/api/v2/push/send";
         private const int MaxTokensPerRequest = 100;
+
+        // The same shape the Expo request is serialised with, so the inbox's stored copy of a payload
+        // and the one a device receives are the same JSON.
+        private static readonly JsonSerializerOptions PayloadJsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
+
+        private static readonly IReadOnlyDictionary<Guid, Guid> NoNotificationIds = new Dictionary<Guid, Guid>();
 
         private readonly IHttpClientFactory httpClientFactory;
         private readonly ILogger<NotificationService> logger;
@@ -88,37 +99,56 @@ namespace GameHubz.Logic.Services
         {
             // One device may be registered once per language bucket at most: de-duplicate on the
             // token so a user who somehow appears twice does not get two copies.
-            var byToken = new Dictionary<string, string?>(StringComparer.Ordinal);
+            var byToken = new Dictionary<string, PushRecipient>(StringComparer.Ordinal);
+
+            // The inbox is per account, not per device: one row per user, token or no token.
+            var inboxLanguages = new Dictionary<Guid, string?>();
 
             foreach (PushRecipient recipient in recipients)
             {
+                if (recipient.UserId is Guid userId && userId != Guid.Empty)
+                {
+                    inboxLanguages[userId] = recipient.Language;
+                }
+
                 if (string.IsNullOrWhiteSpace(recipient.PushToken))
                 {
                     continue;
                 }
 
-                byToken[recipient.PushToken] = recipient.Language;
+                byToken[recipient.PushToken] = recipient;
             }
 
-            if (byToken.Count == 0)
+            if (byToken.Count == 0 && inboxLanguages.Count == 0)
             {
                 return;
             }
 
+            JsonObject? payload = data == null
+                ? null
+                : JsonSerializer.SerializeToNode(data, PayloadJsonOptions) as JsonObject;
+
+            // Recorded before the push goes out: every device's payload carries the id of its own inbox
+            // row (tapping the push marks that row read), and the row already exists when the push lands.
+            // A failure here is logged and never stops the push.
+            IReadOnlyDictionary<Guid, Guid> notificationIds = inboxLanguages.Count > 0
+                ? await this.RecordInInboxAsync(inboxLanguages, title, body, payload)
+                : NoNotificationIds;
+
             // Resolve the wording once per language rather than once per device.
-            foreach (var group in byToken.GroupBy(pair => pair.Value, StringComparer.OrdinalIgnoreCase))
+            foreach (var group in byToken.Values.GroupBy(recipient => recipient.Language, StringComparer.OrdinalIgnoreCase))
             {
                 string? language = group.Key;
                 string resolvedTitle = title.Resolve(this.localizationService, language);
                 string resolvedBody = body.Resolve(this.localizationService, language);
 
                 var messages = group
-                    .Select(pair => new ExpoPushMessage
+                    .Select(recipient => new ExpoPushMessage
                     {
-                        To = pair.Key,
+                        To = recipient.PushToken,
                         Title = resolvedTitle,
                         Body = resolvedBody,
-                        Data = data,
+                        Data = PayloadFor(recipient, data, payload, notificationIds),
                     })
                     .ToList();
 
@@ -127,6 +157,47 @@ namespace GameHubz.Logic.Services
                     await SendBatchAsync(chunk.ToList());
                 }
             }
+        }
+
+        private async Task<IReadOnlyDictionary<Guid, Guid>> RecordInInboxAsync(
+            Dictionary<Guid, string?> languageByUser,
+            PushText title,
+            PushText body,
+            JsonObject? payload)
+        {
+            try
+            {
+                // Own scope and DbContext, for the same reason as the stale-token cleanup (F72): sends run
+                // fire-and-forget, long after the request that triggered them disposed its own context.
+                using var scope = this.serviceScopeFactory.CreateScope();
+                var inbox = scope.ServiceProvider.GetRequiredService<NotificationInboxService>();
+                return await inbox.RecordAsync(languageByUser, title, body, payload);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to record a notification in {Count} inbox(es).", languageByUser.Count);
+                return NoNotificationIds;
+            }
+        }
+
+        // A device whose user got an inbox row gets that row's id added to its payload; every other
+        // device gets the payload exactly as the caller built it.
+        private static object? PayloadFor(
+            PushRecipient recipient,
+            object? data,
+            JsonObject? payload,
+            IReadOnlyDictionary<Guid, Guid> notificationIds)
+        {
+            if (payload == null
+                || recipient.UserId is not Guid userId
+                || !notificationIds.TryGetValue(userId, out Guid notificationId))
+            {
+                return data;
+            }
+
+            var personal = (JsonObject)payload.DeepClone();
+            personal["notificationId"] = notificationId.ToString();
+            return personal;
         }
 
         private async Task SendBatchAsync(List<ExpoPushMessage> messages)

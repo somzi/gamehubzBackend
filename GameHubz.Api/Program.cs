@@ -72,6 +72,10 @@ namespace GameHubz.Api
             builder.Services.AddScoped<MatchChatRetentionRunner>();
             builder.Services.AddHostedService<MatchChatRetentionTask>();
 
+            // Clears notification inbox rows past their retention window (60 days by default).
+            builder.Services.AddScoped<NotificationRetentionRunner>();
+            builder.Services.AddHostedService<NotificationRetentionTask>();
+
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");

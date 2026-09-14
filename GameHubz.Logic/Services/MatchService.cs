@@ -299,18 +299,18 @@ namespace GameHubz.Logic.Services
             var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
             if (opponent == null) return;
 
-            var (title, body) = match.Status == MatchStatus.Scheduled
+            bool scheduled = match.Status == MatchStatus.Scheduled;
+            var (title, body) = scheduled
                 ? (PushText.FromKey("Push.MatchScheduled.Title"), PushText.FromKey("Push.MatchScheduled.Body", user.Username))
                 : (PushText.FromKey("Push.MatchSchedule.Title"), PushText.FromKey("Push.MatchSchedule.Body", user.Username));
 
-            if (!string.IsNullOrEmpty(opponent.PushToken))
-            {
-                FireAndForgetPush(
-                    new List<PushRecipient> { new(opponent.PushToken!, opponent.Language) },
-                    title,
-                    body,
-                    new { matchId = matchId.ToString() });
-            }
+            // Sent even without a push token: the opponent still gets it in their inbox. The type only
+            // picks the inbox icon and tab — every app version still routes the tap on matchId.
+            FireAndForgetPush(
+                new List<PushRecipient> { PushRecipient.ForUser(opponentUserId.Value, opponent.PushToken, opponent.Language) },
+                title,
+                body,
+                new { matchId = matchId.ToString(), type = scheduled ? "matchScheduled" : "matchAvailability" });
 
             // Additive Discord DM (push stays the primary channel). Same event, same data —
             // resolved here in the request scope, sent fire-and-forget by the DM service.
@@ -449,8 +449,8 @@ namespace GameHubz.Logic.Services
             foreach (var userId in userIds)
             {
                 var player = await this.AppUnitOfWork.UserRepository.GetById(userId);
-                if (!string.IsNullOrEmpty(player?.PushToken))
-                    recipients.Add(new PushRecipient(player!.PushToken!, player.Language));
+                if (player != null)
+                    recipients.Add(PushRecipient.ForUser(userId, player.PushToken, player.Language));
             }
 
             FireAndForgetPush(
@@ -608,14 +608,20 @@ namespace GameHubz.Logic.Services
             // honest direction to round a deadline the player is racing.
             int minutesLeft = Math.Max(1, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalMinutes));
 
-            if (!string.IsNullOrEmpty(opponent.PushToken))
-            {
-                FireAndForgetPush(
-                    new List<PushRecipient> { new(opponent.PushToken!, opponent.Language) },
-                    PushText.FromKey("Push.MatchCheckIn.Title"),
-                    PushText.FromKey("Push.MatchCheckIn.Body", user.Username, minutesLeft.ToString()),
-                    new { matchId = match.Id!.Value.ToString(), type = "checkIn" });
-            }
+            // Sent even without a push token: the opponent still gets it in their inbox. tournamentId and
+            // teamMatchId let the tap open the match itself — the app's checkIn route needs both ids, and
+            // without them it fell back to My Matches.
+            FireAndForgetPush(
+                new List<PushRecipient> { PushRecipient.ForUser(opponentUserId.Value, opponent.PushToken, opponent.Language) },
+                PushText.FromKey("Push.MatchCheckIn.Title"),
+                PushText.FromKey("Push.MatchCheckIn.Body", user.Username, minutesLeft.ToString()),
+                new
+                {
+                    matchId = match.Id!.Value.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    teamMatchId = match.TeamMatchId?.ToString(),
+                    type = "checkIn",
+                });
 
             if (opponent.DiscordDmEnabled)
             {
@@ -831,12 +837,12 @@ namespace GameHubz.Logic.Services
 
             if (requesterUserId == null) return;
 
-            // Resolve the requester's push token now, while the scope is alive.
+            // Resolve the requester now, while the scope is alive. No push token still means an inbox row.
             var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);
-            if (string.IsNullOrEmpty(requester?.PushToken)) return;
+            if (requester == null) return;
 
             FireAndForgetPush(
-                new List<PushRecipient> { new(requester.PushToken!, requester.Language) },
+                new List<PushRecipient> { PushRecipient.ForUser(requesterUserId.Value, requester.PushToken, requester.Language) },
                 PushText.FromKey("Push.AdminHelpResolved.Title"),
                 PushText.FromKey("Push.AdminHelpResolved.Body"),
                 new { matchId = matchId.ToString(), type = "adminHelpResolved" });
@@ -887,11 +893,11 @@ namespace GameHubz.Logic.Services
             if (ownership == null) return new List<PushRecipient>();
 
             var hubUsers = await this.AppUnitOfWork.UserHubRepository.GetUsersByHub(ownership.HubId);
+            // Managers without a push token stay in: they get the inbox row instead of the push.
             var recipients = hubUsers
                 .Where(m => (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin)
-                            && m.UserId != excludeUserId
-                            && !string.IsNullOrEmpty(m.PushToken))
-                .Select(m => new PushRecipient(m.PushToken!, m.Language))
+                            && m.UserId != excludeUserId)
+                .Select(m => PushRecipient.ForUser(m.UserId, m.PushToken, m.Language))
                 .ToList();
 
             // The hub owner may not have a UserHub membership row — include them explicitly.
@@ -899,7 +905,7 @@ namespace GameHubz.Logic.Services
                 !hubUsers.Any(m => m.UserId == ownership.OwnerUserId))
             {
                 var owner = await this.AppUnitOfWork.UserRepository.GetById(ownership.OwnerUserId);
-                if (!string.IsNullOrEmpty(owner?.PushToken)) recipients.Add(new PushRecipient(owner.PushToken!, owner.Language));
+                if (owner != null) recipients.Add(PushRecipient.ForUser(ownership.OwnerUserId, owner.PushToken, owner.Language));
             }
 
             // De-duplicated on the token inside SendLocalizedToManyAsync.

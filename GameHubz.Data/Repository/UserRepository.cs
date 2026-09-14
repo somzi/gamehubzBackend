@@ -205,16 +205,17 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
-        // Same set as GetPushTokensByUserIds, but carrying each user's language so the push can
-        // be written in the RECIPIENT's language rather than the caller's.
+        // Every requested user, carrying their language so the push is written in the RECIPIENT's
+        // language rather than the caller's, and their id so it lands in their inbox. Users without a
+        // token still come back: no push for them, but the inbox is the one place they will see it.
         public async Task<List<PushRecipient>> GetPushRecipientsByUserIds(List<Guid> userIds)
         {
             var rows = await this.BaseDbSet()
-                .Where(x => userIds.Contains(x.Id!.Value) && x.PushToken != null)
-                .Select(x => new { x.PushToken, x.Language })
+                .Where(x => userIds.Contains(x.Id!.Value))
+                .Select(x => new { Id = x.Id!.Value, x.PushToken, x.Language })
                 .ToListAsync();
 
-            return rows.Select(r => new PushRecipient(r.PushToken!, r.Language)).ToList();
+            return rows.Select(r => PushRecipient.ForUser(r.Id, r.PushToken, r.Language)).ToList();
         }
 
         public async Task<UserEntity?> GetByDiscordUserId(string discordUserId)
@@ -225,14 +226,14 @@ namespace GameHubz.Data.Repository
         }
 
         // Both notification channels in one query: push token (primary) + linked Discord account
-        // (additive bot DM). Rows with neither channel are skipped.
+        // (additive bot DM). Users with neither still come back — the inbox needs no channel.
         public async Task<List<UserNotificationTarget>> GetNotificationTargetsByUserIds(List<Guid> userIds)
         {
             return await this.BaseDbSet()
-                .Where(x => userIds.Contains(x.Id!.Value)
-                    && (x.PushToken != null || (x.DiscordUserId != null && x.DiscordDmEnabled)))
+                .Where(x => userIds.Contains(x.Id!.Value))
                 .Select(x => new UserNotificationTarget
                 {
+                    UserId = x.Id!.Value,
                     PushToken = x.PushToken,
                     Language = x.Language,
                     DiscordUserId = x.DiscordUserId,

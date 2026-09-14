@@ -59,7 +59,8 @@ namespace GameHubz.Logic.Services
                         recipients,
                         PushText.FromLiteral(title),
                         PushText.FromKey("Push.TournamentLive.Body"),
-                        new { tournamentId });
+                        // type is for the inbox's icon; routing still falls back on tournamentId.
+                        new { tournamentId, type = "tournamentLive" });
                 }
                 catch { /* fire-and-forget */ }
             });
