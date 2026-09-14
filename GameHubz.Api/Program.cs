@@ -67,6 +67,11 @@ namespace GameHubz.Api
             // tournaments that are abandoned rather than finished.
             builder.Services.AddHostedService<EvidenceRetentionTask>();
 
+            // Deletes match chat on the same shape of rules. Separate task rather than a second
+            // pass inside the evidence one, so either can be switched off without the other.
+            builder.Services.AddScoped<MatchChatRetentionRunner>();
+            builder.Services.AddHostedService<MatchChatRetentionTask>();
+
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");
