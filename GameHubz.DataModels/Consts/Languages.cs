@@ -7,6 +7,9 @@ namespace GameHubz.DataModels.Consts
 
         public const string Spanish = "es";
 
+        /// <summary>Brazilian Portuguese is what the resource set is written in; "pt-PT" narrows to it too.</summary>
+        public const string Portuguese = "pt";
+
         /// <summary>
         /// Reduces a language tag to its bare code: "es-419", "ES" and " es " all become "es".
         /// Returns null for a blank value so callers can tell "not specified" apart from
@@ -38,6 +41,11 @@ namespace GameHubz.DataModels.Consts
         /// <para>"sr" is the legacy default and has no resource set, so it narrows to English too.</para>
         /// </summary>
         public static string ToSupported(string? language)
-            => Normalize(language) == Spanish ? Spanish : English;
+            => Normalize(language) switch
+            {
+                Spanish => Spanish,
+                Portuguese => Portuguese,
+                _ => English,
+            };
     }
 }

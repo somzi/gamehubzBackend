@@ -46,13 +46,17 @@ namespace GameHubz.Logic.Test.Services
         [TestCase("ES", "es")]
         [TestCase("en", "en")]
         [TestCase("en-GB", "en")]
-        public void ToSupported_KeepsTheTwoLanguagesWeRender(string input, string expected)
+        [TestCase("pt", "pt")]
+        [TestCase("pt-BR", "pt")]
+        [TestCase("pt-PT", "pt")]  // the resource set is written in pt-BR; Portugal reads it too
+        [TestCase("PT", "pt")]
+        public void ToSupported_KeepsTheLanguagesWeRender(string input, string expected)
         {
             Assert.That(Languages.ToSupported(input), Is.EqualTo(expected));
         }
 
         [TestCase("sr")]      // legacy default, no resource set
-        [TestCase("pt-BR")]   // plausible next language, not shipped yet
+        [TestCase("de")]      // plausible next language, not shipped yet
         [TestCase("zzz")]
         [TestCase("")]
         [TestCase(null)]

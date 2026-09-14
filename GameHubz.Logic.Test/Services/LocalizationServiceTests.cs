@@ -20,6 +20,7 @@ namespace GameHubz.Logic.Test.Services
         private const string SomeKey = "Exception.EmptyEmail";
         private const string SomeKeyEn = "Email is required";
         private const string SomeKeyEs = "El correo electrónico es obligatorio";
+        private const string SomeKeyPt = "O e-mail é obrigatório";
 
         private static IConfiguration Config(string? language) =>
             new ConfigurationBuilder()
@@ -59,6 +60,15 @@ namespace GameHubz.Logic.Test.Services
         }
 
         [Test]
+        public void PortugueseHeader_ResolvesPortuguese()
+        {
+            ILocalizationService service = new LocalizationService(
+                Config(Languages.English), AccessorWithHeader(Languages.Portuguese));
+
+            Assert.That(service[SomeKey], Is.EqualTo(SomeKeyPt));
+        }
+
+        [Test]
         public void RegionalAndCasedTags_AreNormalised()
         {
             foreach (string header in new[] { "es-419", "ES", " es " })
@@ -67,6 +77,16 @@ namespace GameHubz.Logic.Test.Services
                     Config(Languages.English), AccessorWithHeader(header));
 
                 Assert.That(service[SomeKey], Is.EqualTo(SomeKeyEs), $"header '{header}'");
+            }
+
+            // The resource set is written in pt-BR, so a Portugal tag reads it too rather
+            // than falling through to English.
+            foreach (string header in new[] { "pt-BR", "pt-PT", "PT" })
+            {
+                ILocalizationService service = new LocalizationService(
+                    Config(Languages.English), AccessorWithHeader(header));
+
+                Assert.That(service[SomeKey], Is.EqualTo(SomeKeyPt), $"header '{header}'");
             }
         }
 
@@ -88,6 +108,7 @@ namespace GameHubz.Logic.Test.Services
                 Config(Languages.English), AccessorWithHeader(Languages.English));
 
             Assert.That(service[SomeKey, Languages.Spanish], Is.EqualTo(SomeKeyEs));
+            Assert.That(service[SomeKey, Languages.Portuguese], Is.EqualTo(SomeKeyPt));
             Assert.That(service[SomeKey, Languages.English], Is.EqualTo(SomeKeyEn));
         }
 
