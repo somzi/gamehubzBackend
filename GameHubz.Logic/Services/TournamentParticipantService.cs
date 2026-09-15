@@ -425,9 +425,8 @@ namespace GameHubz.Logic.Services
             return result;
         }
 
-        private string MatchCountLabel(int count) => count == 1
-            ? this.LocalizationService["BusinessRule.MatchCountOne"]
-            : string.Format(this.LocalizationService["BusinessRule.MatchCountMany"], count);
+        private string MatchCountLabel(int count) => this.LocalizationService.Plural(
+            count, "BusinessRule.MatchCountOne", "BusinessRule.MatchCountFew", "BusinessRule.MatchCountMany");
 
         private int SwapMaxPlayedPercent()
         {
@@ -627,9 +626,8 @@ namespace GameHubz.Logic.Services
 
         // "3 matches" / "1 match" in the recipient's language, for embedding in Push.SwappedIn.Body.
         private string PlayedMatchesKey(int count, string? language)
-            => count == 1
-                ? this.LocalizationService["Push.PlayedMatches.One", language]
-                : string.Format(this.LocalizationService["Push.PlayedMatches.Many", language], count);
+            => this.LocalizationService.Plural(
+                count, "Push.PlayedMatches.One", "Push.PlayedMatches.Few", "Push.PlayedMatches.Many", language);
 
         private async Task EnsureCanManageTournament(Guid tournamentId)
         {

@@ -39,6 +39,10 @@ namespace GameHubz.Localization
             "GameHubz.Localization.Resources.TranslationPT",
             typeof(LocalizationService).Assembly);
 
+        private static readonly ResourceManager PolishResources = new ResourceManager(
+            "GameHubz.Localization.Resources.TranslationPL",
+            typeof(LocalizationService).Assembly);
+
         /// <summary>ResourceManager lookups are cheap but the switch below is hit on every string.</summary>
         private static readonly ConcurrentDictionary<string, ResourceManager> ManagerCache = new();
 
@@ -118,6 +122,7 @@ namespace GameHubz.Localization
             {
                 Languages.Spanish => SpanishResources,
                 Languages.Portuguese => PortugueseResources,
+                Languages.Polish => PolishResources,
                 // "sr" is the legacy header default and has no resource set; it has always
                 // rendered English, and still does.
                 _ => EnglishResources,

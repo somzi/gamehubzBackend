@@ -270,9 +270,8 @@ namespace GameHubz.Logic.Services
             PushText body;
             if (upcomingGames > 0)
             {
-                string gamesNote = upcomingGames == 1
-                    ? this.LocalizationService["Push.UpcomingGames.One", language]
-                    : string.Format(this.LocalizationService["Push.UpcomingGames.Many", language], upcomingGames);
+                string gamesNote = this.LocalizationService.Plural(
+                    upcomingGames, "Push.UpcomingGames.One", "Push.UpcomingGames.Few", "Push.UpcomingGames.Many", language);
 
                 body = PushText.FromKey("Push.TeamLineupIn.Body", gamesNote);
             }
@@ -682,9 +681,8 @@ namespace GameHubz.Logic.Services
                 MemberCountLabel(lineupSize)));
         }
 
-        private string MemberCountLabel(int count) => count == 1
-            ? this.LocalizationService["BusinessRule.PlayerCountOne"]
-            : string.Format(this.LocalizationService["BusinessRule.PlayerCountMany"], count);
+        private string MemberCountLabel(int count) => this.LocalizationService.Plural(
+            count, "BusinessRule.PlayerCountOne", "BusinessRule.PlayerCountFew", "BusinessRule.PlayerCountMany");
 
         /// <summary>
         /// Keeps the lineup at TeamSize after someone leaves: when a starter goes, the longest-serving

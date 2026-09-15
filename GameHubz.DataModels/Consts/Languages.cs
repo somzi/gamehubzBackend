@@ -10,6 +10,8 @@ namespace GameHubz.DataModels.Consts
         /// <summary>Brazilian Portuguese is what the resource set is written in; "pt-PT" narrows to it too.</summary>
         public const string Portuguese = "pt";
 
+        public const string Polish = "pl";
+
         /// <summary>
         /// Reduces a language tag to its bare code: "es-419", "ES" and " es " all become "es".
         /// Returns null for a blank value so callers can tell "not specified" apart from
@@ -45,6 +47,7 @@ namespace GameHubz.DataModels.Consts
             {
                 Spanish => Spanish,
                 Portuguese => Portuguese,
+                Polish => Polish,
                 _ => English,
             };
     }
