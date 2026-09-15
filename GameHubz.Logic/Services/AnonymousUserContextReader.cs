@@ -13,7 +13,7 @@ namespace GameHubz.Logic.Services
         {
             TokenUserInfo tokenUserInfo = await this.GetTokenUserInfoFromContextThrowIfNull();
 
-            string language = Languages.Serbian;
+            string language = Languages.English;
 
             return new UserRequestData(tokenUserInfo, language);
         }

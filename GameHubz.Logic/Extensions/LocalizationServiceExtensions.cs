@@ -28,10 +28,11 @@ namespace GameHubz.Logic.Extensions
         /// "1 match" / "3 matches" in the current request's language, with the count filled into {0}.
         /// <para>
         /// English, Spanish and Portuguese need only two forms, so these labels used to be a
-        /// plain <c>count == 1 ? one : many</c> at each call site. Polish needs three — "1 mecz",
-        /// "2 mecze", "5 meczów" — and a binary choice is visibly wrong for 2-4, so the arm is
-        /// chosen per language here instead. A language with no separate few-form never resolves
-        /// <paramref name="fewKey"/>, so those resources are simply a copy of the many-form.
+        /// plain <c>count == 1 ? one : many</c> at each call site. Polish and Serbian need three —
+        /// "1 mecz / 2 mecze / 5 meczów", "1 meč / 2 meča / 5 mečeva" — and a binary choice is
+        /// visibly wrong for 2-4, so the arm is chosen per language here instead. A language with no
+        /// separate few-form never resolves <paramref name="fewKey"/>, so those resources are simply
+        /// a copy of the many-form.
         /// </para>
         /// <para>
         /// The three keys are passed in full rather than derived from a prefix because the two
@@ -56,22 +57,24 @@ namespace GameHubz.Logic.Extensions
 
         private static string PluralKey(string? language, int count, string oneKey, string fewKey, string manyKey)
         {
-            if (count == 1)
-            {
-                return oneKey;
-            }
+            // CLDR "few" in both Polish and Serbian: ends in 2-4, except the teens — 22 is "few",
+            // 12 is not.
+            bool few = count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14);
 
-            // CLDR "few" for Polish: anything ending in 2-4, except the teens — 22 is "few",
-            // 12 is not. Note 21 is NOT "one" in Polish, so the check above stays exact.
-            if (language == Languages.Polish
-                && count % 10 >= 2
-                && count % 10 <= 4
-                && (count % 100 < 12 || count % 100 > 14))
+            switch (language)
             {
-                return fewKey;
-            }
+                case Languages.Polish:
+                    // Polish "one" is exactly 1: 21 is "many" ("21 meczów").
+                    return count == 1 ? oneKey : few ? fewKey : manyKey;
 
-            return manyKey;
+                case Languages.Serbian:
+                    // Serbian "one" is anything ending in 1 except 11 ("21 meč"), which is why the
+                    // Serbian one-forms carry {0} instead of a literal 1.
+                    return count % 10 == 1 && count % 100 != 11 ? oneKey : few ? fewKey : manyKey;
+
+                default:
+                    return count == 1 ? oneKey : manyKey;
+            }
         }
     }
 }

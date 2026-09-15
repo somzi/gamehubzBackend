@@ -21,6 +21,7 @@ namespace GameHubz.Logic.Test.Services
         private const string SomeKeyEn = "Email is required";
         private const string SomeKeyEs = "El correo electrónico es obligatorio";
         private const string SomeKeyPt = "O e-mail é obrigatório";
+        private const string SomeKeySr = "Imejl je obavezan";
 
         private static IConfiguration Config(string? language) =>
             new ConfigurationBuilder()
@@ -91,13 +92,14 @@ namespace GameHubz.Logic.Test.Services
         }
 
         [Test]
-        public void LegacySerbianDefault_StillRendersEnglish()
+        public void SerbianHeader_ResolvesSerbian()
         {
-            // 'sr' was the old header default and has no resource set — behaviour must not change.
+            // 'sr' used to be a request-data default with no resource set, so it rendered English.
+            // No client ever sent it (the app only sends codes it ships), so it now names Serbian.
             ILocalizationService service = new LocalizationService(
                 Config(Languages.English), AccessorWithHeader(Languages.Serbian));
 
-            Assert.That(service[SomeKey], Is.EqualTo(SomeKeyEn));
+            Assert.That(service[SomeKey], Is.EqualTo(SomeKeySr));
         }
 
         [Test]

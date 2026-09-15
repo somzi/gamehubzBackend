@@ -40,7 +40,6 @@ namespace GameHubz.DataModels.Consts
         /// Narrows any tag to a language we can actually render. Used before persisting a user's
         /// choice: an unknown code stored on the profile would render English on every push
         /// anyway, so storing English instead keeps the column meaningful.
-        /// <para>"sr" is the legacy default and has no resource set, so it narrows to English too.</para>
         /// </summary>
         public static string ToSupported(string? language)
             => Normalize(language) switch
@@ -48,6 +47,7 @@ namespace GameHubz.DataModels.Consts
                 Spanish => Spanish,
                 Portuguese => Portuguese,
                 Polish => Polish,
+                Serbian => Serbian,
                 _ => English,
             };
     }

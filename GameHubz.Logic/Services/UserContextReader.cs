@@ -57,7 +57,10 @@ namespace GameHubz.Logic
 
         private string GetLanguageFromRequest()
         {
-            return this.GetHeaderValue("Language", defaultValue: Languages.Serbian);
+            // English, like LocalizationService. "sr" stood in here while it had no resource set and
+            // rendered English anyway; now that Serbian is a real translation, a request without the
+            // header must not claim it.
+            return this.GetHeaderValue("Language", defaultValue: Languages.English);
         }
 
         private string GetHeaderValue(string headerKey, string defaultValue)
