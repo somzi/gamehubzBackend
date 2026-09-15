@@ -3511,6 +3511,12 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public async Task<bool> ApplyCheckInForfeit(Guid matchId, bool homeWins)
         {
+            // The sweep rules many matches on one unit of work, and the standings resync of a
+            // league / group ruling leaves every participant of that group tracked. Without this
+            // the next ruling in the same group throws on "already being tracked" AFTER its claim
+            // committed — leaving the fixture Scheduled, ruled, and unreportable forever.
+            this.AppUnitOfWork.MatchRepository.DetachAll();
+
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) return false;
             if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
@@ -3548,6 +3554,10 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public async Task<bool> ApplyCheckInDoubleWalkover(Guid matchId)
         {
+            // Same reason as ApplyCheckInForfeit: committed state only, one ruling per sweep tick
+            // must not collide with what the previous one left in the tracker.
+            this.AppUnitOfWork.MatchRepository.DetachAll();
+
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) return false;
             if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
@@ -3573,7 +3583,9 @@ namespace GameHubz.Logic.Services
         private async Task<bool> ClaimCheckInResolutionAsync(MatchEntity match)
         {
             var now = DateTime.UtcNow;
-            if (!await this.AppUnitOfWork.MatchRepository.TryClaimCheckInResolution(match.Id!.Value, now)) return false;
+            if (!await this.AppUnitOfWork.MatchRepository.TryClaimCheckInResolution(
+                    match.Id!.Value, now, match.HomeCheckedInOn.HasValue, match.AwayCheckedInOn.HasValue))
+                return false;
 
             match.CheckInResolvedOn = now;
             return true;
@@ -4834,6 +4846,8 @@ namespace GameHubz.Logic.Services
                         nextMatch.Status = MatchStatus.Pending;
                         nextMatch.ScheduledStartTime = null;
                     }
+
+                    ResetCheckIn(nextMatch);
                     await this.AppUnitOfWork.MatchRepository.UpdateEntity(nextMatch, this.UserContextReader);
                 }
             }
@@ -4875,10 +4889,26 @@ namespace GameHubz.Logic.Services
                             loserBracketMatch.Status = MatchStatus.Pending;
                             loserBracketMatch.ScheduledStartTime = null;
                         }
+
+                        ResetCheckIn(loserBracketMatch);
                         await this.AppUnitOfWork.MatchRepository.UpdateEntity(loserBracketMatch, this.UserContextReader);
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// A downstream slot that loses a participant loses its ready check with it, exactly as
+        /// ClearSchedule drops it. A stamp left behind belongs to a kick-off (and possibly a player)
+        /// that no longer exists: once the pair re-agree a time, it would count as already checked
+        /// in and hand the opponent's forfeit to someone who never pressed anything — and a kept
+        /// CheckInResolvedOn would silently exempt the fixture from the check for good.
+        /// </summary>
+        private static void ResetCheckIn(MatchEntity match)
+        {
+            match.HomeCheckedInOn = null;
+            match.AwayCheckedInOn = null;
+            match.CheckInResolvedOn = null;
         }
 
         private async Task RevertTeamMatchResult(MatchEntity subMatch)

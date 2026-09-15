@@ -10,9 +10,16 @@
 
         /// <summary>
         /// Stamps CheckInResolvedOn on a still-scheduled, still-unruled match and reports whether
-        /// this caller is the one that got it. The ready-check sweep's claim.
+        /// this caller is the one that got it. The ready-check sweep's claim. Only succeeds while
+        /// both check-in stamps still match the ones the ruling was decided on.
         /// </summary>
-        Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn);
+        Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn, bool homeIn, bool awayIn);
+
+        /// <summary>Single-column, conditional write of one side's check-in stamp.</summary>
+        Task<bool> TryStampCheckIn(Guid matchId, bool home, DateTime scheduledStart, DateTime checkedInOn);
+
+        /// <summary>Closes the ready check on fixtures whose window had already opened when the check was switched on.</summary>
+        Task<int> ExemptOpenCheckIns(Guid tournamentId, DateTime windowOpenedBefore, DateTime resolvedOn);
 
         Task<MatchEntity?> GetWithTournamentStage(Guid id);
 

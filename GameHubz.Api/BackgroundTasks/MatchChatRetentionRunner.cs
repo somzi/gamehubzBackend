@@ -16,23 +16,25 @@ namespace GameHubz.Api.BackgroundTasks
     /// must not be stranded.
     ///
     /// Two rules, mirroring the evidence sweep:
-    ///   • the normal one, keyed off when the tournament ended;
-    ///   • an age backstop, because a tournament that is abandoned rather than finished never
-    ///     satisfies the first rule and would keep its threads forever.
+    ///   • the normal one, keyed off when the tournament ended — and, like the evidence sweep, the
+    ///     message must have cleared the grace window too, not just the tournament. A thread stays
+    ///     writable until its match is Completed, and a cancelled tournament gets an EndedOn while
+    ///     its matches are still open: testing only the tournament date deleted anything written
+    ///     after that within the hour;
+    ///   • an abandonment backstop, because a tournament that is never finished never satisfies
+    ///     the first rule and would keep its threads forever.
     ///
-    /// The backstop is keyed off the tournament's own age, not the age of individual messages. A
-    /// per-message cut would split a live long-running league's thread in half — deleting January
-    /// while March is still being written — and the match would come back on every tick for the
-    /// rest of its life. A tournament that was created six months ago and still has not ended is
-    /// abandoned by any reasonable reading, so the whole thread goes at once and the match leaves
-    /// the sweep for good.
+    /// The backstop needs BOTH an old tournament and a dormant thread. Tournament age alone took a
+    /// league that simply runs longer than six months and deleted its live threads mid-season. It
+    /// still takes the whole thread at once — never a per-message cut, which would split a live
+    /// thread in half (January gone while March is being written) — but only once nobody has
+    /// written in it for a while.
     ///
     /// No marker column is needed to keep the work bounded, unlike the deadline sweeps: deleting
-    /// the rows IS the marker. Once a thread is gone the match stops matching, and after the first
-    /// drain the table only holds chat from tournaments that are live or ended within the grace
-    /// window — which is small, so the hourly pass that finds nothing stays cheap. It also means a
-    /// message posted on a long-settled match after its purge is simply collected on the next tick
-    /// rather than living forever in a gap a marker would have opened.
+    /// the rows IS the marker. A match is only selected while it holds a message the rules would
+    /// delete, so it never comes back empty-handed, and after the first drain the table only holds
+    /// chat from tournaments that are live or ended within the grace window. A message posted on a
+    /// settled match after its purge is collected once it has aged past the grace window itself.
     /// </summary>
     public class MatchChatRetentionRunner
     {
@@ -63,6 +65,14 @@ namespace GameHubz.Api.BackgroundTasks
         private int AbandonedTournamentMaxAgeDays =>
             Math.Max(1, configuration.GetValue("MatchChat:AbandonedTournamentMaxAgeDays", 180));
 
+        /// <summary>
+        /// How long a thread in an abandoned-looking tournament must have gone without a message
+        /// before the backstop takes it. Never shorter than the grace window, so the backstop's
+        /// threads are always fully covered by the per-message cut the delete applies.
+        /// </summary>
+        private int AbandonedThreadInactiveDays =>
+            Math.Max(GraceDaysAfterTournamentEnd, configuration.GetValue("MatchChat:AbandonedThreadInactiveDays", 30));
+
         /// <summary>Matches handled per batch. Each batch is its own statement, so a backlog never
         /// becomes one enormous transaction.</summary>
         private int SweepBatchSize =>
@@ -84,6 +94,7 @@ namespace GameHubz.Api.BackgroundTasks
             DateTime now = DateTime.UtcNow;
             DateTime endedBefore = now.AddDays(-GraceDaysAfterTournamentEnd);
             DateTime abandonedBefore = now.AddDays(-AbandonedTournamentMaxAgeDays);
+            DateTime inactiveBefore = now.AddDays(-AbandonedThreadInactiveDays);
 
             int totalMessages = 0;
             int totalCursors = 0;
@@ -100,11 +111,16 @@ namespace GameHubz.Api.BackgroundTasks
                 List<Guid> matchIds = await context.Set<MatchChatEntity>()
                     .IgnoreQueryFilters()
                     .Where(c => c.MatchId != null && c.Match!.Tournament != null)
+                    .Where(c => c.CreatedOn < endedBefore)
                     .Where(c =>
-                        // Normal path: the tournament is over and the grace window has passed.
+                        // Normal path: the tournament is over and the grace window has passed —
+                        // for the tournament and (above) for the message itself.
                         (c.Match!.Tournament!.EndedOn != null && c.Match.Tournament.EndedOn < endedBefore)
-                        // Backstop: nothing ever ended, and the tournament is too old to be live.
-                        || (c.Match!.Tournament!.EndedOn == null && c.Match.Tournament.CreatedOn < abandonedBefore))
+                        // Backstop: nothing ever ended, the tournament is too old to be live, and
+                        // the thread has gone quiet. A long league still being played keeps its chat.
+                        || (c.Match!.Tournament!.EndedOn == null
+                            && c.Match.Tournament.CreatedOn < abandonedBefore
+                            && !context.Set<MatchChatEntity>().Any(o => o.MatchId == c.MatchId && o.CreatedOn >= inactiveBefore)))
                     .Select(c => c.MatchId!.Value)
                     .Distinct()
                     .Take(SweepBatchSize)
@@ -112,17 +128,23 @@ namespace GameHubz.Api.BackgroundTasks
 
                 if (matchIds.Count == 0) break;
 
+                // Same per-message cut as the selection. It is all a backstop thread holds anyway
+                // (dormant means older than inactiveBefore, which is never later than endedBefore);
+                // on the normal path it spares whatever was written inside the grace window.
                 int messages = await context.Set<MatchChatEntity>()
                     .IgnoreQueryFilters()
-                    .Where(c => c.MatchId != null && matchIds.Contains(c.MatchId.Value))
+                    .Where(c => c.MatchId != null && matchIds.Contains(c.MatchId.Value) && c.CreatedOn < endedBefore)
                     .ExecuteDeleteAsync(cancellationToken);
 
-                // The read cursors go with the messages they pointed at. Once the thread is gone a
-                // "last read" stamp and a per-thread mute describe nothing, and there is one such
-                // row per participant per match — over a year of play that outnumbers the messages.
+                // The read cursors go with the messages they pointed at — but only once the thread
+                // is actually empty. Once it is gone a "last read" stamp and a per-thread mute
+                // describe nothing, and there is one such row per participant per match. A thread
+                // that kept a recent message keeps its cursors, or that message would read as unread
+                // and a muted thread would start pushing again.
                 int cursors = await context.Set<MatchChatReadEntity>()
                     .IgnoreQueryFilters()
-                    .Where(r => matchIds.Contains(r.MatchId))
+                    .Where(r => matchIds.Contains(r.MatchId)
+                        && !context.Set<MatchChatEntity>().IgnoreQueryFilters().Any(c => c.MatchId == r.MatchId))
                     .ExecuteDeleteAsync(cancellationToken);
 
                 totalMessages += messages;

@@ -477,6 +477,15 @@ namespace GameHubz.Logic.Services
 
         public override async Task<TournamentDto> SaveEntity(TournamentPost inputDto, bool doSave = true)
         {
+            // Read before the save: whether this edit is the one switching the ready check ON.
+            // Only an edit that sends true can be, so every other save skips the query.
+            bool checkInSwitchedOn = false;
+            if (inputDto.Id.HasValue && inputDto.RequireMatchCheckIn == true)
+            {
+                var before = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(inputDto.Id.Value);
+                checkInSwitchedOn = before != null && !before.RequireMatchCheckIn;
+            }
+
             TournamentDto model = await this.ServiceFunctions.SaveEntity(
                 this.GetRepository(),
                 this,
@@ -507,6 +516,20 @@ namespace GameHubz.Logic.Services
             }
             else
             {
+                // Turning the ready check on mid-tournament must only reach fixtures whose window
+                // opens from now on. Anything already inside its window — or past kick-off — never
+                // showed anyone a button, and the sweep rules back 24 hours: left alone, the next
+                // tick forfeits or voids all of it. After the save, so a rejected edit exempts nothing.
+                if (checkInSwitchedOn && model.RequireMatchCheckIn && model.Id.HasValue)
+                {
+                    var now = DateTime.UtcNow;
+                    await this.AppUnitOfWork.MatchRepository.ExemptOpenCheckIns(
+                        model.Id.Value, now.AddMinutes(GameHubz.DataModels.Consts.MatchCheckInRules.OpensBeforeMinutes), now);
+
+                    await cacheService.RemoveByPatternAsync($"bracket:{model.Id}:*");
+                    await cacheService.RemoveByPatternAsync($"bracket:v3:{model.Id}:*");
+                }
+
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
                 // Tournament-level settings (e.g. RequireResultApproval) are projected into the
                 // bracket structure response, so flush the bracket cache too — otherwise the new

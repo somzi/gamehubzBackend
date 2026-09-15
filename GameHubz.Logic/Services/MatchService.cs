@@ -508,18 +508,36 @@ namespace GameHubz.Logic.Services
             if (isHome == null)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
 
-            bool opponentWasWaiting = isHome.Value
-                ? match.AwayCheckedInOn == null
-                : match.HomeCheckedInOn == null;
             bool alreadyIn = isHome.Value ? match.HomeCheckedInOn.HasValue : match.AwayCheckedInOn.HasValue;
 
             if (!alreadyIn)
             {
-                if (isHome.Value) match.HomeCheckedInOn = now;
-                else match.AwayCheckedInOn = now;
+                // One column, conditionally — never UpdateEntity. The two sides press at the same
+                // moment by design, and a full-entity write from this request's snapshot would null
+                // whatever the opponent's request stamped a millisecond earlier: both get a green
+                // tick, one stamp is gone, and the sweep forfeits the player who did check in.
+                bool stamped = await this.AppUnitOfWork.MatchRepository
+                    .TryStampCheckIn(match.Id!.Value, isHome.Value, start, now);
 
-                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-                await this.SaveAsync();
+                // Re-read either way: the opponent's stamp may have landed since we loaded the row,
+                // and the DTO, the deadline and the "was the opponent waiting" test all hang off it.
+                match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                    ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+                bool nowIn = isHome.Value ? match.HomeCheckedInOn.HasValue : match.AwayCheckedInOn.HasValue;
+
+                // Nothing written and still not in: the fixture moved under us — ruled by the
+                // sweep, rescheduled, or reported. A double tap that lost to its own first press
+                // is in, and falls through to the idempotent answer below.
+                if (!stamped && !nowIn)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+
+                if (!stamped)
+                    return BuildCheckInDto(match, grace, isHome);
+
+                bool opponentWasWaiting = isHome.Value
+                    ? match.AwayCheckedInOn == null
+                    : match.HomeCheckedInOn == null;
 
                 // The bracket renders the check-in state on its cards, and that payload is cached
                 // for five minutes — long enough for a player to confirm, look at the bracket and

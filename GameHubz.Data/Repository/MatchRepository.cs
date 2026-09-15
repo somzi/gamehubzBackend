@@ -789,15 +789,68 @@ namespace GameHubz.Data.Repository
         /// of awarding the same forfeit twice. Callers holding the entity must mirror the stamp in
         /// memory — ExecuteUpdate goes straight to the database, past the change tracker.
         /// </summary>
-        public async Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn)
+        public async Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn, bool homeIn, bool awayIn)
         {
-            int affected = await this.BaseDbSet()
+            var query = this.BaseDbSet()
                 .Where(m => m.Id == matchId
                     && m.CheckInResolvedOn == null
-                    && m.Status == MatchStatus.Scheduled)
+                    && m.Status == MatchStatus.Scheduled);
+
+            // The stamps the ruling was decided on must still be the stamps in the row. A check-in
+            // landing between the sweep's re-read and this claim would otherwise be overwritten by
+            // the full-entity write of the forfeit that follows — against the player who pressed.
+            query = homeIn ? query.Where(m => m.HomeCheckedInOn != null) : query.Where(m => m.HomeCheckedInOn == null);
+            query = awayIn ? query.Where(m => m.AwayCheckedInOn != null) : query.Where(m => m.AwayCheckedInOn == null);
+
+            int affected = await query
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.CheckInResolvedOn, resolvedOn));
 
             return affected > 0;
+        }
+
+        /// <summary>
+        /// Writes one side's check-in stamp and nothing else. Both players are invited to press at
+        /// the same instant, so this cannot go through UpdateEntity: that writes every column from
+        /// the snapshot the request read, and the second save would null the first player's stamp.
+        /// Conditional on the fixture still being the one the caller validated — same kick-off,
+        /// still scheduled, not yet ruled — so a late press can't land on a match the sweep has
+        /// already decided or an organizer has moved.
+        /// </summary>
+        public async Task<bool> TryStampCheckIn(Guid matchId, bool home, DateTime scheduledStart, DateTime checkedInOn)
+        {
+            var query = this.BaseDbSet()
+                .Where(m => m.Id == matchId
+                    && m.Status == MatchStatus.Scheduled
+                    && m.ScheduledStartTime == scheduledStart
+                    && m.CheckInResolvedOn == null);
+
+            int affected = home
+                ? await query
+                    .Where(m => m.HomeCheckedInOn == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.HomeCheckedInOn, checkedInOn))
+                : await query
+                    .Where(m => m.AwayCheckedInOn == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.AwayCheckedInOn, checkedInOn));
+
+            return affected > 0;
+        }
+
+        /// <summary>
+        /// Closes the ready check on every still-unruled scheduled fixture of a tournament whose
+        /// window was already open (or over) when the organizer switched the check on. Those
+        /// players never had a button to press; left unruled, the next sweep would forfeit or void
+        /// every one of them. Stamping CheckInResolvedOn is the same "not part of the check" marker
+        /// SetScheduled uses. Returns the number of fixtures exempted.
+        /// </summary>
+        public Task<int> ExemptOpenCheckIns(Guid tournamentId, DateTime windowOpenedBefore, DateTime resolvedOn)
+        {
+            return this.BaseDbSet()
+                .Where(m => m.TournamentId == tournamentId
+                    && m.Status == MatchStatus.Scheduled
+                    && m.CheckInResolvedOn == null
+                    && m.ScheduledStartTime != null
+                    && m.ScheduledStartTime <= windowOpenedBefore)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.CheckInResolvedOn, resolvedOn));
         }
 
         public async Task<MatchEntity?> GetWithStage(Guid id)
