@@ -22,6 +22,7 @@ namespace GameHubz.Logic.Test.Services
         private const string SomeKeyEs = "El correo electrónico es obligatorio";
         private const string SomeKeyPt = "O e-mail é obrigatório";
         private const string SomeKeySr = "Imejl je obavezan";
+        private const string SomeKeyRu = "Email обязателен";
 
         private static IConfiguration Config(string? language) =>
             new ConfigurationBuilder()
@@ -100,6 +101,15 @@ namespace GameHubz.Logic.Test.Services
                 Config(Languages.English), AccessorWithHeader(Languages.Serbian));
 
             Assert.That(service[SomeKey], Is.EqualTo(SomeKeySr));
+        }
+
+        [Test]
+        public void RussianHeader_ResolvesRussian()
+        {
+            ILocalizationService service = new LocalizationService(
+                Config(Languages.English), AccessorWithHeader(Languages.Russian));
+
+            Assert.That(service[SomeKey], Is.EqualTo(SomeKeyRu));
         }
 
         [Test]

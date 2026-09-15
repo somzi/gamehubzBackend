@@ -47,6 +47,10 @@ namespace GameHubz.Localization
             "GameHubz.Localization.Resources.TranslationSR",
             typeof(LocalizationService).Assembly);
 
+        private static readonly ResourceManager RussianResources = new ResourceManager(
+            "GameHubz.Localization.Resources.TranslationRU",
+            typeof(LocalizationService).Assembly);
+
         /// <summary>ResourceManager lookups are cheap but the switch below is hit on every string.</summary>
         private static readonly ConcurrentDictionary<string, ResourceManager> ManagerCache = new();
 
@@ -128,6 +132,7 @@ namespace GameHubz.Localization
                 Languages.Portuguese => PortugueseResources,
                 Languages.Polish => PolishResources,
                 Languages.Serbian => SerbianResources,
+                Languages.Russian => RussianResources,
                 _ => EnglishResources,
             };
     }

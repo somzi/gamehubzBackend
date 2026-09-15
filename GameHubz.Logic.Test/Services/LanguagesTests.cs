@@ -55,6 +55,9 @@ namespace GameHubz.Logic.Test.Services
         [TestCase("sr", "sr")]
         [TestCase("sr-Latn", "sr")]  // the resource set is written in Latin script
         [TestCase("sr-Cyrl", "sr")]
+        [TestCase("ru", "ru")]
+        [TestCase("ru-RU", "ru")]
+        [TestCase("RU", "ru")]
         public void ToSupported_KeepsTheLanguagesWeRender(string input, string expected)
         {
             Assert.That(Languages.ToSupported(input), Is.EqualTo(expected));

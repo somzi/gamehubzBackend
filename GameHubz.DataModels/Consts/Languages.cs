@@ -12,6 +12,8 @@ namespace GameHubz.DataModels.Consts
 
         public const string Polish = "pl";
 
+        public const string Russian = "ru";
+
         /// <summary>
         /// Reduces a language tag to its bare code: "es-419", "ES" and " es " all become "es".
         /// Returns null for a blank value so callers can tell "not specified" apart from
@@ -48,6 +50,7 @@ namespace GameHubz.DataModels.Consts
                 Portuguese => Portuguese,
                 Polish => Polish,
                 Serbian => Serbian,
+                Russian => Russian,
                 _ => English,
             };
     }
