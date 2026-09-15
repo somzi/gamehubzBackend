@@ -32,10 +32,11 @@ namespace GameHubz.DataMigrations
                 .ToTable("User").PrimaryColumn("Id")
                 .OnDelete(Rule.Cascade);
 
-            // The inbox page: one user's rows, newest first, keyset on CreatedOn.
+            // The inbox page: one user's rows, newest first, keyset on CreatedOn plus Id so equal
+            // timestamps have a stable continuation point.
             Execute.Sql(@"
                 CREATE INDEX IF NOT EXISTS ""IX_Notification_User_CreatedOn""
-                ON ""Notification"" (""UserId"", ""CreatedOn"" DESC);");
+                ON ""Notification"" (""UserId"", ""CreatedOn"" DESC, ""Id"" DESC);");
 
             // The counters (bell + tab badges), mark-seen and mark-all-read only ever touch unread rows.
             // Partial on ReadOn, so this holds just the unread tail however long the history grows.

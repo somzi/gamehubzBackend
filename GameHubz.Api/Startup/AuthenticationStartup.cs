@@ -5,15 +5,12 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Identity.Web;
 using Microsoft.IdentityModel.Tokens;
-using GameHubz.Api.AuthenticationSchemes;
 using GameHubz.DataModels.Config;
 
 namespace GameHubz.Api.Startup
 {
     internal class AuthenticationStartup
     {
-        private const string GoogleJwtValidationSchemeName = "GoogleJwtValidation";
-
         internal static void ConfigureAuthentication(WebApplicationBuilder builder, IServiceCollection services)
         {
             IConfigurationSection authSettings = builder.Configuration.GetSection(nameof(AuthSettings));
@@ -98,39 +95,9 @@ namespace GameHubz.Api.Startup
                     .AddInMemoryTokenCaches();
             }
 
-            bool isGoogleEnabled = builder.Configuration.GetValue<bool>("Google:IsEnabled");
-
-            if (isGoogleEnabled)
-            {
-                authenticationBuilder.AddJwtBearer(GoogleJwtValidationSchemeName, o =>
-                {
-                    o.IncludeErrorDetails = true;
-
-                    // TODO:
-                    /*
-                     Severity	Code	Description	Project	File	Line	Suppression State	Details
-                    Warning (active)	CS0618	'JwtBearerOptions.SecurityTokenValidators' is obsolete:
-                    'SecurityTokenValidators is no longer used by default.
-                    Use TokenHandlers instead.
-                    To continue using SecurityTokenValidators, set UseSecurityTokenValidators to true.
-                    See https://aka.ms/aspnetcore8/security-token-changes'
-                     */
-
-                    o.UseSecurityTokenValidators = true;
-#pragma warning disable CS0618 // Type or member is obsolete
-                    o.SecurityTokenValidators.Add(new GoogleAuthenticationScheme(builder.Configuration.GetStringThrowIfNull("Google:ClientId")));
-#pragma warning restore CS0618 // Type or member is obsolete
-                });
-            }
-
             services.AddAuthorization(options =>
             {
                 var authSchemes = new List<string>() { JwtBearerDefaults.AuthenticationScheme };
-
-                if (isGoogleEnabled)
-                {
-                    authSchemes.Add(GoogleJwtValidationSchemeName);
-                }
 
                 if (isAzureLoginEnabled)
                 {

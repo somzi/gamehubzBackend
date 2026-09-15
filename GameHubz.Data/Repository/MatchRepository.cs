@@ -794,6 +794,7 @@ namespace GameHubz.Data.Repository
             var query = this.BaseDbSet()
                 .Where(m => m.Id == matchId
                     && m.CheckInResolvedOn == null
+                    && m.ProposedByUserId == null
                     && m.Status == MatchStatus.Scheduled);
 
             // The stamps the ruling was decided on must still be the stamps in the row. A check-in
@@ -804,6 +805,36 @@ namespace GameHubz.Data.Repository
 
             int affected = await query
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.CheckInResolvedOn, resolvedOn));
+
+            return affected > 0;
+        }
+
+        /// <summary>
+        /// Saves the proposal and claims the same check-in marker in one write. The proposal path and
+        /// deadline sweep race through conditional updates on this row, so a proposal awaiting
+        /// confirmation can never be overwritten by a forfeit or double walkover.
+        /// </summary>
+        public async Task<bool> TrySaveCheckInProposal(
+            Guid matchId,
+            int homeScore,
+            int awayScore,
+            string? gamesJson,
+            Guid proposedByUserId,
+            DateTime resolvedOn)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(m => m.Id == matchId
+                    && m.Status == MatchStatus.Scheduled
+                    && m.CheckInResolvedOn == null
+                    && m.ProposedByUserId == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.CheckInResolvedOn, resolvedOn)
+                    .SetProperty(m => m.ProposedHomeScore, homeScore)
+                    .SetProperty(m => m.ProposedAwayScore, awayScore)
+                    .SetProperty(m => m.ProposedGamesJson, gamesJson)
+                    .SetProperty(m => m.ProposedByUserId, proposedByUserId)
+                    .SetProperty(m => m.ModifiedOn, resolvedOn)
+                    .SetProperty(m => m.ModifiedBy, proposedByUserId));
 
             return affected > 0;
         }
@@ -851,6 +882,53 @@ namespace GameHubz.Data.Repository
                     && m.ScheduledStartTime != null
                     && m.ScheduledStartTime <= windowOpenedBefore)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.CheckInResolvedOn, resolvedOn));
+        }
+
+        /// <summary>
+        /// Writes one side's offered hours and nothing else. The two players answer the picker
+        /// independently, often at the same time, and the ready check stamps the same row near
+        /// kick-off — a full-entity write from this request's snapshot would erase the opponent's
+        /// hours or a check-in that landed in between. Refused on a decided match.
+        /// </summary>
+        public async Task<bool> TrySaveAvailabilitySlots(Guid matchId, bool home, string slotsJson, DateTime setOn)
+        {
+            var query = this.BaseDbSet()
+                .Where(m => m.Id == matchId
+                    && m.Status != MatchStatus.Completed
+                    && m.Status != MatchStatus.NoShow);
+
+            int affected = home
+                ? await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.HomeSlotsJson, slotsJson)
+                    .SetProperty(m => m.HomeSlotsSetOn, setOn)
+                    .SetProperty(m => m.ModifiedOn, setOn))
+                : await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.AwaySlotsJson, slotsJson)
+                    .SetProperty(m => m.AwaySlotsSetOn, setOn)
+                    .SetProperty(m => m.ModifiedOn, setOn));
+
+            return affected > 0;
+        }
+
+        /// <summary>
+        /// Confirms the kick-off the two availability lists met on — only while the match is still
+        /// Pending, so a stale picker can neither move a time the pair already agreed nor pull a
+        /// played, forfeited or tie-break match back to Scheduled. A new kick-off starts a new
+        /// ready check: any stamp or verdict left from an earlier time is dropped with it.
+        /// </summary>
+        public async Task<bool> TryScheduleFromAvailability(Guid matchId, DateTime scheduledStart, DateTime modifiedOn)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(m => m.Id == matchId && m.Status == MatchStatus.Pending)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.ScheduledStartTime, scheduledStart)
+                    .SetProperty(m => m.Status, MatchStatus.Scheduled)
+                    .SetProperty(m => m.HomeCheckedInOn, (DateTime?)null)
+                    .SetProperty(m => m.AwayCheckedInOn, (DateTime?)null)
+                    .SetProperty(m => m.CheckInResolvedOn, (DateTime?)null)
+                    .SetProperty(m => m.ModifiedOn, modifiedOn));
+
+            return affected > 0;
         }
 
         public async Task<MatchEntity?> GetWithStage(Guid id)

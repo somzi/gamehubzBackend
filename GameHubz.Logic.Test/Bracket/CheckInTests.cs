@@ -192,6 +192,69 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(voided.HomeUserScore, Is.Null);
         }
 
+        [Test]
+        public async Task CheckInDoubleWalkover_Final_StaysOpenAndUnclaimedForManualResolution()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.SingleElimination, 4);
+            await harness.NewService().GenerateSingleEliminationBracket(tid);
+            EnableCheckIn(harness, tid);
+
+            foreach (var semi in harness.Matches(tid).Where(m => m.RoundNumber == 1).ToList())
+            {
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = semi.Id!.Value,
+                    TournamentId = tid,
+                    HomeScore = 2,
+                    AwayScore = 0,
+                });
+            }
+
+            var final = harness.Matches(tid).Single(m => m.RoundNumber == 2);
+            MarkCheckedIn(harness, final.Id!.Value, DateTime.UtcNow.AddMinutes(-30));
+
+            var applied = await harness.NewService().ApplyCheckInDoubleWalkover(final.Id!.Value);
+
+            Assert.That(applied, Is.False, "a final cannot be voided automatically");
+            var stillOpen = harness.Match(final.Id!.Value);
+            Assert.That(stillOpen.Status, Is.EqualTo(MatchStatus.Scheduled));
+            Assert.That(stillOpen.CheckInResolvedOn, Is.Null, "no verdict landed, so no claim may be stamped");
+        }
+
+        [Test]
+        public async Task CheckInDoubleWalkover_PlayIn_StaysOpenAndUnclaimedForManualResolution()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(
+                TournamentFormat.Swiss, 6,
+                swissRoundsCount: 1, swissKnockoutQualifiers: 4, swissDirectQualifiers: 2);
+            await harness.NewService().GenerateSwissTournament(tid);
+            EnableCheckIn(harness, tid);
+
+            foreach (var swissMatch in harness.Matches(tid).Where(m => m.RoundNumber == 1).ToList())
+            {
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = swissMatch.Id!.Value,
+                    TournamentId = tid,
+                    HomeScore = 2,
+                    AwayScore = 0,
+                });
+            }
+
+            var playInStage = harness.Stages(tid).Single(s => s.Type == StageType.PlayIn);
+            var playIn = harness.Matches(tid).First(m => m.TournamentStageId == playInStage.Id);
+            MarkCheckedIn(harness, playIn.Id!.Value, DateTime.UtcNow.AddMinutes(-30));
+
+            var applied = await harness.NewService().ApplyCheckInDoubleWalkover(playIn.Id!.Value);
+
+            Assert.That(applied, Is.False, "a play-in must produce a qualifier");
+            var stillOpen = harness.Match(playIn.Id!.Value);
+            Assert.That(stillOpen.Status, Is.EqualTo(MatchStatus.Scheduled));
+            Assert.That(stillOpen.CheckInResolvedOn, Is.Null, "manual resolution must remain possible");
+        }
+
         // ── ruled once, and only once ────────────────────────────────────────────────────────
 
         [Test]
@@ -302,6 +365,100 @@ namespace GameHubz.Logic.Test.Bracket
                     AwayScore = 0,
                 }),
                 "one player's word is not a result - that is the whole point of the check");
+        }
+
+        [Test]
+        public async Task Report_IsAllowedBeforeTheCheckInWindowOpens()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
+            await harness.NewService().GenerateLeagueTournament(tid);
+            EnableCheckIn(harness, tid);
+
+            var fixture = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            MarkCheckedIn(harness, fixture.Id!.Value, DateTime.UtcNow.AddHours(2));
+
+            var playerId = harness.ParticipantUserId(fixture.HomeParticipantId!.Value);
+            await harness.DenyManageFor(playerId, tid);
+
+            await harness.NewServiceAsUser(playerId).UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = fixture.Id!.Value,
+                TournamentId = tid,
+                HomeScore = 3,
+                AwayScore = 0,
+            });
+
+            Assert.That(harness.Match(fixture.Id!.Value).Status, Is.EqualTo(MatchStatus.Completed),
+                "a match played early must be reportable before either side can check in");
+        }
+
+        [Test]
+        public async Task Proposal_IsRefusedWhenTheProposerNeverCheckedIn()
+        {
+            // The hole this closes: the opponent is in, the proposer is about to lose by forfeit, and a
+            // made-up score would have closed the ready check and made that forfeit never come.
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(
+                TournamentFormat.League, 4, requireResultApproval: true);
+            await harness.NewService().GenerateLeagueTournament(tid);
+            EnableCheckIn(harness, tid);
+
+            var fixture = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            var kickOff = DateTime.UtcNow.AddMinutes(-5);
+            MarkCheckedIn(harness, fixture.Id!.Value, kickOff, away: kickOff);
+
+            var proposerId = harness.ParticipantUserId(fixture.HomeParticipantId!.Value);
+            await harness.DenyManageFor(proposerId, tid);
+
+            Assert.ThrowsAsync<BusinessRuleException>(async () =>
+                await harness.NewServiceAsUser(proposerId).UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = fixture.Id!.Value,
+                    TournamentId = tid,
+                    HomeScore = 3,
+                    AwayScore = 0,
+                }),
+                "a player who never checked in must not be able to propose a score");
+
+            var after = harness.Match(fixture.Id!.Value);
+            Assert.That(after.ProposedByUserId, Is.Null);
+            Assert.That(after.CheckInResolvedOn, Is.Null, "the ready check stays open, so the forfeit still comes");
+        }
+
+        [Test]
+        public async Task Proposal_IsAllowedWhenTheProposerCheckedIn_EvenIfTheOpponentDidNot()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(
+                TournamentFormat.League, 4, requireResultApproval: true);
+            await harness.NewService().GenerateLeagueTournament(tid);
+            EnableCheckIn(harness, tid);
+
+            var fixture = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            var kickOff = DateTime.UtcNow.AddMinutes(-30);
+            MarkCheckedIn(harness, fixture.Id!.Value, kickOff, home: kickOff);
+
+            var proposerId = harness.ParticipantUserId(fixture.HomeParticipantId!.Value);
+            var opponentId = harness.ParticipantUserId(fixture.AwayParticipantId!.Value);
+            await harness.DenyManageFor(proposerId, tid);
+            await harness.DenyManageFor(opponentId, tid);
+
+            await harness.NewServiceAsUser(proposerId).UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = fixture.Id!.Value,
+                TournamentId = tid,
+                HomeScore = 3,
+                AwayScore = 0,
+            });
+
+            Assert.That(harness.Match(fixture.Id!.Value).ProposedByUserId, Is.EqualTo(proposerId),
+                "the first report remains only a proposal");
+
+            await harness.NewServiceAsUser(opponentId).ApproveProposedResult(fixture.Id!.Value);
+
+            Assert.That(harness.Match(fixture.Id!.Value).Status, Is.EqualTo(MatchStatus.Completed),
+                "opponent confirmation is sufficient even when the sweep missed the ready check");
         }
 
         [Test]

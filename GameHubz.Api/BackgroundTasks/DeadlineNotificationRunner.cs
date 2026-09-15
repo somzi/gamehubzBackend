@@ -46,6 +46,7 @@ namespace GameHubz.Api.BackgroundTasks
         private readonly int registrationLeadMinutes;
         private readonly int roundEarlyLeadMinutes;
         private readonly int roundFinalLeadMinutes;
+        private readonly int maxMatchesPerSweep;
 
         public DeadlineNotificationRunner(
             ApplicationContext context,
@@ -79,6 +80,12 @@ namespace GameHubz.Api.BackgroundTasks
                 "BackgroundTasks:DeadlineNotificationTask:RoundEarlyLeadTimeMinutes", 1440);
             this.roundFinalLeadMinutes = configuration.GetValue(
                 "BackgroundTasks:DeadlineNotificationTask:RoundFinalLeadTimeMinutes", 180);
+
+            // Fixtures one tick of the check-in and opponent-ready sweeps will take on. Whatever is left
+            // over is picked up a minute later; unbounded, a mid-tournament switch-on or an outage
+            // turned a single tick into hundreds of serial rulings while every other sweep waited.
+            this.maxMatchesPerSweep = Math.Clamp(configuration.GetValue(
+                "BackgroundTasks:DeadlineNotificationTask:MaxMatchesPerSweep", 200), 1, 2000);
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -344,6 +351,9 @@ namespace GameHubz.Api.BackgroundTasks
                         || m.Status == MatchStatus.Scheduled
                         || m.Status == MatchStatus.Live)
                     && m.Tournament!.Status == TournamentStatus.InProgress)
+                // Bounded like the other match sweeps; nearest deadline first.
+                .OrderBy(m => m.RoundDeadline)
+                .Take(maxMatchesPerSweep)
                 .Select(m => new
                 {
                     Id = m.Id!.Value,
@@ -360,97 +370,111 @@ namespace GameHubz.Api.BackgroundTasks
                 })
                 .ToListAsync(ct);
 
+            // Each match's wave is decided first and the tick then acts on all of them together: one user
+            // query, one inbox write and a shared run of Expo requests, and one marker update per wave —
+            // where every match used to pay for its own user lookup, full send and marker update.
+            var reminders = new List<RoundReminder>();
+
             foreach (var match in due)
             {
-                if (ct.IsCancellationRequested) return;
+                // Round length drives the adaptive last-call: prefer the actual open→deadline
+                // span, fall back to the tournament's configured round duration, else unknown.
+                double? roundLengthMinutes =
+                    match.RoundOpenAt.HasValue ? (match.Deadline - match.RoundOpenAt.Value).TotalMinutes
+                    : match.RoundDurationMinutes.HasValue ? match.RoundDurationMinutes.Value
+                    : (double?)null;
 
-                try
+                double finalLeadMinutes = roundLengthMinutes.HasValue
+                    ? Math.Min(this.roundFinalLeadMinutes, roundLengthMinutes.Value * RoundFinalLeadFraction)
+                    : this.roundFinalLeadMinutes;
+
+                DateTime lastCallAt = match.Deadline.AddMinutes(-finalLeadMinutes);
+                DateTime earlyAt = match.Deadline.AddMinutes(-this.roundEarlyLeadMinutes);
+
+                // Early reminder only makes sense when 24h-before lands after the round opened;
+                // shorter rounds skip straight to the single last-call.
+                bool earlyEligible = roundLengthMinutes.HasValue
+                    && roundLengthMinutes.Value >= this.roundEarlyLeadMinutes;
+
+                if (match.RoundReminderStage < 1 && earlyEligible && now >= earlyAt && now < lastCallAt)
                 {
-                    // Round length drives the adaptive last-call: prefer the actual open→deadline
-                    // span, fall back to the tournament's configured round duration, else unknown.
-                    double? roundLengthMinutes =
-                        match.RoundOpenAt.HasValue ? (match.Deadline - match.RoundOpenAt.Value).TotalMinutes
-                        : match.RoundDurationMinutes.HasValue ? match.RoundDurationMinutes.Value
-                        : (double?)null;
-
-                    double finalLeadMinutes = roundLengthMinutes.HasValue
-                        ? Math.Min(this.roundFinalLeadMinutes, roundLengthMinutes.Value * RoundFinalLeadFraction)
-                        : this.roundFinalLeadMinutes;
-
-                    DateTime lastCallAt = match.Deadline.AddMinutes(-finalLeadMinutes);
-                    DateTime earlyAt = match.Deadline.AddMinutes(-this.roundEarlyLeadMinutes);
-
-                    // Early reminder only makes sense when 24h-before lands after the round opened;
-                    // shorter rounds skip straight to the single last-call.
-                    bool earlyEligible = roundLengthMinutes.HasValue
-                        && roundLengthMinutes.Value >= this.roundEarlyLeadMinutes;
-
-                    int newStage;
-                    string bodyKey;
-
-                    if (match.RoundReminderStage < 1 && earlyEligible && now >= earlyAt && now < lastCallAt)
-                    {
-                        newStage = 1;
-                        bodyKey = "Push.RoundDeadline.Body";
-                    }
-                    else if (now >= lastCallAt)
-                    {
-                        // Covers both the normal last-call and the case where we missed the early
-                        // window (task was down) — we jump straight to the final reminder, never both.
-                        newStage = 2;
-                        bodyKey = "Push.RoundDeadlineFinal.Body";
-                    }
-                    else
-                    {
-                        continue; // not inside any reminder window yet
-                    }
-
-                    var userIds = new List<Guid>();
-                    if (match.HomeUserId.HasValue) userIds.Add(match.HomeUserId.Value);
-                    if (match.AwayUserId.HasValue) userIds.Add(match.AwayUserId.Value);
-
-                    if (userIds.Count > 0)
-                    {
-                        // Both players with whatever channels they have: the inbox always, a push when there
-                        // is a token, and a linked Discord DM on top.
-                        var targets = await context.Set<UserEntity>()
-                            .AsNoTracking()
-                            .Where(u => userIds.Contains(u.Id!.Value) && u.IsActive)
-                            .Select(u => new { Id = u.Id!.Value, u.PushToken, u.Language, u.DiscordUserId, u.DiscordDmEnabled })
-                            .ToListAsync(ct);
-
-                        var recipients = targets
-                            .Select(t => PushRecipient.ForUser(t.Id, t.PushToken, t.Language))
-                            .ToList();
-
-                        if (recipients.Count > 0)
-                        {
-                            await notificationService.SendLocalizedToManyAsync(
-                                recipients,
-                                PushText.FromLiteral(match.TournamentName),
-                                PushText.FromKey(bodyKey),
-                                // teamMatchId — carried for team-tournament sub-matches so the mobile deep
-                                // link can route to the team-match modal (the solo modal renders empty for
-                                // a sub-match id).
-                                new { tournamentId = match.TournamentId, matchId = match.Id, teamMatchId = match.TeamMatchId, type = "roundDeadline" });
-                        }
-
-                        foreach (var target in targets.Where(t => t.DiscordUserId != null && t.DiscordDmEnabled))
-                        {
-                            string dmContent = $"⏰ **{match.TournamentName}** — {this.localizationService[bodyKey, target.Language]}\n"
-                                + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
-                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
-                        }
-                    }
-
-                    await context.Set<MatchEntity>()
-                        .Where(m => m.Id == match.Id)
-                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundReminderStage, newStage), ct);
+                    reminders.Add(new RoundReminder(match.Id, 1, "Push.RoundDeadline.Body", match.TournamentId,
+                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId));
                 }
-                catch (Exception ex)
+                else if (now >= lastCallAt)
                 {
-                    logger.LogWarning(ex, "Failed round reminder for match {MatchId}.", match.Id);
+                    // Covers both the normal last-call and the case where we missed the early
+                    // window (task was down) — we jump straight to the final reminder, never both.
+                    reminders.Add(new RoundReminder(match.Id, 2, "Push.RoundDeadlineFinal.Body", match.TournamentId,
+                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId));
                 }
+
+                // Otherwise: not inside any reminder window yet.
+            }
+
+            if (reminders.Count == 0 || ct.IsCancellationRequested) return;
+
+            // Both players with whatever channels they have: the inbox always, a push when there is a
+            // token, and a linked Discord DM on top.
+            var users = await LoadSweepUsersAsync(reminders.SelectMany(r => new[] { r.HomeUserId, r.AwayUserId }), ct);
+
+            var pushes = reminders
+                .Select(r => new LocalizedPush(
+                    RecipientsOf(users, new[] { r.HomeUserId, r.AwayUserId }),
+                    PushText.FromLiteral(r.TournamentName),
+                    PushText.FromKey(r.BodyKey),
+                    // teamMatchId — carried for team-tournament sub-matches so the mobile deep link can
+                    // route to the team-match modal (the solo modal renders empty for a sub-match id).
+                    new { tournamentId = r.TournamentId, matchId = r.MatchId, teamMatchId = r.TeamMatchId, type = "roundDeadline" }))
+                .Where(push => push.Recipients.Count > 0)
+                .ToList();
+
+            try
+            {
+                await notificationService.SendLocalizedBatchAsync(pushes);
+            }
+            catch (Exception ex)
+            {
+                // Nothing is marked, so the whole tick is retried on the next one — the same rule a single
+                // failed match used to follow.
+                logger.LogWarning(ex, "Failed round reminders for {Count} match(es).", reminders.Count);
+                return;
+            }
+
+            foreach (var reminder in reminders)
+            {
+                foreach (Guid? userId in new[] { reminder.HomeUserId, reminder.AwayUserId })
+                {
+                    if (userId == null
+                        || !users.TryGetValue(userId.Value, out var target)
+                        || !target.IsActive
+                        || target.DiscordUserId == null
+                        || !target.DiscordDmEnabled)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        string dmContent = $"⏰ **{reminder.TournamentName}** — {this.localizationService[reminder.BodyKey, target.Language]}\n"
+                            + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{reminder.TournamentId}>)";
+                        await discordDmService.SendDmAsync(target.DiscordUserId, dmContent);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed round reminder DM for match {MatchId}.", reminder.MatchId);
+                    }
+                }
+            }
+
+            foreach (var wave in reminders.GroupBy(r => r.Stage))
+            {
+                int stage = wave.Key;
+                var matchIds = wave.Select(r => r.MatchId).ToList();
+
+                await context.Set<MatchEntity>()
+                    .Where(m => matchIds.Contains(m.Id!.Value))
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundReminderStage, stage), ct);
             }
         }
 
@@ -484,9 +508,13 @@ namespace GameHubz.Api.BackgroundTasks
                     && m.ScheduledStartTime <= now
                     && m.ScheduledStartTime >= oldestRulable
                     && m.CheckInResolvedOn == null
+                    && m.ProposedByUserId == null
                     && (m.HomeCheckedInOn == null || m.AwayCheckedInOn == null)
                     && m.Tournament!.RequireMatchCheckIn
                     && m.Tournament!.Status == TournamentStatus.InProgress)
+                // Oldest kick-off first, so a backlog is ruled in the order it fell due.
+                .OrderBy(m => m.ScheduledStartTime)
+                .Take(maxMatchesPerSweep)
                 .Select(m => new
                 {
                     Id = m.Id!.Value,
@@ -502,6 +530,14 @@ namespace GameHubz.Api.BackgroundTasks
                     AwayUserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
                 })
                 .ToListAsync(ct);
+
+            // Everyone the rulings below may notify, in one query — and only for the rows whose deadline
+            // has actually passed, so a tick where everyone is still inside their grace queries nothing.
+            var users = await LoadSweepUsersAsync(
+                due.Where(m => now >= MatchCheckInRules.Deadline(
+                        m.Start, m.HomeCheckedInOn, m.AwayCheckedInOn, MatchCheckInRules.ResolveGraceMinutes(m.GraceMinutes)))
+                    .SelectMany(m => new[] { m.HomeUserId, m.AwayUserId }),
+                ct);
 
             foreach (var match in due)
             {
@@ -533,6 +569,7 @@ namespace GameHubz.Api.BackgroundTasks
                             match.TeamMatchId,
                             winnerUserId: homeIn ? match.HomeUserId : match.AwayUserId,
                             loserUserId: homeIn ? match.AwayUserId : match.HomeUserId,
+                            users,
                             ct);
                     }
                     else
@@ -547,6 +584,7 @@ namespace GameHubz.Api.BackgroundTasks
                             match.Id,
                             match.TeamMatchId,
                             new[] { match.HomeUserId, match.AwayUserId },
+                            users,
                             ct);
                     }
                 }
@@ -562,34 +600,26 @@ namespace GameHubz.Api.BackgroundTasks
         // Winner and loser hear different things, so this is two sends rather than one broadcast.
         private async Task NotifyCheckInForfeitAsync(
             Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
-            Guid? winnerUserId, Guid? loserUserId, CancellationToken ct)
+            Guid? winnerUserId, Guid? loserUserId, IReadOnlyDictionary<Guid, SweepUser> users, CancellationToken ct)
         {
             await SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
-                new[] { winnerUserId }, "Push.MatchCheckInWin.Body", ct);
+                new[] { winnerUserId }, "Push.MatchCheckInWin.Body", users, ct);
 
             await SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
-                new[] { loserUserId }, "Push.MatchCheckInLoss.Body", ct);
+                new[] { loserUserId }, "Push.MatchCheckInLoss.Body", users, ct);
         }
 
         private Task NotifyCheckInVoidAsync(
             Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
-            IEnumerable<Guid?> userIds, CancellationToken ct)
+            IEnumerable<Guid?> userIds, IReadOnlyDictionary<Guid, SweepUser> users, CancellationToken ct)
             => SendCheckInPushAsync(tournamentId, tournamentName, matchId, teamMatchId,
-                userIds, "Push.MatchCheckInVoid.Body", ct);
+                userIds, "Push.MatchCheckInVoid.Body", users, ct);
 
         private async Task SendCheckInPushAsync(
             Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
-            IEnumerable<Guid?> userIds, string bodyKey, CancellationToken ct)
+            IEnumerable<Guid?> userIds, string bodyKey, IReadOnlyDictionary<Guid, SweepUser> users, CancellationToken ct)
         {
-            var ids = userIds.Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
-            if (ids.Count == 0) return;
-
-            // No push token is no reason to skip anyone: they still get the inbox row.
-            var recipients = await context.Set<UserEntity>()
-                .AsNoTracking()
-                .Where(u => ids.Contains(u.Id!.Value) && u.IsActive)
-                .Select(u => PushRecipient.ForUser(u.Id!.Value, u.PushToken, u.Language))
-                .ToListAsync(ct);
+            var recipients = RecipientsOf(users, userIds);
 
             if (recipients.Count == 0) return;
 
@@ -644,6 +674,10 @@ namespace GameHubz.Api.BackgroundTasks
                     // The opening round of the opening stage IS the tournament starting, and
                     // Push.TournamentLive already says so.
                     && !(m.TournamentStage!.Order == 1 && m.RoundNumber == 1))
+                // Bounded per tick like the check-in sweep; the marker drops each announced row out of
+                // this query, so whatever did not fit is simply first in line next tick.
+                .OrderBy(m => m.Id)
+                .Take(maxMatchesPerSweep)
                 .Select(m => new
                 {
                     Id = m.Id!.Value,
@@ -657,10 +691,52 @@ namespace GameHubz.Api.BackgroundTasks
                         ? m.HomeParticipant.Team.TeamName : null,
                     AwayTeamName = m.AwayParticipant != null && m.AwayParticipant.Team != null
                         ? m.AwayParticipant.Team.TeamName : null,
+                    HomeCaptainUserId = m.HomeParticipant != null && m.HomeParticipant.Team != null
+                        ? m.HomeParticipant.Team.CaptainUserId : null,
+                    AwayCaptainUserId = m.AwayParticipant != null && m.AwayParticipant.Team != null
+                        ? m.AwayParticipant.Team.CaptainUserId : null,
                 })
                 .ToListAsync(ct);
 
-            foreach (var match in due)
+            // Names and push targets for every player and captain in this tick, in one query — this used
+            // to be four user lookups per announced match.
+            var users = await LoadSweepUsersAsync(
+                due.SelectMany(m => new[] { m.HomeUserId, m.AwayUserId, m.HomeCaptainUserId, m.AwayCaptainUserId }),
+                ct);
+
+            // Team ties: one announcement per tie, to the two captains. The games of a tie carry the
+            // teams from the moment it is drawn, but a player only once their captain nominates them —
+            // so a per-game send found nobody to tell, stamped the marker anyway, and the news was lost
+            // for good. The captain is the person who has to act on it (the lineup is next), and the
+            // nominated players hear about their games from the lineup push. Every game of the tie is
+            // claimed at once, so a best-of-five tie is one push, not five.
+            foreach (var tie in due.Where(m => m.TeamMatchId != null).GroupBy(m => m.TeamMatchId!.Value))
+            {
+                if (ct.IsCancellationRequested) return;
+
+                var game = tie.First();
+
+                try
+                {
+                    int claimed = await context.Set<MatchEntity>()
+                        .Where(m => m.TeamMatchId == tie.Key && m.OpponentNotifiedOn == null)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.OpponentNotifiedOn, now), ct);
+
+                    if (claimed == 0) continue;
+
+                    await SendOpponentReadyPushAsync(game.TournamentId, game.TournamentName, game.Id,
+                        tie.Key, game.HomeCaptainUserId, game.AwayTeamName ?? "—", users, ct);
+
+                    await SendOpponentReadyPushAsync(game.TournamentId, game.TournamentName, game.Id,
+                        tie.Key, game.AwayCaptainUserId, game.HomeTeamName ?? "—", users, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed opponent-ready notification for team match {TeamMatchId}.", tie.Key);
+                }
+            }
+
+            foreach (var match in due.Where(m => m.TeamMatchId == null))
             {
                 if (ct.IsCancellationRequested) return;
 
@@ -677,14 +753,14 @@ namespace GameHubz.Api.BackgroundTasks
 
                     // Each player hears their OWN opponent's name, so this is two sends rather than
                     // one broadcast. A team side is named by its team; a solo side by its username.
-                    string homeName = match.HomeTeamName ?? await ResolveUsernameAsync(match.HomeUserId, ct);
-                    string awayName = match.AwayTeamName ?? await ResolveUsernameAsync(match.AwayUserId, ct);
+                    string homeName = match.HomeTeamName ?? UsernameOf(users, match.HomeUserId);
+                    string awayName = match.AwayTeamName ?? UsernameOf(users, match.AwayUserId);
 
                     await SendOpponentReadyPushAsync(match.TournamentId, match.TournamentName, match.Id,
-                        match.TeamMatchId, match.HomeUserId, awayName, ct);
+                        match.TeamMatchId, match.HomeUserId, awayName, users, ct);
 
                     await SendOpponentReadyPushAsync(match.TournamentId, match.TournamentName, match.Id,
-                        match.TeamMatchId, match.AwayUserId, homeName, ct);
+                        match.TeamMatchId, match.AwayUserId, homeName, users, ct);
                 }
                 catch (Exception ex)
                 {
@@ -693,31 +769,50 @@ namespace GameHubz.Api.BackgroundTasks
             }
         }
 
-        private async Task<string> ResolveUsernameAsync(Guid? userId, CancellationToken ct)
+        /// <summary>A user as the match sweeps need them: a name, a push target and a Discord DM target.</summary>
+        private sealed record SweepUser(
+            Guid Id, string? Username, string? PushToken, string? Language, bool IsActive, string? DiscordUserId, bool DiscordDmEnabled);
+
+        /// <summary>One round-deadline reminder the tick has decided to send.</summary>
+        private sealed record RoundReminder(
+            Guid MatchId, int Stage, string BodyKey, Guid TournamentId, string TournamentName,
+            Guid? TeamMatchId, Guid? HomeUserId, Guid? AwayUserId);
+
+        // One query for everyone a sweep may notify or name, instead of one or two per match.
+        private async Task<Dictionary<Guid, SweepUser>> LoadSweepUsersAsync(IEnumerable<Guid?> userIds, CancellationToken ct)
         {
-            if (userId == null) return "—";
+            var ids = userIds.Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
+            if (ids.Count == 0) return new Dictionary<Guid, SweepUser>();
 
-            var name = await context.Set<UserEntity>()
+            return await context.Set<UserEntity>()
                 .AsNoTracking()
-                .Where(u => u.Id == userId.Value)
-                .Select(u => u.Username)
-                .FirstOrDefaultAsync(ct);
-
-            return string.IsNullOrWhiteSpace(name) ? "—" : name;
+                .Where(u => ids.Contains(u.Id!.Value))
+                .Select(u => new SweepUser(u.Id!.Value, u.Username, u.PushToken, u.Language, u.IsActive, u.DiscordUserId, u.DiscordDmEnabled))
+                .ToDictionaryAsync(u => u.Id, ct);
         }
+
+        // Deactivated accounts still have a name to show, so the lookup above does not filter them out.
+        private static string UsernameOf(IReadOnlyDictionary<Guid, SweepUser> users, Guid? userId)
+            => userId != null && users.TryGetValue(userId.Value, out var user) && !string.IsNullOrWhiteSpace(user.Username)
+                ? user.Username!
+                : "—";
+
+        // No push token is no reason to skip anyone — they still get the inbox row. A deactivated account is.
+        private static List<PushRecipient> RecipientsOf(IReadOnlyDictionary<Guid, SweepUser> users, IEnumerable<Guid?> userIds)
+            => userIds
+                .Where(id => id != null)
+                .Select(id => id!.Value)
+                .Distinct()
+                .Select(id => users.TryGetValue(id, out var user) && user.IsActive ? user : null)
+                .Where(user => user != null)
+                .Select(user => PushRecipient.ForUser(user!.Id, user.PushToken, user.Language))
+                .ToList();
 
         private async Task SendOpponentReadyPushAsync(
             Guid tournamentId, string tournamentName, Guid matchId, Guid? teamMatchId,
-            Guid? recipientUserId, string opponentName, CancellationToken ct)
+            Guid? recipientUserId, string opponentName, IReadOnlyDictionary<Guid, SweepUser> users, CancellationToken ct)
         {
-            if (recipientUserId == null) return;
-
-            var recipients = await context.Set<UserEntity>()
-                .AsNoTracking()
-                .Where(u => u.Id == recipientUserId.Value && u.IsActive)
-                .Select(u => PushRecipient.ForUser(u.Id!.Value, u.PushToken, u.Language))
-                .ToListAsync(ct);
-
+            var recipients = RecipientsOf(users, new[] { recipientUserId });
             if (recipients.Count == 0) return;
 
             await notificationService.SendLocalizedToManyAsync(

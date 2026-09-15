@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Resources;
 using GameHubz.DataModels.Consts;
 using GameHubz.Localization.Resources;
@@ -54,9 +53,6 @@ namespace GameHubz.Localization
         private static readonly ResourceManager UkrainianResources = new ResourceManager(
             "GameHubz.Localization.Resources.TranslationUK",
             typeof(LocalizationService).Assembly);
-
-        /// <summary>ResourceManager lookups are cheap but the switch below is hit on every string.</summary>
-        private static readonly ConcurrentDictionary<string, ResourceManager> ManagerCache = new();
 
         private readonly IHttpContextAccessor? httpContextAccessor;
         private readonly string configuredLanguage;
@@ -120,7 +116,11 @@ namespace GameHubz.Localization
 
         private static string Resolve(string key, string language)
         {
-            ResourceManager manager = ManagerCache.GetOrAdd(language, ManagerFor);
+            // Straight to the switch, no cache in front of it. The cache was keyed by the raw Language
+            // header, which the client controls: every distinct value became an entry that was never
+            // evicted, so a caller sending random headers grew server memory without bound — and a
+            // switch over seven constants is no slower than the dictionary lookup that cached it.
+            ResourceManager manager = ManagerFor(language);
 
             // A key missing from the translated set falls back to English rather than to the
             // key name, so a partially translated resx never leaks "Exception.EmptyEmail".

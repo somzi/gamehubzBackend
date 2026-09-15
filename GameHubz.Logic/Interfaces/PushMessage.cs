@@ -21,6 +21,9 @@ namespace GameHubz.Logic.Interfaces
             => new(pushToken ?? string.Empty, language, userId);
     }
 
+    /// <summary>One notification of a batch: its own recipients, wording and payload.</summary>
+    public sealed record LocalizedPush(IReadOnlyCollection<PushRecipient> Recipients, PushText Title, PushText Body, object? Data = null);
+
     /// <summary>
     /// One line of a push — either a translation key, or literal text that must not be
     /// translated (a username, team name, hub name or tournament name).

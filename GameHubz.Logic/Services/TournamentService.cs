@@ -698,6 +698,13 @@ namespace GameHubz.Logic.Services
             if (entity.TiebreakBestOf != null)
                 entity.TiebreakBestOf = SeriesEvaluator.Normalize(entity.TiebreakBestOf);
 
+            // Same for the ready-check grace, which the app takes as free text. Stored clamped rather than
+            // rejected: an older client re-sends whatever the row already holds, and a 400 there would lock
+            // it out of editing the tournament at all. Every reader already resolves the value through the
+            // same rule, so this only makes the stored number agree with what the server enforces.
+            if (entity.CheckInGraceMinutes != null)
+                entity.CheckInGraceMinutes = GameHubz.DataModels.Consts.MatchCheckInRules.ResolveGraceMinutes(entity.CheckInGraceMinutes);
+
             // A knockout length only means something where a bracket follows another phase; on a
             // plain bracket or a league it would be a second number describing the same matches,
             // so it is dropped rather than stored to confuse a later read.

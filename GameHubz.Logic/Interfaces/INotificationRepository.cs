@@ -7,8 +7,16 @@ namespace GameHubz.Logic.Interfaces
         /// <summary>Stages new inbox rows (ids pre-assigned by the caller, who needs them for the push). Caller saves.</summary>
         void AddRange(IEnumerable<NotificationEntity> rows);
 
-        /// <summary>One user's rows, newest first — strictly older than <paramref name="before"/> when given.</summary>
-        Task<List<NotificationEntity>> GetPage(Guid userId, NotificationCategory? category, DateTime? before, int take);
+        /// <summary>
+        /// One user's rows, newest first. The cursor is the last row's creation time plus id so rows
+        /// sharing the same timestamp are continued rather than skipped at a page boundary.
+        /// </summary>
+        Task<List<NotificationEntity>> GetPage(
+            Guid userId,
+            NotificationCategory? category,
+            DateTime? before,
+            Guid? beforeId,
+            int take);
 
         /// <summary>Unread / unseen counters for each requested user that has at least one unread row.</summary>
         Task<Dictionary<Guid, NotificationSummaryDto>> GetSummaries(IReadOnlyCollection<Guid> userIds);

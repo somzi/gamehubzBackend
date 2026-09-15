@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
@@ -42,28 +43,47 @@ namespace GameHubz.Logic.Services
             "friend_request",
             "scheduleCleared",
             "matchAvailability",
+            "lineupMissing",
         };
 
         private readonly IHubContext<UserHub> hubContext;
+        private readonly int retentionDays;
 
         public NotificationInboxService(
             IUnitOfWorkFactory factory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
-            IHubContext<UserHub> hubContext)
+            IHubContext<UserHub> hubContext,
+            // Optional so a test can build the service without configuration; DI always supplies it.
+            Microsoft.Extensions.Configuration.IConfiguration? configuration = null)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
+            this.retentionDays = NotificationRetentionRules.ResolveRetentionDays(
+                configuration?[NotificationRetentionRules.RetentionDaysConfigKey] is string raw
+                    && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int days)
+                    ? days
+                    : null);
         }
 
         public async Task<NotificationPageDto> GetPage(string? category, int? take, string? before)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             int pageSize = Math.Clamp(take ?? DefaultPageSize, 1, MaxPageSize);
+            NotificationCursor? cursor = ParseCursor(before);
+
+            // A cursor this server never issued is a client bug. Answered with page one, it sent an
+            // infinite scroll round and round the newest rows without anyone noticing; a 400 surfaces it.
+            if (cursor == null && !string.IsNullOrWhiteSpace(before))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.InvalidNotificationCursor"]);
 
             // One row past the page says whether anything older exists, without a count query.
             var rows = await this.AppUnitOfWork.NotificationRepository.GetPage(
-                user.UserId, ParseCategory(category), ParseCursor(before), pageSize + 1);
+                user.UserId,
+                ParseCategory(category),
+                cursor?.CreatedOn,
+                cursor?.Id,
+                pageSize + 1);
 
             bool hasMore = rows.Count > pageSize;
             if (hasMore)
@@ -74,11 +94,12 @@ namespace GameHubz.Logic.Services
             return new NotificationPageDto
             {
                 Items = rows.Select(ToDto).ToList(),
-                // Raw ticks rather than the serialised timestamp: the JSON converter writes milliseconds,
-                // the column keeps microseconds, and a truncated cursor would skip rows at the page edge.
+                // CreatedOn is the main key and Id is its deterministic tie-breaker. Raw ticks preserve
+                // sub-millisecond precision that the JSON timestamp converter does not expose.
                 NextCursor = hasMore
-                    ? rows[^1].CreatedOn!.Value.Ticks.ToString(CultureInfo.InvariantCulture)
+                    ? FormatCursor(rows[^1])
                     : null,
+                RetentionDays = this.retentionDays,
             };
         }
 
@@ -125,53 +146,78 @@ namespace GameHubz.Logic.Services
             PushText title,
             PushText body,
             JsonObject? payload)
+            => (await this.RecordBatchAsync(new[] { new InboxRecord(languageByUser, title, body, payload) }))[0];
+
+        /// <summary>One notification to record: who gets a row, its wording and its payload.</summary>
+        public readonly record struct InboxRecord(
+            IReadOnlyDictionary<Guid, string?> LanguageByUser,
+            PushText Title,
+            PushText Body,
+            JsonObject? Payload);
+
+        /// <summary>
+        /// <see cref="RecordAsync"/> for several notifications in one save — a sweep that reminds the players
+        /// of a whole round writes its rows together instead of one insert per match. Returns each
+        /// notification's user → row id map, in the order they were given.
+        /// </summary>
+        public async Task<IReadOnlyList<IReadOnlyDictionary<Guid, Guid>>> RecordBatchAsync(IReadOnlyList<InboxRecord> records)
         {
-            var ids = new Dictionary<Guid, Guid>(languageByUser.Count);
-            if (languageByUser.Count == 0)
+            var result = new List<IReadOnlyDictionary<Guid, Guid>>(records.Count);
+            var rows = new List<NotificationEntity>();
+
+            foreach (InboxRecord record in records)
             {
-                return ids;
-            }
+                var ids = new Dictionary<Guid, Guid>(record.LanguageByUser.Count);
+                result.Add(ids);
 
-            string? type = ReadType(payload);
-            NotificationCategory category = type != null && ActionTypes.Contains(type)
-                ? NotificationCategory.Action
-                : NotificationCategory.Update;
-            string? dataJson = payload?.ToJsonString();
-
-            // Resolved once per language rather than once per user.
-            var wording = new Dictionary<string, (string Title, string Body)>(StringComparer.OrdinalIgnoreCase);
-            var rows = new List<NotificationEntity>(languageByUser.Count);
-
-            foreach (var (userId, language) in languageByUser)
-            {
-                string key = language ?? string.Empty;
-                if (!wording.TryGetValue(key, out var text))
+                if (record.LanguageByUser.Count == 0)
                 {
-                    text = (title.Resolve(this.LocalizationService, language), body.Resolve(this.LocalizationService, language));
-                    wording[key] = text;
+                    continue;
                 }
 
-                Guid id = Guid.NewGuid();
-                ids[userId] = id;
+                string? type = ReadType(record.Payload);
+                NotificationCategory category = type != null && ActionTypes.Contains(type)
+                    ? NotificationCategory.Action
+                    : NotificationCategory.Update;
+                string? dataJson = record.Payload?.ToJsonString();
 
-                rows.Add(new NotificationEntity
+                // Resolved once per language rather than once per user.
+                var wording = new Dictionary<string, (string Title, string Body)>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var (userId, language) in record.LanguageByUser)
                 {
-                    Id = id,
-                    UserId = userId,
-                    Type = type,
-                    Category = category,
-                    Title = text.Title,
-                    Body = text.Body,
-                    DataJson = dataJson,
-                });
+                    string key = language ?? string.Empty;
+                    if (!wording.TryGetValue(key, out var text))
+                    {
+                        text = (record.Title.Resolve(this.LocalizationService, language), record.Body.Resolve(this.LocalizationService, language));
+                        wording[key] = text;
+                    }
+
+                    Guid id = Guid.NewGuid();
+                    ids[userId] = id;
+
+                    rows.Add(new NotificationEntity
+                    {
+                        Id = id,
+                        UserId = userId,
+                        Type = type,
+                        Category = category,
+                        Title = text.Title,
+                        Body = text.Body,
+                        DataJson = dataJson,
+                    });
+                }
             }
 
-            this.AppUnitOfWork.NotificationRepository.AddRange(rows);
-            await this.SaveAsync();
+            if (rows.Count > 0)
+            {
+                this.AppUnitOfWork.NotificationRepository.AddRange(rows);
+                await this.SaveAsync();
+            }
 
             // No counter push here: NotificationService sends it once the pushes are out, so a large
             // announcement is not held back by one SignalR send per recipient.
-            return ids;
+            return result;
         }
 
         /// <summary>
@@ -276,11 +322,42 @@ namespace GameHubz.Logic.Services
                 _ => null,
             };
 
-        private static DateTime? ParseCursor(string? cursor)
-            => long.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out long ticks)
-                && ticks > 0
-                && ticks <= DateTime.MaxValue.Ticks
-                ? new DateTime(ticks, DateTimeKind.Utc)
+        private readonly record struct NotificationCursor(DateTime CreatedOn, Guid? Id);
+
+        private static string FormatCursor(NotificationEntity row)
+            => string.Concat(
+                row.CreatedOn!.Value.Ticks.ToString(CultureInfo.InvariantCulture),
+                ":",
+                row.Id!.Value.ToString("N"));
+
+        private static NotificationCursor? ParseCursor(string? cursor)
+        {
+            if (string.IsNullOrWhiteSpace(cursor))
+            {
+                return null;
+            }
+
+            int separator = cursor.IndexOf(':');
+            string ticksText = separator >= 0 ? cursor[..separator] : cursor;
+
+            if (!long.TryParse(ticksText, NumberStyles.None, CultureInfo.InvariantCulture, out long ticks)
+                || ticks <= 0
+                || ticks > DateTime.MaxValue.Ticks)
+            {
+                return null;
+            }
+
+            // Accept the old ticks-only cursor so an already-open app can continue paging across a
+            // backend rollout. Every cursor returned from this version includes the row id.
+            if (separator < 0)
+            {
+                return new NotificationCursor(new DateTime(ticks, DateTimeKind.Utc), null);
+            }
+
+            string idText = cursor[(separator + 1)..];
+            return Guid.TryParseExact(idText, "N", out Guid id)
+                ? new NotificationCursor(new DateTime(ticks, DateTimeKind.Utc), id)
                 : null;
+        }
     }
 }

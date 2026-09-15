@@ -17,7 +17,6 @@ namespace GameHubz.Api.Controllers
 
         private readonly AuthSettings authSettings;
         private readonly AuthService authService;
-        private readonly GoogleAuthService googleAuthService;
         private readonly ILocalizationService localizationService;
         private readonly PasswordManagementService passwordManagementService;
         private readonly UserService userService;
@@ -26,7 +25,6 @@ namespace GameHubz.Api.Controllers
         public AuthController(AuthService authService,
             IOptions<AuthSettings> authSettingsOptions,
             ILocalizationService localizationService,
-            GoogleAuthService googleAuthService,
             PasswordManagementService passwordManagementService,
             UserService userService,
             IConfiguration configuration)
@@ -39,7 +37,6 @@ namespace GameHubz.Api.Controllers
             this.authSettings = authSettingsOptions.Value;
             this.authService = authService;
             this.localizationService = localizationService;
-            this.googleAuthService = googleAuthService;
             this.passwordManagementService = passwordManagementService;
             this.userService = userService;
             this.configuration = configuration;
@@ -68,15 +65,6 @@ namespace GameHubz.Api.Controllers
             {
                 return this.Unauthorized(response.Messages);
             }
-        }
-
-        [HttpPost("googleLogin")]
-        [Authorize]
-        public async Task<ActionResult> LoginGoogle()
-        {
-            await this.googleAuthService.GoogleLogin();
-
-            return this.Ok();
         }
 
         [HttpPost("refreshtoken")]
@@ -189,7 +177,12 @@ namespace GameHubz.Api.Controllers
             await this.userService.ResendVerificationEmail(resendVerificationRequestDto);
         }
 
+        // Only a signed-in user, for their own account — the service reads the id from the token, never
+        // from the request. [Authorize] makes a missing or expired token a 401, which the app answers by
+        // refreshing the token and retrying; without it the service threw and the user got a 500 and a
+        // delete that silently failed.
         [HttpDelete()]
+        [Authorize]
         public async Task DeleteAccount()
         {
             await this.userService.DeleteAccount();

@@ -2508,19 +2508,35 @@ namespace GameHubz.Logic.Services
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNotFound"]);
             bool isPrivileged = await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, currentUser);
 
-            // Ready check: a scheduled match still waiting on a check-in is not the participants'
-            // to score. Either the missing side is about to forfeit, or it turns up and both are
-            // in — letting one player report in the meantime would decide the match on his word
-            // alone, which is the exact thing the check exists to prevent. Organizers are outside
-            // this: they are the escape hatch when the pair played anyway.
-            if (approvalCtx.RequireMatchCheckIn
+            // Ready check only owns the match once its window has opened. Before that, a result is
+            // evidence that the pair played earlier than the scheduled kick-off, so it must not be
+            // rejected merely because neither side could check in yet. Organizers are the manual
+            // escape hatch throughout.
+            bool checkInWindowOpen = approvalCtx.RequireMatchCheckIn
                 && !isPrivileged
                 && match.Status == MatchStatus.Scheduled
                 && match.ScheduledStartTime.HasValue
-                && match.CheckInResolvedOn == null
+                && DateTime.UtcNow >= MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value)
+                && match.CheckInResolvedOn == null;
+
+            // A direct report decides the match on one player's word, so both sides must be in.
+            if (checkInWindowOpen
+                && !approvalCtx.RequireResultApproval
                 && (match.HomeCheckedInOn == null || match.AwayCheckedInOn == null))
             {
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInRequiredToReport"]);
+            }
+
+            // An approval-mode report is only a proposal — the opponent still has to confirm it, so the
+            // opponent need not be in yet. The proposer must be: a proposal closes the ready check, and a
+            // player who never turned up could otherwise file any score before the deadline, dodge the
+            // forfeit that was coming, and leave the rejected fixture for the organizer to untangle.
+            if (checkInWindowOpen
+                && approvalCtx.RequireResultApproval
+                && IsMatchParticipant(match, currentUser.UserId)
+                && !HasCallerSideCheckedIn(match, currentUser.UserId))
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInRequiredToPropose"]);
             }
 
             // Resolve the series format in force for this match and read the submission through it.
@@ -2541,7 +2557,7 @@ namespace GameHubz.Logic.Services
                 if (match.Status == MatchStatus.Completed)
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.ResultFinalAmend"]);
 
-                await SaveProposal(match, series, currentUser);
+                await SaveProposal(match, series, currentUser, approvalCtx.RequireMatchCheckIn);
                 return;
             }
 
@@ -3414,6 +3430,10 @@ namespace GameHubz.Logic.Services
         /// </summary>
         private async Task ApplyDoubleWalkoverCore(MatchEntity match)
         {
+            var validationError = GetDoubleWalkoverValidationError(match);
+            if (validationError != null)
+                throw new BusinessRuleException(validationError);
+
             if (match.TeamMatchId.HasValue)
             {
                 await ApplyTeamSubMatchWalkover(match);
@@ -3425,33 +3445,12 @@ namespace GameHubz.Logic.Services
                 || stageType == StageType.GroupStage
                 || stageType == StageType.Swiss;
 
-            // A voided play-in match would leave a knockout slot without a qualifier and the
-            // bracket draw expects an exact count — the organizer must enter a result instead.
-            if (stageType == StageType.PlayIn)
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNotForPlayIn"]);
-
-            if (!isGroupMachinery && !IsElimination(stageType))
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverEliminationOnly"]);
-
-            if (match.Status == MatchStatus.Completed)
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
-
-            if (match.Status == MatchStatus.NoShow)
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchClosedNoShow"]);
-
-            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.DoubleWalkoverNeedsBoth"]);
-
             if (isGroupMachinery)
             {
                 await ApplyGroupNoShowWalkover(match);
             }
             else
             {
-                // Needs somewhere to advance the opponent into — a terminal match (final) has no next.
-                if (!match.NextMatchId.HasValue && !match.NextMatchLoserBracketId.HasValue)
-                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.WalkoverNoNextRound"]);
-
                 // Serialised per tournament, exactly like FinalizeMatchResult: the settle pass is
                 // check-then-act over many rows and must not race a concurrent result report.
                 await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
@@ -3497,6 +3496,55 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Returns the same business-rule error the organizer action would raise when this fixture
+        /// cannot be voided. The check-in sweep calls this before claiming the row, so an unsupported
+        /// final / play-in / incomplete fixture stays Scheduled and available for manual resolution.
+        /// </summary>
+        private string? GetDoubleWalkoverValidationError(MatchEntity match)
+        {
+            var stageType = match.TournamentStage?.Type;
+            bool isLeagueOrGroup = stageType == StageType.League || stageType == StageType.GroupStage;
+            bool isGroupMachinery = isLeagueOrGroup || stageType == StageType.Swiss;
+
+            // Team tournaments do not support Swiss/play-in sub-matches. Preserve the team-specific
+            // error returned by the existing manual action.
+            if (match.TeamMatchId.HasValue)
+            {
+                if (!isLeagueOrGroup && !IsElimination(stageType))
+                    return this.LocalizationService["BusinessRule.DoubleWalkoverUnavailable"];
+            }
+            else
+            {
+                // A voided play-in match would leave a knockout slot without a qualifier and the
+                // bracket draw expects an exact count — the organizer must enter a result instead.
+                if (stageType == StageType.PlayIn)
+                    return this.LocalizationService["BusinessRule.DoubleWalkoverNotForPlayIn"];
+
+                if (!isGroupMachinery && !IsElimination(stageType))
+                    return this.LocalizationService["BusinessRule.DoubleWalkoverEliminationOnly"];
+            }
+
+            if (match.Status == MatchStatus.Completed)
+                return this.LocalizationService["BusinessRule.MatchAlreadyCompleted"];
+
+            if (match.Status == MatchStatus.NoShow)
+                return this.LocalizationService["BusinessRule.MatchClosedNoShow"];
+
+            if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
+                return this.LocalizationService["BusinessRule.DoubleWalkoverNeedsBoth"];
+
+            // An elimination match needs somewhere to advance the surviving sibling into. A final
+            // has no downstream slot, so it remains open for an organizer to resolve explicitly.
+            if (!match.TeamMatchId.HasValue
+                && !isGroupMachinery
+                && !match.NextMatchId.HasValue
+                && !match.NextMatchLoserBracketId.HasValue)
+                return this.LocalizationService["BusinessRule.WalkoverNoNextRound"];
+
+            return null;
+        }
+
+        /// <summary>
         /// Ready check, ruled: one side confirmed it was there and the other never did, so the
         /// match is awarded to whoever turned up. System-invoked from the deadline sweep — there is
         /// no HTTP caller to authorize, and the expired deadline is the authority.
@@ -3519,7 +3567,10 @@ namespace GameHubz.Logic.Services
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) return false;
-            if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
+            if (match.Status != MatchStatus.Scheduled
+                || match.CheckInResolvedOn.HasValue
+                || match.ProposedByUserId.HasValue)
+                return false;
 
             var approvalCtx = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
             if (approvalCtx == null) return false;
@@ -3560,17 +3611,22 @@ namespace GameHubz.Logic.Services
 
             var match = await this.AppUnitOfWork.MatchRepository.GetWithStage(matchId);
             if (match == null) return false;
-            if (match.Status != MatchStatus.Scheduled || match.CheckInResolvedOn.HasValue) return false;
+            if (match.Status != MatchStatus.Scheduled
+                || match.CheckInResolvedOn.HasValue
+                || match.ProposedByUserId.HasValue)
+                return false;
 
             // Same re-read as the forfeit path: somebody arriving between the sweep's query and
             // this call turns "nobody came" into a fixture that still has a live check to run.
             if (match.HomeCheckedInOn.HasValue || match.AwayCheckedInOn.HasValue) return false;
 
+            // Unsupported fixtures (notably play-ins and finals) need an organizer's explicit
+            // result. Do not claim them: stamping CheckInResolvedOn here would make the sweep think
+            // a verdict landed even though ApplyDoubleWalkoverCore cannot close the match.
+            if (GetDoubleWalkoverValidationError(match) != null) return false;
+
             if (!await ClaimCheckInResolutionAsync(match)) return false;
 
-            // A play-in match (and a final with nothing downstream) refuses to be voided — every
-            // play-in slot owes the knockout draw a qualifier. Those stay open for the organizer,
-            // and the claim above means the sweep won't keep trying.
             await ApplyDoubleWalkoverCore(match);
             return true;
         }
@@ -4254,8 +4310,14 @@ namespace GameHubz.Logic.Services
                 await this.badgeService.PushToTournamentManagersAsync(tournamentId);
         }
 
-        private async Task SaveProposal(MatchEntity match, SubmittedSeries series, TokenUserInfo currentUser)
+        private async Task SaveProposal(
+            MatchEntity match,
+            SubmittedSeries series,
+            TokenUserInfo currentUser,
+            bool requireMatchCheckIn)
         {
+            bool hadProposal = match.ProposedByUserId.HasValue;
+
             match.ProposedHomeScore = series.HomeScore;
             match.ProposedAwayScore = series.AwayScore;
             // The whole series travels with the proposal, so approving replays exactly what the
@@ -4263,8 +4325,54 @@ namespace GameHubz.Logic.Services
             match.ProposedGames = series.Games;
             match.ProposedByUserId = currentUser.UserId;
 
+            // A proposal in approval mode is two-sided once the opponent confirms it, so the ready
+            // check must no longer auto-rule the fixture while that confirmation is pending. Store
+            // the proposal and marker atomically against the sweep: whichever update reaches the row
+            // first wins. Existing proposals are already protected by ProposedByUserId and use the
+            // normal tracked update below (this also upgrades proposals created before this fix).
+            if (requireMatchCheckIn
+                && match.Status == MatchStatus.Scheduled
+                && !match.CheckInResolvedOn.HasValue
+                && !hadProposal)
+            {
+                DateTime resolvedOn = DateTime.UtcNow;
+                bool proposalSaved = await this.AppUnitOfWork.MatchRepository.TrySaveCheckInProposal(
+                    match.Id!.Value,
+                    series.HomeScore,
+                    series.AwayScore,
+                    match.ProposedGamesJson,
+                    currentUser.UserId,
+                    resolvedOn);
+
+                if (!proposalSaved)
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+                }
+
+                // ExecuteUpdate bypasses this context's tracker; mirror audit values used by callers.
+                match.CheckInResolvedOn = resolvedOn;
+                match.ModifiedOn = resolvedOn;
+                match.ModifiedBy = currentUser.UserId;
+
+                await PublishProposalSavedAsync(match, currentUser);
+                return;
+            }
+
+            if (requireMatchCheckIn
+                && match.Status == MatchStatus.Scheduled
+                && !match.CheckInResolvedOn.HasValue)
+            {
+                match.CheckInResolvedOn = DateTime.UtcNow;
+            }
+
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
             await this.SaveAsync();
+
+            await PublishProposalSavedAsync(match, currentUser);
+        }
+
+        private async Task PublishProposalSavedAsync(MatchEntity match, TokenUserInfo currentUser)
+        {
             await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
@@ -4477,6 +4585,24 @@ namespace GameHubz.Logic.Services
             if (match.AwayParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true) return true;
 
             return false;
+        }
+
+        /// <summary>
+        /// Whether the side the caller plays for has checked in. Solo: the participant themselves. Team game:
+        /// the side is the team, so a captain or teammate reporting counts the nominated player's check-in —
+        /// the same stamp the forfeit sweep rules on.
+        /// </summary>
+        private static bool HasCallerSideCheckedIn(MatchEntity match, Guid userId)
+        {
+            bool home = match.HomeUserId == userId
+                || match.HomeParticipant?.UserId == userId
+                || match.HomeParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true;
+
+            bool away = match.AwayUserId == userId
+                || match.AwayParticipant?.UserId == userId
+                || match.AwayParticipant?.Team?.Members?.Any(m => m.UserId == userId) == true;
+
+            return (home && match.HomeCheckedInOn.HasValue) || (away && match.AwayCheckedInOn.HasValue);
         }
 
         public async Task<bool> GetCanRevert(Guid matchId)

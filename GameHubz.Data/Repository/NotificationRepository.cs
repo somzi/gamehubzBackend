@@ -38,7 +38,12 @@ namespace GameHubz.Data.Repository
             }
         }
 
-        public async Task<List<NotificationEntity>> GetPage(Guid userId, NotificationCategory? category, DateTime? before, int take)
+        public async Task<List<NotificationEntity>> GetPage(
+            Guid userId,
+            NotificationCategory? category,
+            DateTime? before,
+            Guid? beforeId,
+            int take)
         {
             var query = this.BaseDbSet().Where(n => n.UserId == userId);
 
@@ -49,7 +54,24 @@ namespace GameHubz.Data.Repository
 
             if (before.HasValue)
             {
-                query = query.Where(n => n.CreatedOn < before.Value);
+                DateTime beforeCreatedOn = before.Value;
+
+                // New cursors continue the exact ordering below. The id is the tie-breaker when two
+                // rows have the same CreatedOn, so neither one disappears between pages. A ticks-only
+                // cursor came from an earlier client/server draft and keeps its old strict-time rule.
+                if (beforeId.HasValue)
+                {
+                    Guid id = beforeId.Value;
+                    query = query.Where(n =>
+                        n.CreatedOn < beforeCreatedOn
+                        || (n.CreatedOn == beforeCreatedOn
+                            && n.Id.HasValue
+                            && n.Id.Value.CompareTo(id) < 0));
+                }
+                else
+                {
+                    query = query.Where(n => n.CreatedOn < beforeCreatedOn);
+                }
             }
 
             return await query

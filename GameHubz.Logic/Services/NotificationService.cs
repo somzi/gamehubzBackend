@@ -91,68 +91,97 @@ namespace GameHubz.Logic.Services
             object? data = null)
             => this.SendLocalizedToManyAsync(new[] { recipient }, title, body, data);
 
-        public async Task SendLocalizedToManyAsync(
+        public Task SendLocalizedToManyAsync(
             IEnumerable<PushRecipient> recipients,
             PushText title,
             PushText body,
             object? data = null)
+            => this.SendLocalizedBatchAsync(new[] { new LocalizedPush(recipients.ToList(), title, body, data) });
+
+        public async Task SendLocalizedBatchAsync(IReadOnlyCollection<LocalizedPush> pushes)
         {
-            // One device may be registered once per language bucket at most: de-duplicate on the
-            // token so a user who somehow appears twice does not get two copies.
-            var byToken = new Dictionary<string, PushRecipient>(StringComparer.Ordinal);
+            var prepared = new List<PreparedPush>(pushes.Count);
 
-            // The inbox is per account, not per device: one row per user, token or no token.
-            var inboxLanguages = new Dictionary<Guid, string?>();
-
-            foreach (PushRecipient recipient in recipients)
+            foreach (LocalizedPush push in pushes)
             {
-                if (recipient.UserId is Guid userId && userId != Guid.Empty)
+                // One device may be registered once per language bucket at most: de-duplicate on the
+                // token so a user who somehow appears twice does not get two copies.
+                var byToken = new Dictionary<string, PushRecipient>(StringComparer.Ordinal);
+
+                // The inbox is per account, not per device: one row per user, token or no token.
+                var inboxLanguages = new Dictionary<Guid, string?>();
+
+                foreach (PushRecipient recipient in push.Recipients)
                 {
-                    inboxLanguages[userId] = recipient.Language;
+                    if (recipient.UserId is Guid userId && userId != Guid.Empty)
+                    {
+                        inboxLanguages[userId] = recipient.Language;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(recipient.PushToken))
+                    {
+                        continue;
+                    }
+
+                    byToken[recipient.PushToken] = recipient;
                 }
 
-                if (string.IsNullOrWhiteSpace(recipient.PushToken))
+                if (byToken.Count == 0 && inboxLanguages.Count == 0)
                 {
                     continue;
                 }
 
-                byToken[recipient.PushToken] = recipient;
+                JsonObject? payload = push.Data == null
+                    ? null
+                    : JsonSerializer.SerializeToNode(push.Data, PayloadJsonOptions) as JsonObject;
+
+                prepared.Add(new PreparedPush(push, byToken, inboxLanguages, payload));
             }
 
-            if (byToken.Count == 0 && inboxLanguages.Count == 0)
+            if (prepared.Count == 0)
             {
                 return;
             }
 
-            JsonObject? payload = data == null
-                ? null
-                : JsonSerializer.SerializeToNode(data, PayloadJsonOptions) as JsonObject;
-
-            // Recorded before the push goes out: every device's payload carries the id of its own inbox
+            // Recorded before the pushes go out: every device's payload carries the id of its own inbox
             // row (tapping the push marks that row read), and the row already exists when the push lands.
-            // A failure here is logged and never stops the push.
-            IReadOnlyDictionary<Guid, Guid> notificationIds = inboxLanguages.Count > 0
-                ? await this.RecordInInboxAsync(inboxLanguages, title, body, payload)
-                : NoNotificationIds;
+            // One scope and one save for the whole batch. A failure here is logged and never stops a push.
+            IReadOnlyList<IReadOnlyDictionary<Guid, Guid>> notificationIds = await this.RecordInInboxAsync(prepared);
 
-            // Resolve the wording once per language rather than once per device.
-            foreach (var group in byToken.Values.GroupBy(recipient => recipient.Language, StringComparer.OrdinalIgnoreCase))
+            // Grouped by language across the whole batch, so pushes for many matches share Expo requests
+            // (100 messages each) instead of paying one per match. A single push groups exactly as before.
+            // The wording is still resolved once per push per language rather than once per device.
+            var messagesByLanguage = new Dictionary<string, List<ExpoPushMessage>>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < prepared.Count; i++)
             {
-                string? language = group.Key;
-                string resolvedTitle = title.Resolve(this.localizationService, language);
-                string resolvedBody = body.Resolve(this.localizationService, language);
+                PreparedPush item = prepared[i];
 
-                var messages = group
-                    .Select(recipient => new ExpoPushMessage
+                foreach (var group in item.ByToken.Values.GroupBy(recipient => recipient.Language, StringComparer.OrdinalIgnoreCase))
+                {
+                    string? language = group.Key;
+                    string resolvedTitle = item.Push.Title.Resolve(this.localizationService, language);
+                    string resolvedBody = item.Push.Body.Resolve(this.localizationService, language);
+
+                    if (!messagesByLanguage.TryGetValue(language ?? string.Empty, out var bucket))
+                    {
+                        bucket = new List<ExpoPushMessage>();
+                        messagesByLanguage[language ?? string.Empty] = bucket;
+                    }
+
+                    bucket.AddRange(group.Select(recipient => new ExpoPushMessage
                     {
                         To = recipient.PushToken,
                         Title = resolvedTitle,
                         Body = resolvedBody,
-                        Data = PayloadFor(recipient, data, payload, notificationIds),
-                    })
-                    .ToList();
+                        Data = PayloadFor(recipient, item.Push.Data, item.Payload, notificationIds[i]),
+                    }));
+                }
+            }
 
-                foreach (var chunk in messages.Chunk(MaxTokensPerRequest))
+            foreach (var bucket in messagesByLanguage.Values)
+            {
+                foreach (var chunk in bucket.Chunk(MaxTokensPerRequest))
                 {
                     await SendBatchAsync(chunk.ToList());
                 }
@@ -160,11 +189,18 @@ namespace GameHubz.Logic.Services
 
             // The inbox counters go out only after the pushes: they are best-effort, one SignalR send per
             // user, and for a hub-wide announcement that loop would otherwise hold every push back.
-            if (notificationIds.Count > 0)
+            var usersWithRows = notificationIds.SelectMany(ids => ids.Keys).Distinct().ToList();
+            if (usersWithRows.Count > 0)
             {
-                await this.PushInboxSummariesAsync(notificationIds.Keys.ToList());
+                await this.PushInboxSummariesAsync(usersWithRows);
             }
         }
+
+        private sealed record PreparedPush(
+            LocalizedPush Push,
+            Dictionary<string, PushRecipient> ByToken,
+            Dictionary<Guid, string?> InboxLanguages,
+            JsonObject? Payload);
 
         private async Task PushInboxSummariesAsync(IReadOnlyCollection<Guid> userIds)
         {
@@ -181,24 +217,30 @@ namespace GameHubz.Logic.Services
             }
         }
 
-        private async Task<IReadOnlyDictionary<Guid, Guid>> RecordInInboxAsync(
-            Dictionary<Guid, string?> languageByUser,
-            PushText title,
-            PushText body,
-            JsonObject? payload)
+        private async Task<IReadOnlyList<IReadOnlyDictionary<Guid, Guid>>> RecordInInboxAsync(IReadOnlyList<PreparedPush> prepared)
         {
+            IReadOnlyList<IReadOnlyDictionary<Guid, Guid>> none = prepared.Select(_ => NoNotificationIds).ToList();
+
+            int inboxCount = prepared.Sum(item => item.InboxLanguages.Count);
+            if (inboxCount == 0)
+            {
+                return none;
+            }
+
             try
             {
                 // Own scope and DbContext, for the same reason as the stale-token cleanup (F72): sends run
                 // fire-and-forget, long after the request that triggered them disposed its own context.
                 using var scope = this.serviceScopeFactory.CreateScope();
                 var inbox = scope.ServiceProvider.GetRequiredService<NotificationInboxService>();
-                return await inbox.RecordAsync(languageByUser, title, body, payload);
+                return await inbox.RecordBatchAsync(prepared
+                    .Select(item => new NotificationInboxService.InboxRecord(item.InboxLanguages, item.Push.Title, item.Push.Body, item.Payload))
+                    .ToList());
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to record a notification in {Count} inbox(es).", languageByUser.Count);
-                return NoNotificationIds;
+                logger.LogWarning(ex, "Failed to record a notification in {Count} inbox(es).", inboxCount);
+                return none;
             }
         }
 

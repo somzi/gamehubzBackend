@@ -48,7 +48,6 @@ namespace GameHubz.Logic
             services.AddTransient<SearchService>();
             services.AddTransient<AuthService>();
             services.AddTransient<AuthThrottleService>();
-            services.AddTransient<GoogleAuthService>();
             services.AddTransient<AnonymousUserContextReader>();
             services.AddTransient<PasswordManagementService>();
             services.AddTransient<LocalQueueEmailService>();

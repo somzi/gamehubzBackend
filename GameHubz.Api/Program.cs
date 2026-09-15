@@ -79,6 +79,9 @@ namespace GameHubz.Api
             builder.Services.AddHttpClient("ExpoPush", client =>
             {
                 client.BaseAddress = new Uri("https://exp.host");
+                // Bounded like the Discord clients below. At HttpClient's 100 s default one stalled Expo
+                // batch held up every batch after it and the inbox counter push that follows them.
+                client.Timeout = TimeSpan.FromSeconds(15);
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
             });
 

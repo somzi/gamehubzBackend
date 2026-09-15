@@ -15,11 +15,29 @@
         /// </summary>
         Task<bool> TryClaimCheckInResolution(Guid matchId, DateTime resolvedOn, bool homeIn, bool awayIn);
 
+        /// <summary>
+        /// Atomically stores a result proposal and closes its ready check. Competes with the sweep's
+        /// claim so exactly one of proposal or automatic ruling can win.
+        /// </summary>
+        Task<bool> TrySaveCheckInProposal(
+            Guid matchId,
+            int homeScore,
+            int awayScore,
+            string? gamesJson,
+            Guid proposedByUserId,
+            DateTime resolvedOn);
+
         /// <summary>Single-column, conditional write of one side's check-in stamp.</summary>
         Task<bool> TryStampCheckIn(Guid matchId, bool home, DateTime scheduledStart, DateTime checkedInOn);
 
         /// <summary>Closes the ready check on fixtures whose window had already opened when the check was switched on.</summary>
         Task<int> ExemptOpenCheckIns(Guid tournamentId, DateTime windowOpenedBefore, DateTime resolvedOn);
+
+        /// <summary>Single-side write of offered hours; false when the match is already decided.</summary>
+        Task<bool> TrySaveAvailabilitySlots(Guid matchId, bool home, string slotsJson, DateTime setOn);
+
+        /// <summary>Pending → Scheduled at the given kick-off, dropping any old check-in state; false when no longer Pending.</summary>
+        Task<bool> TryScheduleFromAvailability(Guid matchId, DateTime scheduledStart, DateTime modifiedOn);
 
         Task<MatchEntity?> GetWithTournamentStage(Guid id);
 

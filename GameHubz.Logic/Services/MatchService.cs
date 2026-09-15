@@ -227,6 +227,11 @@ namespace GameHubz.Logic.Services
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
             }
 
+            // A decided match has nothing left to schedule. Without this, two lists that happened to
+            // meet on a played or forfeited match flipped it back to Scheduled with its result and
+            // advancement still in place.
+            ThrowIfMatchDecided(match);
+
             // 2. Save Slots — normalize to UTC so Intersect() uses consistent DateTimeKind
             var normalizedSlots = selectedSlots
                 .Select(s => DateTime.SpecifyKind(s, DateTimeKind.Utc))
@@ -236,16 +241,19 @@ namespace GameHubz.Logic.Services
             // match last (a result, a deadline move) and cannot say which player answered when.
             var submittedOn = DateTime.UtcNow;
 
-            if (isHome)
-            {
-                match.HomeSlots = normalizedSlots;
-                match.HomeSlotsSetOn = submittedOn;
-            }
-            else
-            {
-                match.AwaySlots = normalizedSlots;
-                match.AwaySlotsSetOn = submittedOn;
-            }
+            // Only this side's columns — never UpdateEntity. The opponent answers the same picker and
+            // the ready check stamps the same row; a full-row write from the snapshot read above would
+            // erase whichever of those landed in between. Same serialization as the entity's setter.
+            bool saved = await this.AppUnitOfWork.MatchRepository.TrySaveAvailabilitySlots(
+                matchId, isHome, System.Text.Json.JsonSerializer.Serialize(normalizedSlots), submittedOn);
+
+            // Re-read after our own write: the intersection must see the opponent's latest hours, not
+            // the ones in the snapshot. Whichever of two concurrent answers re-reads last sees both.
+            match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            // The match was decided between our first read and the write.
+            if (!saved) ThrowIfMatchDecided(match);
 
             // 3. CHECK FOR OVERLAP (The Magic)
             // We check if the other person has already picked times
@@ -255,21 +263,45 @@ namespace GameHubz.Logic.Services
             // Find slots present in BOTH lists
             var intersection = mySlots.Intersect(opponentSlots).ToList();
 
-            if (intersection.Count > 0)
+            // Only a Pending match gets a kick-off from here. An agreed time stays agreed — the picker
+            // is not offered on a scheduled match, and a stale one must not quietly move it (and with
+            // it the ready check). Undoing a time is ClearSchedule's job. A tie-break match keeps its
+            // status too. The condition is re-checked in the database, so two answers meeting at once
+            // schedule the match exactly once.
+            bool justScheduled = false;
+            if (intersection.Count > 0 && match.Status == MatchStatus.Pending)
             {
                 // OrderBy ensures we pick the EARLIEST mutual time (e.g. 10:00 instead of 14:00)
-                match.ScheduledStartTime = intersection.OrderBy(t => t).First();
-                match.Status = MatchStatus.Scheduled;
-            }
+                DateTime kickOff = intersection.OrderBy(t => t).First();
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
+                justScheduled = await this.AppUnitOfWork.MatchRepository
+                    .TryScheduleFromAvailability(matchId, kickOff, submittedOn);
+
+                match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                    ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            }
 
             // Only when the two lists just met. The offered hours themselves never reach the bracket,
             // but the kick-off and the Scheduled status this branch wrote do — the same cached state
             // ClearSchedule drops on the way back out.
-            if (intersection.Count > 0)
+            if (justScheduled)
                 await InvalidateBracketCacheAsync(match.TournamentId);
+
+            // A team game that just got a kick-off in a ready-check tournament, with a side that has nobody
+            // nominated for it: nobody on that side can check in, so at kick-off + grace the game goes to
+            // the other team by forfeit. Only the captain can fix that, and until now nobody told them.
+            if (justScheduled && match.TeamMatchId.HasValue && (match.HomeUserId == null || match.AwayUserId == null))
+            {
+                var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+                if (settings?.RequireMatchCheckIn == true)
+                {
+                    var captains = new List<Guid>();
+                    if (match.HomeUserId == null && match.HomeParticipant?.Team?.CaptainUserId is Guid homeCaptain) captains.Add(homeCaptain);
+                    if (match.AwayUserId == null && match.AwayParticipant?.Team?.CaptainUserId is Guid awayCaptain) captains.Add(awayCaptain);
+
+                    await PushLineupMissingAsync(match, captains, PushText.FromKey("Push.LineupMissing.Body"));
+                }
+            }
 
             await NotifyOpponentOfAvailabilityAsync(matchId, user, match, isHome);
 
@@ -282,6 +314,15 @@ namespace GameHubz.Logic.Services
                 ConfirmedTime = match.ScheduledStartTime,
                 MatchDeadline = match.RoundDeadline
             };
+        }
+
+        private void ThrowIfMatchDecided(MatchEntity match)
+        {
+            if (match.Status == MatchStatus.Completed)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchAlreadyCompleted"]);
+
+            if (match.Status == MatchStatus.NoShow)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchClosedNoShow"]);
         }
 
         // F109: the opponent's push token is resolved here (awaited, while the request-scoped DbContext
@@ -457,7 +498,16 @@ namespace GameHubz.Logic.Services
                 recipients,
                 PushText.FromKey("Push.MatchScheduleCleared.Title"),
                 PushText.FromKey("Push.MatchScheduleCleared.Body"),
-                new { matchId = match.Id!.Value.ToString(), type = "scheduleCleared" });
+                // tournamentId (and teamMatchId for a team game) let the tap open the match itself, where a
+                // new time is picked. Additive: a build that predates them checks matchId first and still
+                // lands on My Matches.
+                new
+                {
+                    matchId = match.Id!.Value.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    teamMatchId = match.TeamMatchId?.ToString(),
+                    type = "scheduleCleared",
+                });
         }
 
         /// <summary>
@@ -613,18 +663,32 @@ namespace GameHubz.Logic.Services
         /// </summary>
         private async Task NotifyOpponentOfCheckInAsync(MatchEntity match, TokenUserInfo user, bool checkedInHome, int graceMinutes)
         {
-            Guid? opponentUserId = GetParticipantUserId(match, isHome: !checkedInHome);
-            if (opponentUserId == null) return;
-
-            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
-            if (opponent == null) return;
-
             var deadline = MatchCheckInRules.Deadline(
                 match.ScheduledStartTime!.Value, match.HomeCheckedInOn, match.AwayCheckedInOn, graceMinutes);
 
             // Round up: "2 minutes left" reads better than "1" when 1m40s remain, and it is the
             // honest direction to round a deadline the player is racing.
             int minutesLeft = Math.Max(1, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalMinutes));
+
+            // A team game whose other side has nobody nominated: no player there can answer the ready
+            // check, so "you have N minutes to check in" would reach nobody who can press it. What saves
+            // the game is a nomination, and only that team's captain can make one.
+            if (match.TeamMatchId.HasValue && (checkedInHome ? match.AwayUserId : match.HomeUserId) == null)
+            {
+                Guid? captainUserId = (checkedInHome ? match.AwayParticipant : match.HomeParticipant)?.Team?.CaptainUserId;
+
+                await PushLineupMissingAsync(
+                    match,
+                    captainUserId.HasValue ? new[] { captainUserId.Value } : Array.Empty<Guid>(),
+                    PushText.FromKey("Push.LineupMissingNow.Body", user.Username, minutesLeft.ToString()));
+                return;
+            }
+
+            Guid? opponentUserId = GetParticipantUserId(match, isHome: !checkedInHome);
+            if (opponentUserId == null) return;
+
+            var opponent = await this.AppUnitOfWork.UserRepository.GetById(opponentUserId.Value);
+            if (opponent == null) return;
 
             // Sent even without a push token: the opponent still gets it in their inbox. tournamentId and
             // teamMatchId let the tap open the match itself — the app's checkIn route needs both ids, and
@@ -863,7 +927,15 @@ namespace GameHubz.Logic.Services
                 new List<PushRecipient> { PushRecipient.ForUser(requesterUserId.Value, requester.PushToken, requester.Language) },
                 PushText.FromKey("Push.AdminHelpResolved.Title"),
                 PushText.FromKey("Push.AdminHelpResolved.Body"),
-                new { matchId = matchId.ToString(), type = "adminHelpResolved" });
+                // Same ids as scheduleCleared: the tap reopens this match's chat, where the conversation
+                // with the organizer happened, instead of dropping the player on My Matches.
+                new
+                {
+                    matchId = matchId.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    teamMatchId = match.TeamMatchId?.ToString(),
+                    type = "adminHelpResolved",
+                });
         }
 
         public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)
@@ -932,6 +1004,36 @@ namespace GameHubz.Logic.Services
 
         // Hands off already-resolved tokens to the push pipeline. Safe inside Task.Run because
         // NotificationService owns its own DbContext scope (see SendBatchAsync).
+        /// <summary>
+        /// Tells a team's captain that one of their team games has nobody nominated and will be lost by
+        /// forfeit if it stays that way. The tap opens the team match, where the lineup is set.
+        /// </summary>
+        private async Task PushLineupMissingAsync(MatchEntity match, IEnumerable<Guid> captainUserIds, PushText body)
+        {
+            var recipients = new List<PushRecipient>();
+
+            foreach (Guid captainUserId in captainUserIds.Distinct())
+            {
+                var captain = await this.AppUnitOfWork.UserRepository.GetById(captainUserId);
+                if (captain != null)
+                    recipients.Add(PushRecipient.ForUser(captainUserId, captain.PushToken, captain.Language));
+            }
+
+            if (recipients.Count == 0) return;
+
+            FireAndForgetPush(
+                recipients,
+                PushText.FromKey("Push.LineupMissing.Title"),
+                body,
+                new
+                {
+                    matchId = match.Id!.Value.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    teamMatchId = match.TeamMatchId?.ToString(),
+                    type = "lineupMissing",
+                });
+        }
+
         private void FireAndForgetPush(List<PushRecipient> recipients, PushText title, PushText body, object data)
         {
             if (recipients.Count == 0) return;
