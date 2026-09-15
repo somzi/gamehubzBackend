@@ -157,6 +157,28 @@ namespace GameHubz.Logic.Services
                     await SendBatchAsync(chunk.ToList());
                 }
             }
+
+            // The inbox counters go out only after the pushes: they are best-effort, one SignalR send per
+            // user, and for a hub-wide announcement that loop would otherwise hold every push back.
+            if (notificationIds.Count > 0)
+            {
+                await this.PushInboxSummariesAsync(notificationIds.Keys.ToList());
+            }
+        }
+
+        private async Task PushInboxSummariesAsync(IReadOnlyCollection<Guid> userIds)
+        {
+            try
+            {
+                // Own scope, like RecordInInboxAsync: this runs after the triggering request is gone.
+                using var scope = this.serviceScopeFactory.CreateScope();
+                var inbox = scope.ServiceProvider.GetRequiredService<NotificationInboxService>();
+                await inbox.PushSummariesAsync(userIds);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to push inbox counters to {Count} user(s).", userIds.Count);
+            }
         }
 
         private async Task<IReadOnlyDictionary<Guid, Guid>> RecordInInboxAsync(

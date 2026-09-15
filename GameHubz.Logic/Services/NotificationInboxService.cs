@@ -169,8 +169,8 @@ namespace GameHubz.Logic.Services
             this.AppUnitOfWork.NotificationRepository.AddRange(rows);
             await this.SaveAsync();
 
-            await this.PushSummariesAsync(ids.Keys.ToList());
-
+            // No counter push here: NotificationService sends it once the pushes are out, so a large
+            // announcement is not held back by one SignalR send per recipient.
             return ids;
         }
 
