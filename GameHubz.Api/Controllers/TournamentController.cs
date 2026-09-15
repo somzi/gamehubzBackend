@@ -38,6 +38,12 @@ namespace GameHubz.Api.Controllers
             this.tournamentCsvExportService = tournamentCsvExportService;
         }
 
+        // Tournament deletion must go through the manager-authorized hardDelete endpoint below.
+        // The inherited generic delete bypasses the tournament lifecycle and authorization rules.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Use DELETE api/tournament/{id}/hardDelete.");
+
         [HttpPost("createBracket")]
         public async Task<IActionResult> CreateBracket([FromBody] CreateBracketRequest request)
         {

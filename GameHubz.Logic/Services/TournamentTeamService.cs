@@ -587,7 +587,7 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await InvalidateCache(tournament.Id!.Value);
-            await cacheService.RemoveAsync($"pdf:bracket:{tournament.Id!.Value}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournament.Id!.Value}:*");
 
             // Both sides' "upcoming match" lists changed, so refresh their badges and tell them.
             foreach (var affectedUserId in new[] { request.StarterUserId, request.ReserveUserId })
@@ -707,8 +707,8 @@ namespace GameHubz.Logic.Services
         private async Task InvalidateCache(Guid tournamentId)
         {
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
         }

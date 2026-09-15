@@ -561,10 +561,10 @@ namespace GameHubz.Logic.Services
         {
             await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
 
             // Both profiles change: the outgoing player loses this tournament's record, the
             // incoming one inherits it.

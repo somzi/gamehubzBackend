@@ -358,7 +358,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
             await this.hubActivityService.LogActivity(tournament.HubId!.Value, tournament.Id!.Value, HubActivityType.TournamentLive);
 
             // Notify all participants that the tournament is now live (Expo push + Discord webhook)
@@ -733,7 +733,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
@@ -3070,7 +3070,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{match.TournamentId}:*");
         }
 
         // Returns the lock message when this completed match can't be reverted/edited in place because
@@ -3489,7 +3489,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{match.TournamentId}:*");
 
             // Discord-only announcement (no Expo equivalent exists for double walkovers).
             await this.matchNotifier.DoubleWalkover(match, opponentAdvances: !isGroupMachinery);
@@ -3805,7 +3805,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{match.TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{match.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{match.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{match.TournamentId}:*");
             await cacheService.RemoveAsync($"tournament:{match.TournamentId}");
 
             // Discord-only, "closed with nothing awarded" copy — a single game of a tie never
@@ -3963,7 +3963,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
 
             return result;
@@ -4300,7 +4300,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
 
             // Approving (or a privileged result overriding) a proposal removes it from the
             // managers' pending-approvals count, but the pushes above only reach the match
@@ -4330,8 +4330,19 @@ namespace GameHubz.Logic.Services
             // the proposal and marker atomically against the sweep: whichever update reaches the row
             // first wins. Existing proposals are already protected by ProposedByUserId and use the
             // normal tracked update below (this also upgrades proposals created before this fix).
+            // Only once the ready-check window is actually open. Without this condition a proposal
+            // filed hours before kick-off still stamped CheckInResolvedOn, and because the caller's
+            // CheckInRequiredToPropose guard is itself gated on the window being open, nothing stopped
+            // a player who had no intention of turning up from filing one early. The marker then locked
+            // the opponent out of checking in at all (MatchService throws CheckInClosed on it), and
+            // rejecting the proposal did not undo it — ClearProposal only clears the four proposal
+            // columns — so the sweep's "CheckInResolvedOn == null" filter dropped the fixture for good
+            // and the no-show dodged the forfeit. Before the window there is no ready check to close,
+            // so the proposal takes the ordinary tracked path below.
             if (requireMatchCheckIn
                 && match.Status == MatchStatus.Scheduled
+                && match.ScheduledStartTime.HasValue
+                && DateTime.UtcNow >= MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value)
                 && !match.CheckInResolvedOn.HasValue
                 && !hadProposal)
             {
@@ -5904,7 +5915,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
-                await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"pdf:bracket:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
                 return;
             }
@@ -5918,7 +5929,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
-                await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"pdf:bracket:{teamMatch.TournamentId}:*");
                 await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
 
                 // Both captains must now nominate a representative — tell them, with a deep link
@@ -5947,7 +5958,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{teamMatch.TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{teamMatch.TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{teamMatch.TournamentId}");
-            await cacheService.RemoveAsync($"pdf:bracket:{teamMatch.TournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{teamMatch.TournamentId}:*");
             await cacheService.RemoveAsync($"tournament:{teamMatch.TournamentId}");
         }
 

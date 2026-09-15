@@ -1,4 +1,5 @@
-﻿using GameHubz.DataModels.Domain;
+﻿using GameHubz.Common.Models;
+using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -22,6 +23,35 @@ namespace GameHubz.Api.Controllers
         {
             this.teamMatchService = teamMatchService;
         }
+
+        // A match is never a plain CRUD row. Every legitimate mutation goes through a domain method
+        // that holds the advancement advisory lock, runs the approval / check-in rules and cascades
+        // into the bracket. The generic routes inherited from BasicGenericController bypassed all of
+        // that: its UserRolesSave/Delete default to null and AppAuthorizationService treats null as
+        // "no role required", so POST api/match with an existing Id (StageEntity keys insert-vs-update
+        // off Id.HasValue) let any signed-in user rewrite any match's score, status and winner, and
+        // DELETE api/match/{id} let them drop it. The reads leaked every match in the platform with
+        // arbitrary filters. Nothing calls them — the mobile client only uses the named sub-routes
+        // below — so they are removed from routing outright rather than merely role-gated.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Matches are deleted through tournament/bracket operations.");
+
+        [NonAction]
+        public override Task<MatchDto> GetById(Guid id)
+            => throw new NotSupportedException("Use GET api/match/{id}/details.");
+
+        [NonAction]
+        public override Task<EntityListDto<MatchDto>> GetList(
+            int? pageIndex,
+            int? pageSize,
+            List<SortItem> sortItems,
+            List<FilterItem> filterItems)
+            => throw new NotSupportedException("Matches are listed through the tournament structure endpoints.");
+
+        [NonAction]
+        public override Task<MatchDto> SaveEntity(MatchPost modelSave)
+            => throw new NotSupportedException("Match results are submitted through BracketService (see MatchResultController).");
 
         [HttpPost("availability")]
         public async Task<IActionResult> SubmitAvailability([FromBody] SubmitAvailabilityRequest request)

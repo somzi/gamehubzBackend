@@ -18,6 +18,13 @@ namespace GameHubz.Api.Controllers
         {
         }
 
+        // Keep the inherited POST route: the mobile client uses it to register for a tournament and
+        // TournamentRegistrationService.BeforeSave secures that flow. Deletion, however, must only
+        // happen through explicit domain operations with tournament/user authorization.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Tournament registrations are removed through explicit registration flows.");
+
         [HttpPost("approve")]
         public async Task<ActionResult> ApproveRegistration([FromBody] Guid registrationId)
         {

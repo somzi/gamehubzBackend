@@ -1,3 +1,4 @@
+using GameHubz.Common.Models;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
@@ -21,6 +22,31 @@ namespace GameHubz.Api.Controllers
         {
             this.chatService = chatService;
         }
+
+        // Same reasoning as MatchController: the inherited generic CRUD carried no role requirement
+        // (UserRolesSave/Delete default to null, which AppAuthorizationService treats as "allow"), so
+        // any signed-in user could post a message as another user, edit one by Id, delete any message
+        // and page through every chat line on the platform — all bypassing the participant check that
+        // SendMessage enforces. Nothing calls them; the named routes below are the whole surface.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Chat messages are removed by the retention runner.");
+
+        [NonAction]
+        public override Task<MatchChatDto> GetById(Guid id)
+            => throw new NotSupportedException("Use GET api/matchchat/{matchId}/history.");
+
+        [NonAction]
+        public override Task<EntityListDto<MatchChatDto>> GetList(
+            int? pageIndex,
+            int? pageSize,
+            List<SortItem> sortItems,
+            List<FilterItem> filterItems)
+            => throw new NotSupportedException("Use GET api/matchchat/{matchId}/history.");
+
+        [NonAction]
+        public override Task<MatchChatDto> SaveEntity(MatchChatPost modelSave)
+            => throw new NotSupportedException("Use POST api/matchchat/{matchId}.");
 
         [HttpGet("{matchId}/history")]
         public async Task<IActionResult> GetHistory(Guid matchId, [FromQuery] int? take = null, [FromQuery] DateTime? before = null)

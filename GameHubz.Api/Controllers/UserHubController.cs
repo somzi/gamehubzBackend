@@ -18,6 +18,12 @@ namespace GameHubz.Api.Controllers
         {
         }
 
+        // Membership removal must use the explicit self-unfollow or manager removal flows, both of
+        // which derive the caller from the token and enforce hub-role rules.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Use the explicit hub membership endpoints.");
+
         [HttpDelete("unfollow")]
         public async Task Unfollow([FromQuery] Guid userId, [FromQuery] Guid hubId)
         {

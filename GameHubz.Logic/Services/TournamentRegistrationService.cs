@@ -187,8 +187,8 @@ namespace GameHubz.Logic.Services
                 // Approving registration affects this user's feed across every status / page.
                 await cacheService.RemoveByPatternAsync($"user_feed:{tournamentRegistration.UserId}:*");
                 await cacheService.RemoveAsync($"tournament:{tournamentRegistration.TournamentId}");
-                await cacheService.RemoveAsync($"bracket:{tournamentRegistration.TournamentId}");
-                await cacheService.RemoveAsync($"bracket:v3:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"bracket:{tournamentRegistration.TournamentId}:*");
+                await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentRegistration.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.TournamentId}");
             }
             // Post-commit invalidation of the participants list — BeforeSave in the participant
@@ -210,7 +210,26 @@ namespace GameHubz.Logic.Services
             }
 
             // F35: bulk approval is a manager action.
-            await this.EnsureCanManageTournament(tournamentRegistration.First().TournamentId);
+            //
+            // Everything below reads the batch as one tournament's worth of work — the authorization
+            // above, the capacity check, all five cache keys and the manager badge push are keyed off
+            // First(). Authorizing only First() therefore did not just leave a hole (a manager of A
+            // could approve rows belonging to B by putting one of their own A rows at the head of the
+            // list); it also meant a mixed batch was capacity-checked against the wrong tournament and
+            // left the other one's caches stale. Enforce the assumption the method already makes
+            // instead of authorizing per row: the approvals screen is per-tournament, so a mixed batch
+            // is never a legitimate request.
+            var tournamentIds = tournamentRegistration
+                .Select(r => r.TournamentId)
+                .Distinct()
+                .ToList();
+
+            if (tournamentIds.Count > 1)
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.BulkApprovalSingleTournament"]);
+            }
+
+            await this.EnsureCanManageTournament(tournamentIds[0]);
 
             var tournament = tournamentRegistration.First().Tournament;
 
@@ -290,8 +309,8 @@ namespace GameHubz.Logic.Services
             }
 
             await cacheService.RemoveAsync($"tournament:{tournamentRegistration.First().TournamentId}");
-            await cacheService.RemoveAsync($"bracket:{tournamentRegistration.First().TournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentRegistration.First().TournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentRegistration.First().TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
             // Post-commit safety net — see ApproveRegistration above.
             await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");
@@ -319,6 +338,10 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<TournamentRegistrationOverview>> GetPendingByTournamentId(Guid tournamentId)
         {
+            // Pending registrations contain applicant data and are an organiser workflow, not a
+            // public tournament view. Never trust possession of a tournament id as authorization.
+            await this.EnsureCanManageTournament(tournamentId);
+
             var registrations = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingByTournamenId(tournamentId);
 
             return registrations;

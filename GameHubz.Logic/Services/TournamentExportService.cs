@@ -1,6 +1,7 @@
 using GameHubz.Common.Interfaces;
 using GameHubz.DataModels.Enums;
 using GameHubz.DataModels.Models;
+using GameHubz.Logic.Interfaces;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -69,11 +70,16 @@ namespace GameHubz.Logic.Services
 
         private readonly BracketService bracketService;
         private readonly ICacheService cacheService;
+        private readonly ILocalizationService localizationService;
 
-        public TournamentExportService(BracketService bracketService, ICacheService cacheService)
+        public TournamentExportService(
+            BracketService bracketService,
+            ICacheService cacheService,
+            ILocalizationService localizationService)
         {
             this.bracketService = bracketService;
             this.cacheService = cacheService;
+            this.localizationService = localizationService;
         }
 
         // ================================================================
@@ -91,9 +97,13 @@ namespace GameHubz.Logic.Services
             Guid tournamentId, bool includeSchedule = false)
         {
             // Keep the two variants under separate cache keys so a warm "standings only" entry is
-            // never served for a "with schedule" request (or vice-versa).
+            // never served for a "with schedule" request (or vice-versa). The language belongs in the
+            // key for the same reason: the document is rendered from GetTournamentStructure, whose
+            // round names are localized, so without it the first requester's language was served to
+            // everyone for the rest of the TTL. Both parts sit after the id so a single
+            // "pdf:bracket:{id}:*" pattern still clears every variant of a tournament at once.
             string variant = includeSchedule ? "sched" : "std";
-            string cacheKey = $"pdf:bracket:{tournamentId}:{variant}";
+            string cacheKey = $"pdf:bracket:{tournamentId}:{this.localizationService.CurrentLanguage}:{variant}";
 
             // Check PDF cache first — avoids loading tournament structure at all when warm
             var cached = await this.cacheService.GetAsync<byte[]>(cacheKey);

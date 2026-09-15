@@ -221,6 +221,24 @@ namespace GameHubz.Logic.Services
 
         public async Task<List<ChatMessageDto>> GetHistory(Guid matchId, int? take = null, DateTime? before = null)
         {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            // The same trust boundary SendMessage enforces (F33). Closing the write path left the
+            // read path open: a match id was enough for any signed-in user to pull the two sides'
+            // whole conversation. Unlike SendMessage there is no Completed check — history stays
+            // readable once the match is over, it just becomes read-only.
+            //
+            // 400 rather than the 401 SendMessage throws: the mobile client's response interceptor
+            // treats 401 as an expired token and burns a refresh round-trip before giving up (and
+            // logs the user out if that refresh happens to fail), which is the wrong reaction to a
+            // permission answer that will not change.
+            if (!IsMatchParticipant(match, user.UserId)
+                && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+                throw new BusinessRuleException(this.LocalizationService["Exception.UnauthorizedAccessToServiceException"]);
+
             return await this.AppUnitOfWork.MatchChatRepository.GetByMatchId(matchId, take, before);
         }
 

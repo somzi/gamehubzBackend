@@ -1,3 +1,4 @@
+using GameHubz.Common.Models;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
@@ -17,6 +18,28 @@ namespace GameHubz.Api.Controllers
             : base(service, appAuthorizationService)
         {
         }
+
+        // Activity rows are produced internally by domain services. Exposing the inherited generic
+        // CRUD would let any authenticated caller forge, enumerate or delete feed entries.
+        [NonAction]
+        public override Task Delete(Guid id)
+            => throw new NotSupportedException("Hub activities are managed internally.");
+
+        [NonAction]
+        public override Task<HubActivityDto> GetById(Guid id)
+            => throw new NotSupportedException("Use the home or all activity feed endpoints.");
+
+        [NonAction]
+        public override Task<EntityListDto<HubActivityDto>> GetList(
+            int? pageIndex,
+            int? pageSize,
+            List<SortItem> sortItems,
+            List<FilterItem> filterItems)
+            => throw new NotSupportedException("Use the home or all activity feed endpoints.");
+
+        [NonAction]
+        public override Task<HubActivityDto> SaveEntity(HubActivityPost modelSave)
+            => throw new NotSupportedException("Hub activities are managed internally.");
 
         [HttpGet("home")]
         public async Task<IActionResult> GetDashboardHighlights()

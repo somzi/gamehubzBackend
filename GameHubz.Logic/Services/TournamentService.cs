@@ -152,8 +152,8 @@ namespace GameHubz.Logic.Services
             await SaveAsync();
 
             await cacheService.RemoveAsync($"tournament:{id}");
-            await cacheService.RemoveAsync($"bracket:{id}");
-            await cacheService.RemoveAsync($"bracket:v3:{id}");
+            await cacheService.RemoveByPatternAsync($"bracket:{id}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{id}:*");
             await cacheService.RemoveAsync($"league_standings:{id}");
 
             // Discord-only announcement (no Expo push exists for closing registration).
@@ -303,8 +303,8 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
@@ -380,8 +380,8 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundFormatLocked"]);
 
             await this.SaveAsync();
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
 
@@ -526,16 +526,17 @@ namespace GameHubz.Logic.Services
                     await this.AppUnitOfWork.MatchRepository.ExemptOpenCheckIns(
                         model.Id.Value, now.AddMinutes(GameHubz.DataModels.Consts.MatchCheckInRules.OpensBeforeMinutes), now);
 
-                    await cacheService.RemoveByPatternAsync($"bracket:{model.Id}:*");
-                    await cacheService.RemoveByPatternAsync($"bracket:v3:{model.Id}:*");
+                    // The bracket flush this used to need is now the unconditional one below. It was
+                    // duplicated here only because that one removed the bare "bracket:{id}" key, which
+                    // never existed — the entries are written per language as "bracket:{id}:{lang}".
                 }
 
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
                 // Tournament-level settings (e.g. RequireResultApproval) are projected into the
                 // bracket structure response, so flush the bracket cache too — otherwise the new
                 // setting won't be visible until the 5-minute cache window expires.
-                await cacheService.RemoveAsync($"bracket:{model.Id}");
-                await cacheService.RemoveAsync($"bracket:v3:{model.Id}");
+                await cacheService.RemoveByPatternAsync($"bracket:{model.Id}:*");
+                await cacheService.RemoveByPatternAsync($"bracket:v3:{model.Id}:*");
                 await cacheService.RemoveAsync($"league_standings:{model.Id}");
             }
 
@@ -764,8 +765,8 @@ namespace GameHubz.Logic.Services
 
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
@@ -794,8 +795,8 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
-            await cacheService.RemoveAsync($"bracket:{tournamentId}");
-            await cacheService.RemoveAsync($"bracket:v3:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
