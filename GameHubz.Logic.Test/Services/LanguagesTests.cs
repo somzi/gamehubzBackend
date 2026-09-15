@@ -58,6 +58,9 @@ namespace GameHubz.Logic.Test.Services
         [TestCase("ru", "ru")]
         [TestCase("ru-RU", "ru")]
         [TestCase("RU", "ru")]
+        [TestCase("uk", "uk")]
+        [TestCase("uk-UA", "uk")]
+        [TestCase("UK", "uk")]
         public void ToSupported_KeepsTheLanguagesWeRender(string input, string expected)
         {
             Assert.That(Languages.ToSupported(input), Is.EqualTo(expected));

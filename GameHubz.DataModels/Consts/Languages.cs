@@ -14,6 +14,9 @@ namespace GameHubz.DataModels.Consts
 
         public const string Russian = "ru";
 
+        /// <summary>ISO 639-1 code for Ukrainian — "ua" is the country, not the language.</summary>
+        public const string Ukrainian = "uk";
+
         /// <summary>
         /// Reduces a language tag to its bare code: "es-419", "ES" and " es " all become "es".
         /// Returns null for a blank value so callers can tell "not specified" apart from
@@ -51,6 +54,7 @@ namespace GameHubz.DataModels.Consts
                 Polish => Polish,
                 Serbian => Serbian,
                 Russian => Russian,
+                Ukrainian => Ukrainian,
                 _ => English,
             };
     }

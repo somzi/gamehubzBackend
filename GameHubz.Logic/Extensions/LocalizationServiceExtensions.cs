@@ -57,8 +57,8 @@ namespace GameHubz.Logic.Extensions
 
         private static string PluralKey(string? language, int count, string oneKey, string fewKey, string manyKey)
         {
-            // CLDR "few" is the same rule in Polish, Serbian and Russian: ends in 2-4, except the
-            // teens — 22 is "few", 12 is not.
+            // CLDR "few" is the same rule in Polish, Serbian, Russian and Ukrainian: ends in 2-4,
+            // except the teens — 22 is "few", 12 is not.
             bool few = count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14);
 
             switch (language)
@@ -69,6 +69,7 @@ namespace GameHubz.Logic.Extensions
 
                 case Languages.Serbian:
                 case Languages.Russian:
+                case Languages.Ukrainian:
                     // "one" here is anything ending in 1 except 11 ("21 meč", "21 матч"), which is
                     // why these one-forms carry {0} instead of a literal 1.
                     return count % 10 == 1 && count % 100 != 11 ? oneKey : few ? fewKey : manyKey;
