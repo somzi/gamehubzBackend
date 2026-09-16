@@ -188,5 +188,24 @@ namespace GameHubz.Logic.Services
 
             return result;
         }
+
+        /// <summary>
+        /// Completed meetings between two players, expressed from <paramref name="id"/>'s
+        /// perspective. Kept separate from the general profile payload because the matchup screen
+        /// is opened far less often than a profile and should not make every profile request pair-
+        /// specific. The short cache matches the existing form/stat snapshots.
+        /// </summary>
+        public async Task<HeadToHeadDto> GetHeadToHead(Guid id, Guid opponentId)
+        {
+            string key = $"head_to_head:{id}:{opponentId}";
+
+            var cached = await cacheService.GetAsync<HeadToHeadDto>(key);
+            if (cached != null) return cached;
+
+            var result = await this.AppUnitOfWork.MatchRepository.GetHeadToHead(id, opponentId);
+            await cacheService.SetAsync(key, result, TimeSpan.FromSeconds(30));
+
+            return result;
+        }
     }
 }

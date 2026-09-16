@@ -41,6 +41,12 @@ namespace GameHubz.Api.Controllers
             return stats;
         }
 
+        [HttpGet("{id}/head-to-head/{opponentId}")]
+        public async Task<HeadToHeadDto> GetHeadToHead(Guid id, Guid opponentId)
+        {
+            return await userProfileService.GetHeadToHead(id, opponentId);
+        }
+
         [HttpGet("{id}/matches")]
         public async Task<List<MatchListItemDto>> GetMatches(Guid id, int pageNumber)
         {
