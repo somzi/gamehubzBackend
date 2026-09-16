@@ -63,5 +63,63 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(tournament.WinnerUserId, Is.EqualTo(champion.UserId),
                 "the champion is the final's winner, never the play-off's");
         }
+
+        [Test]
+        public async Task ThirdPlaceDoubleNoShow_CompletesWithoutRecordingAResult()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(
+                TournamentFormat.SingleElimination, 4, hasThirdPlaceMatch: true);
+            await harness.NewService().GenerateSingleEliminationBracket(tournamentId);
+
+            foreach (var semi in harness.Matches(tournamentId).Where(m => m.RoundNumber == 1).ToList())
+            {
+                await harness.NewService().UpdateMatchResult(new MatchResultDto
+                {
+                    MatchId = semi.Id!.Value,
+                    TournamentId = tournamentId,
+                    HomeScore = 2,
+                    AwayScore = 0,
+                });
+            }
+
+            var final = harness.Matches(tournamentId).Single(m => m.Stage == MatchStage.Final);
+            await harness.NewService().UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = final.Id!.Value,
+                TournamentId = tournamentId,
+                HomeScore = 3,
+                AwayScore = 1,
+            });
+
+            var thirdPlace = harness.Matches(tournamentId).Single(m => m.Stage == MatchStage.ThirdPlace);
+            var before = harness.Participants(tournamentId)
+                .Where(p => p.Id == thirdPlace.HomeParticipantId || p.Id == thirdPlace.AwayParticipantId)
+                .ToDictionary(p => p.Id!.Value, p => (p.Wins, p.Losses, p.Draws, p.Points));
+
+            await harness.NewService().ApplyDoubleWalkover(thirdPlace.Id!.Value);
+
+            var closed = harness.Match(thirdPlace.Id!.Value);
+            Assert.That(closed.Status, Is.EqualTo(MatchStatus.NoShow));
+            Assert.That(closed.WinnerParticipantId, Is.Null);
+            Assert.That(closed.HomeUserScore, Is.Null);
+            Assert.That(closed.AwayUserScore, Is.Null);
+
+            foreach (var participant in harness.Participants(tournamentId)
+                         .Where(p => before.ContainsKey(p.Id!.Value)))
+            {
+                Assert.That(
+                    (participant.Wins, participant.Losses, participant.Draws, participant.Points),
+                    Is.EqualTo(before[participant.Id!.Value]),
+                    "the cancelled play-off must not change either participant's statistics");
+            }
+
+            var champion = harness.Participants(tournamentId)
+                .Single(p => p.Id == harness.Match(final.Id!.Value).WinnerParticipantId);
+            var tournament = harness.Tournament(tournamentId);
+            Assert.That(tournament.Status, Is.EqualTo(TournamentStatus.Completed));
+            Assert.That(tournament.WinnerUserId, Is.EqualTo(champion.UserId),
+                "the already-decided final winner remains the champion");
+        }
     }
 }

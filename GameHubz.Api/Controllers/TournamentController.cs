@@ -175,9 +175,10 @@ namespace GameHubz.Api.Controllers
             return Ok(affected);
         }
 
-        // Admin/owner-only: both sides no-showed an elimination match, so it is closed with no winner
-        // and the opponent from the sibling matchup advances by walkover. Authorization is enforced
-        // inside the service (CanManageTournamentAsync).
+        // Admin/owner-only: both sides no-showed. In an elimination round the opponent from the
+        // sibling matchup advances; a terminal third-place play-off is closed with no player stats
+        // and the already-decided champion is preserved. Authorization is enforced inside the
+        // service (CanManageTournamentAsync).
         [HttpPost("matchResult/doubleWalkover")]
         public async Task<IActionResult> ApplyDoubleWalkover([FromBody] MatchResultDecisionRequest request)
         {

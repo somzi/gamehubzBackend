@@ -3403,7 +3403,9 @@ namespace GameHubz.Logic.Services
         /// Elimination brackets: the match is closed with no winner (both eliminated) and the
         /// opponent coming from the sibling matchup advances unopposed — a walkover into the next
         /// round; works whether or not the sibling has been decided yet (the settle hook covers the
-        /// late case). League / group / Swiss: the fixture is closed as <see cref="MatchStatus.NoShow"/>
+        /// late case). A terminal third-place play-off is closed as <see cref="MatchStatus.NoShow"/>
+        /// and, once the final is already decided, completes the tournament without recording a
+        /// result for either play-off participant. League / group / Swiss: the fixture is closed as <see cref="MatchStatus.NoShow"/>
         /// — a double forfeit awarding NOTHING to either player (deliberately not a draw), while the
         /// round still completes, unlocks and pairs as if the match had been played. Team sub-matches
         /// close as a NoShow game contributing nothing to the tie (see
@@ -3444,8 +3446,15 @@ namespace GameHubz.Logic.Services
             bool isGroupMachinery = stageType == StageType.League
                 || stageType == StageType.GroupStage
                 || stageType == StageType.Swiss;
+            bool isTerminalThirdPlace = match.Stage == MatchStage.ThirdPlace
+                && !match.NextMatchId.HasValue
+                && !match.NextMatchLoserBracketId.HasValue;
 
-            if (isGroupMachinery)
+            if (isTerminalThirdPlace)
+            {
+                await ApplyTerminalThirdPlaceNoShow(match);
+            }
+            else if (isGroupMachinery)
             {
                 await ApplyGroupNoShowWalkover(match);
             }
@@ -3492,7 +3501,9 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"pdf:bracket:{match.TournamentId}:*");
 
             // Discord-only announcement (no Expo equivalent exists for double walkovers).
-            await this.matchNotifier.DoubleWalkover(match, opponentAdvances: !isGroupMachinery);
+            await this.matchNotifier.DoubleWalkover(
+                match,
+                opponentAdvances: !isGroupMachinery && !isTerminalThirdPlace);
         }
 
         /// <summary>
@@ -3533,12 +3544,15 @@ namespace GameHubz.Logic.Services
             if (!match.HomeParticipantId.HasValue || !match.AwayParticipantId.HasValue)
                 return this.LocalizationService["BusinessRule.DoubleWalkoverNeedsBoth"];
 
-            // An elimination match needs somewhere to advance the surviving sibling into. A final
-            // has no downstream slot, so it remains open for an organizer to resolve explicitly.
+            // An elimination match needs somewhere to advance the surviving sibling into. The
+            // exception is the third-place play-off: nobody advances from it, so it can close as a
+            // no-stats NoShow once neither participant will play. A championship final still stays
+            // open because closing it this way would leave the tournament without a champion.
             if (!match.TeamMatchId.HasValue
                 && !isGroupMachinery
                 && !match.NextMatchId.HasValue
-                && !match.NextMatchLoserBracketId.HasValue)
+                && !match.NextMatchLoserBracketId.HasValue
+                && match.Stage != MatchStage.ThirdPlace)
                 return this.LocalizationService["BusinessRule.WalkoverNoNextRound"];
 
             return null;
@@ -3725,6 +3739,54 @@ namespace GameHubz.Logic.Services
                 {
                     await CheckAndCompleteLeague(match.TournamentId);
                     await CheckAndUnlockNextRound(match.TournamentId, match.TournamentStageId!.Value, match.RoundNumber ?? 1);
+                }
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
+        }
+
+        // A third-place play-off is terminal but does not decide the champion. When neither side
+        // will play it, close it as NoShow (rather than Completed-with-no-winner, which profile
+        // statistics interpret as a draw), then finish the tournament from the already-decided
+        // championship final. The all-matches check keeps this safe if another fixture is still open.
+        private async Task ApplyTerminalThirdPlaceNoShow(MatchEntity match)
+        {
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                match.Status = MatchStatus.NoShow;
+                ClearSeriesResult(match);
+                match.ScheduledStartTime ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+
+                if (!await this.AppUnitOfWork.MatchRepository.AreAllMatchesFinishedInTournament(match.TournamentId))
+                    return;
+
+                var stageMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(match.TournamentStageId!.Value);
+                var finalMatch = stageMatches.FirstOrDefault(m => m.Stage == MatchStage.Final);
+                if (finalMatch?.Status != MatchStatus.Completed || !finalMatch.WinnerParticipantId.HasValue)
+                    return;
+
+                var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(match.TournamentId);
+                bool wasCompleted = tournament.Status == TournamentStatus.Completed;
+
+                tournament.WinnerUserId = await ResolveParticipantUserId(finalMatch.WinnerParticipantId);
+                tournament.Status = TournamentStatus.Completed;
+                tournament.EndedOn ??= DateTime.UtcNow;
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                await this.SaveAsync();
+
+                if (!wasCompleted)
+                {
+                    await this.hubActivityService.LogActivity(
+                        tournament.HubId!.Value,
+                        tournament.Id!.Value,
+                        HubActivityType.TournamentCompleted);
+                    await NotifyTournamentWinnerAsync(tournament);
+                    await this.tournamentNotifier.TournamentFinished(tournament);
                 }
             }
             finally
