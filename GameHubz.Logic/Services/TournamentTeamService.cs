@@ -710,6 +710,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
             await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
         }
 

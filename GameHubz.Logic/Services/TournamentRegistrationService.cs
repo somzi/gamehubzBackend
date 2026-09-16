@@ -190,6 +190,7 @@ namespace GameHubz.Logic.Services
                 await cacheService.RemoveByPatternAsync($"bracket:{tournamentRegistration.TournamentId}:*");
                 await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentRegistration.TournamentId}:*");
                 await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.TournamentId}");
+                await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentRegistration.TournamentId}:*");
             }
             // Post-commit invalidation of the participants list — BeforeSave in the participant
             // service runs before the DB commit, so this catches the rare race where a concurrent
@@ -312,6 +313,7 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentRegistration.First().TournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentRegistration.First().TournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentRegistration.First().TournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentRegistration.First().TournamentId}:*");
             // Post-commit safety net — see ApproveRegistration above.
             await cacheService.RemoveAsync($"tournament_participants:{tournamentRegistration.First().TournamentId}");
 

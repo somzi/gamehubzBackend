@@ -221,6 +221,33 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         /// <summary>
+        /// TournamentService over a fresh request-like context. The round scheduling path exercised
+        /// by cache tests only needs authorization, persistence and the shared cache; the notification
+        /// collaborators are intentionally inert.
+        /// </summary>
+        public TournamentService NewTournamentService()
+        {
+            var factory = new TestUnitOfWorkFactory(newContext(), localization);
+            var tournamentAuth = new TournamentAuthorizationService(
+                factory, UserContext, localization, Cache, userHubService: null!);
+
+            return new TournamentService(
+                factory,
+                mapper,
+                localization,
+                new Mock<IValidator<TournamentEntity>>().Object,
+                searchService,
+                serviceFunctions,
+                UserContext,
+                hubActivityService: null!,
+                Cache,
+                tournamentNotifier: null!,
+                tournamentAuth,
+                userHubService: null!,
+                evidenceRetention: null!);
+        }
+
+        /// <summary>
         /// Leaves a match in the state SetAvailability produces once both sides overlap: a confirmed
         /// kick-off, Scheduled, and both slot columns filled.
         /// </summary>

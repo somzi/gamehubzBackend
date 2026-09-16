@@ -152,9 +152,7 @@ namespace GameHubz.Logic.Services
             await SaveAsync();
 
             await cacheService.RemoveAsync($"tournament:{id}");
-            await cacheService.RemoveByPatternAsync($"bracket:{id}:*");
-            await cacheService.RemoveByPatternAsync($"bracket:v3:{id}:*");
-            await cacheService.RemoveAsync($"league_standings:{id}");
+            await InvalidateTournamentProjectionCaches(id);
 
             // Discord-only announcement (no Expo push exists for closing registration).
             await this.tournamentNotifier.RegistrationClosed(tournament);
@@ -303,9 +301,7 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
-            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
-            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
-            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await InvalidateTournamentProjectionCaches(tournamentId);
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
         }
 
@@ -380,9 +376,7 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.RoundFormatLocked"]);
 
             await this.SaveAsync();
-            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
-            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
-            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await InvalidateTournamentProjectionCaches(tournamentId);
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
 
             return result;
@@ -486,15 +480,42 @@ namespace GameHubz.Logic.Services
                 checkInSwitchedOn = before != null && !before.RequireMatchCheckIn;
             }
 
-            TournamentDto model = await this.ServiceFunctions.SaveEntity(
-                this.GetRepository(),
-                this,
-                this.Validator,
-                inputDto,
-                this.GetEntityById,
-                this.BeforeSave,
-                this.BeforeDtoMapToEntity,
-                doSave);
+            Task<TournamentDto> SaveTournamentAsync() => this.ServiceFunctions.SaveEntity(
+                    this.GetRepository(),
+                    this,
+                    this.Validator,
+                    inputDto,
+                    this.GetEntityById,
+                    this.BeforeSave,
+                    this.BeforeDtoMapToEntity,
+                    doSave);
+
+            TournamentDto model;
+            if (checkInSwitchedOn && doSave && inputDto.Id.HasValue)
+            {
+                // The setting and the exemptions are one invariant: once a sweep can observe
+                // RequireMatchCheckIn=true, every fixture whose window was already open must already
+                // be exempt. A transaction prevents the sweep from seeing the half-written state if
+                // either the tournament save or the bulk match update fails.
+                DateTime now = DateTime.UtcNow;
+                model = await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    TournamentDto saved = await SaveTournamentAsync();
+                    if (saved.RequireMatchCheckIn && saved.Id.HasValue)
+                    {
+                        await this.AppUnitOfWork.MatchRepository.ExemptOpenCheckIns(
+                            saved.Id.Value,
+                            now.AddMinutes(GameHubz.DataModels.Consts.MatchCheckInRules.OpensBeforeMinutes),
+                            now);
+                    }
+
+                    return saved;
+                });
+            }
+            else
+            {
+                model = await SaveTournamentAsync();
+            }
 
             if (inputDto.Id is null)
             {
@@ -516,28 +537,11 @@ namespace GameHubz.Logic.Services
             }
             else
             {
-                // Turning the ready check on mid-tournament must only reach fixtures whose window
-                // opens from now on. Anything already inside its window — or past kick-off — never
-                // showed anyone a button, and the sweep rules back 24 hours: left alone, the next
-                // tick forfeits or voids all of it. After the save, so a rejected edit exempts nothing.
-                if (checkInSwitchedOn && model.RequireMatchCheckIn && model.Id.HasValue)
-                {
-                    var now = DateTime.UtcNow;
-                    await this.AppUnitOfWork.MatchRepository.ExemptOpenCheckIns(
-                        model.Id.Value, now.AddMinutes(GameHubz.DataModels.Consts.MatchCheckInRules.OpensBeforeMinutes), now);
-
-                    // The bracket flush this used to need is now the unconditional one below. It was
-                    // duplicated here only because that one removed the bare "bracket:{id}" key, which
-                    // never existed — the entries are written per language as "bracket:{id}:{lang}".
-                }
-
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
                 // Tournament-level settings (e.g. RequireResultApproval) are projected into the
-                // bracket structure response, so flush the bracket cache too — otherwise the new
-                // setting won't be visible until the 5-minute cache window expires.
-                await cacheService.RemoveByPatternAsync($"bracket:{model.Id}:*");
-                await cacheService.RemoveByPatternAsync($"bracket:v3:{model.Id}:*");
-                await cacheService.RemoveAsync($"league_standings:{model.Id}");
+                // bracket structure and PDF, so flush every projection — otherwise the new setting,
+                // name or schedule can remain visible until the 5-minute cache window expires.
+                await InvalidateTournamentProjectionCaches(model.Id!.Value);
             }
 
             // Wipe every paginated tournament list cached for this hub — the new (or edited)
@@ -765,9 +769,7 @@ namespace GameHubz.Logic.Services
 
         private async Task InvalidateTournamentCache(Guid tournamentId, Guid hubId)
         {
-            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
-            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
-            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await InvalidateTournamentProjectionCaches(tournamentId);
             await cacheService.RemoveAsync($"tournament:{tournamentId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
             // Wipes every cached page of every status for this hub — replaces the old
@@ -795,10 +797,21 @@ namespace GameHubz.Logic.Services
             }
 
             await this.SaveAsync();
+            await InvalidateTournamentProjectionCaches(tournamentId);
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+        }
+
+        /// <summary>
+        /// Bracket JSON and bracket PDFs are two cached views of the same tournament projection.
+        /// Keeping their invalidation together prevents a schedule/name/result edit from refreshing
+        /// the app while leaving a previously generated language/variant PDF stale for five minutes.
+        /// </summary>
+        private async Task InvalidateTournamentProjectionCaches(Guid tournamentId)
+        {
             await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
             await cacheService.RemoveAsync($"league_standings:{tournamentId}");
-            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
         }
     }
 }

@@ -2,6 +2,12 @@ namespace GameHubz.Logic.Interfaces
 {
     public interface IAppUnitOfWork : IDisposable, IUnitOfWork
     {
+        /// <summary>
+        /// Runs related repository writes on this unit of work in one database transaction.
+        /// The transaction is committed only after the complete operation succeeds.
+        /// </summary>
+        Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> operation);
+
         IUserRepository UserRepository { get; }
 
         IHubRepository HubRepository { get; }

@@ -825,8 +825,7 @@ namespace GameHubz.Data.Repository
             int affected = await this.BaseDbSet()
                 .Where(m => m.Id == matchId
                     && m.Status == MatchStatus.Scheduled
-                    && m.CheckInResolvedOn == null
-                    && m.ProposedByUserId == null)
+                    && m.CheckInResolvedOn == null)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.CheckInResolvedOn, resolvedOn)
                     .SetProperty(m => m.ProposedHomeScore, homeScore)

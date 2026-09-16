@@ -4316,8 +4316,6 @@ namespace GameHubz.Logic.Services
             TokenUserInfo currentUser,
             bool requireMatchCheckIn)
         {
-            bool hadProposal = match.ProposedByUserId.HasValue;
-
             match.ProposedHomeScore = series.HomeScore;
             match.ProposedAwayScore = series.AwayScore;
             // The whole series travels with the proposal, so approving replays exactly what the
@@ -4328,8 +4326,8 @@ namespace GameHubz.Logic.Services
             // A proposal in approval mode is two-sided once the opponent confirms it, so the ready
             // check must no longer auto-rule the fixture while that confirmation is pending. Store
             // the proposal and marker atomically against the sweep: whichever update reaches the row
-            // first wins. Existing proposals are already protected by ProposedByUserId and use the
-            // normal tracked update below (this also upgrades proposals created before this fix).
+            // first wins. This path also upgrades a proposal filed before the window opened: once
+            // edited inside the window it claims the marker with the same conditional write.
             // Only once the ready-check window is actually open. Without this condition a proposal
             // filed hours before kick-off still stamped CheckInResolvedOn, and because the caller's
             // CheckInRequiredToPropose guard is itself gated on the window being open, nothing stopped
@@ -4343,8 +4341,7 @@ namespace GameHubz.Logic.Services
                 && match.Status == MatchStatus.Scheduled
                 && match.ScheduledStartTime.HasValue
                 && DateTime.UtcNow >= MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value)
-                && !match.CheckInResolvedOn.HasValue
-                && !hadProposal)
+                && !match.CheckInResolvedOn.HasValue)
             {
                 DateTime resolvedOn = DateTime.UtcNow;
                 bool proposalSaved = await this.AppUnitOfWork.MatchRepository.TrySaveCheckInProposal(
@@ -4367,13 +4364,6 @@ namespace GameHubz.Logic.Services
 
                 await PublishProposalSavedAsync(match, currentUser);
                 return;
-            }
-
-            if (requireMatchCheckIn
-                && match.Status == MatchStatus.Scheduled
-                && !match.CheckInResolvedOn.HasValue)
-            {
-                match.CheckInResolvedOn = DateTime.UtcNow;
             }
 
             await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);

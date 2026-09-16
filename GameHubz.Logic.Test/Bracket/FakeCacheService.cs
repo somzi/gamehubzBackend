@@ -14,9 +14,13 @@ namespace GameHubz.Logic.Test.Bracket
     internal sealed class FakeCacheService : ICacheService
     {
         private readonly Dictionary<string, object?> store = new();
+        private readonly List<string> removedKeys = new();
+        private readonly List<string> removedPatterns = new();
 
         public int SetCount { get; private set; }
         public int RemoveCount { get; private set; }
+        public IReadOnlyList<string> RemovedKeys => removedKeys;
+        public IReadOnlyList<string> RemovedPatterns => removedPatterns;
 
         public Task<T?> GetAsync<T>(string key)
         {
@@ -38,6 +42,7 @@ namespace GameHubz.Logic.Test.Bracket
         public Task RemoveAsync(string key)
         {
             store.Remove(key);
+            removedKeys.Add(key);
             RemoveCount++;
             return Task.CompletedTask;
         }
@@ -66,6 +71,7 @@ namespace GameHubz.Logic.Test.Bracket
 
         public Task RemoveByPatternAsync(string pattern)
         {
+            removedPatterns.Add(pattern);
             int star = pattern.IndexOf('*');
             if (star < 0)
             {

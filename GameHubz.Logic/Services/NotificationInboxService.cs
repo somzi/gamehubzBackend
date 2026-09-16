@@ -26,6 +26,7 @@ namespace GameHubz.Logic.Services
 
         private const int DefaultPageSize = 30;
         private const int MaxPageSize = 50;
+        private const int SummaryPushBatchSize = 50;
 
         // Payload types that ask the recipient to do something. Everything else — an untyped push
         // included — is an update. Chat messages never reach the inbox (they have their own unread
@@ -230,11 +231,30 @@ namespace GameHubz.Logic.Services
             {
                 var summaries = await this.AppUnitOfWork.NotificationRepository.GetSummaries(userIds);
 
-                foreach (Guid userId in userIds)
+                // SignalR sends are independent, but launching an unbounded Task.WhenAll for a very
+                // large retention sweep would simply move the bottleneck into allocations/socket
+                // pressure. Bounded batches remove the N-users serial latency while keeping load
+                // predictable. One disconnected user's send remains best-effort and does not stop
+                // later users from receiving their corrected counters.
+                foreach (Guid[] batch in userIds.Distinct().Chunk(SummaryPushBatchSize))
                 {
-                    await this.hubContext.Clients
-                        .Group(UserHub.GroupName(userId))
-                        .SendAsync(SummaryUpdatedEvent, summaries.TryGetValue(userId, out var summary) ? summary : new NotificationSummaryDto());
+                    await Task.WhenAll(batch.Select(async userId =>
+                    {
+                        try
+                        {
+                            await this.hubContext.Clients
+                                .Group(UserHub.GroupName(userId))
+                                .SendAsync(
+                                    SummaryUpdatedEvent,
+                                    summaries.TryGetValue(userId, out var summary)
+                                        ? summary
+                                        : new NotificationSummaryDto());
+                        }
+                        catch
+                        {
+                            // Best-effort per user. The app refetches on foreground/reconnect.
+                        }
+                    }));
                 }
             }
             catch

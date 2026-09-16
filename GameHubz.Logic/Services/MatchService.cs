@@ -467,6 +467,8 @@ namespace GameHubz.Logic.Services
         {
             await this.cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
             await this.cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
+            // Scheduled kick-offs are rendered by the optional schedule PDF variant too.
+            await this.cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
         }
 
         /// <summary>

@@ -58,6 +58,35 @@ namespace GameHubz.Data
             await this.Context.SaveChangesAsync();
         }
 
+        public async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> operation)
+        {
+            ArgumentNullException.ThrowIfNull(operation);
+
+            // A caller already inside a transaction owns its lifetime. Reusing it keeps this helper
+            // safe for composed service operations without creating unsupported nested transactions.
+            if (this.Context.Database.CurrentTransaction != null)
+            {
+                return await operation();
+            }
+
+            var strategy = this.Context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await this.Context.Database.BeginTransactionAsync();
+                try
+                {
+                    T result = await operation();
+                    await transaction.CommitAsync();
+                    return result;
+                }
+                catch
+                {
+                    await transaction.RollbackAsync();
+                    throw;
+                }
+            });
+        }
+
         public void Dispose()
         {
             this.Dispose(true);

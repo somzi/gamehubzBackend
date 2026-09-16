@@ -394,6 +394,39 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
+        public async Task Proposal_BeforeTheCheckInWindow_DoesNotResolveTheFutureReadyCheck()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(
+                TournamentFormat.League, 4, requireResultApproval: true);
+            await harness.NewService().GenerateLeagueTournament(tid);
+            EnableCheckIn(harness, tid);
+
+            var fixture = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            MarkCheckedIn(harness, fixture.Id!.Value, DateTime.UtcNow.AddHours(2));
+
+            var proposerId = harness.ParticipantUserId(fixture.HomeParticipantId!.Value);
+            await harness.DenyManageFor(proposerId, tid);
+
+            await harness.NewServiceAsUser(proposerId).UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = fixture.Id!.Value,
+                TournamentId = tid,
+                HomeScore = 3,
+                AwayScore = 0,
+            });
+
+            var after = harness.Match(fixture.Id!.Value);
+            Assert.Multiple(() =>
+            {
+                Assert.That(after.ProposedByUserId, Is.EqualTo(proposerId));
+                Assert.That(after.Status, Is.EqualTo(MatchStatus.Scheduled));
+                Assert.That(after.CheckInResolvedOn, Is.Null,
+                    "a proposal filed before the window opens must not close the future ready check");
+            });
+        }
+
+        [Test]
         public async Task Proposal_IsRefusedWhenTheProposerNeverCheckedIn()
         {
             // The hole this closes: the opponent is in, the proposer is about to lose by forfeit, and a

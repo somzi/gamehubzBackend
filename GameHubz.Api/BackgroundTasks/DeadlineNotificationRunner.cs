@@ -1,4 +1,4 @@
-using GameHubz.Common.Consts;
+﻿using GameHubz.Common.Consts;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
 using GameHubz.DataModels.Config;
@@ -441,6 +441,25 @@ namespace GameHubz.Api.BackgroundTasks
                 return;
             }
 
+            // The inbox/push wave above is the primary notification. Persist its one-shot marker
+            // before the additive Discord fan-out: if the process dies halfway through hundreds of
+            // DMs, the next tick must not send the primary wave and the completed DMs again. A crash
+            // after this point may omit some optional DMs, but every player already has the durable
+            // inbox row (and push where configured), which is preferable to duplicate reminders.
+            //
+            // Deliberately NOT cancellable: the pushes are already out, so a shutdown landing in this
+            // window would otherwise drop the marker and make the next start resend the whole wave —
+            // the exact duplicate this ordering exists to prevent. It is one bounded UPDATE per wave.
+            foreach (var wave in reminders.GroupBy(r => r.Stage))
+            {
+                int stage = wave.Key;
+                var matchIds = wave.Select(r => r.MatchId).ToList();
+
+                await context.Set<MatchEntity>()
+                    .Where(m => matchIds.Contains(m.Id!.Value))
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundReminderStage, stage), CancellationToken.None);
+            }
+
             foreach (var reminder in reminders)
             {
                 foreach (Guid? userId in new[] { reminder.HomeUserId, reminder.AwayUserId })
@@ -465,16 +484,6 @@ namespace GameHubz.Api.BackgroundTasks
                         logger.LogWarning(ex, "Failed round reminder DM for match {MatchId}.", reminder.MatchId);
                     }
                 }
-            }
-
-            foreach (var wave in reminders.GroupBy(r => r.Stage))
-            {
-                int stage = wave.Key;
-                var matchIds = wave.Select(r => r.MatchId).ToList();
-
-                await context.Set<MatchEntity>()
-                    .Where(m => matchIds.Contains(m.Id!.Value))
-                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundReminderStage, stage), ct);
             }
         }
 
