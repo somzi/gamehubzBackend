@@ -109,6 +109,8 @@
 
         Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId);
 
+        Task<List<string>> GetOutcomesByUserId(Guid userId);
+
         Task<HeadToHeadDto> GetHeadToHead(Guid userId, Guid opponentId);
     }
 }

@@ -20,6 +20,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize);
 
+        Task<int> CountTournamentsByUserId(Guid userId);
+
         Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId);
 
         Task<List<TournamentParticipantEntity>> GetAllByTournamentAndUser(Guid tournamentId, Guid userId);

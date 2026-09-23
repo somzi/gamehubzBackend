@@ -152,6 +152,18 @@ namespace GameHubz.Data.Repository
             return new EntityListDto<TournamentOverview>(items, count);
         }
 
+        // Same membership predicate as GetByUserIdPaged, so the profile count matches the
+        // Tournaments tab. Distinct because a user can end up with more than one row in a tournament.
+        public async Task<int> CountTournamentsByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(x => x.UserId == userId
+                    || (x.TeamId != null && x.Team!.Members.Any(m => m.UserId == userId)))
+                .Select(x => x.TournamentId)
+                .Distinct()
+                .CountAsync();
+        }
+
         public Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId)
         {
             return this.BaseDbSet()

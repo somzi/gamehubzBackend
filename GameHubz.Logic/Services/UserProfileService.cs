@@ -175,18 +175,39 @@ namespace GameHubz.Logic.Services
             var stats = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
             var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
             stats.TournamentsWon = numberOfTournamentsWon;
+            stats.TournamentsPlayed = await this.AppUnitOfWork.TournamentParticipantRepository.CountTournamentsByUserId(id);
 
-            var performance = await this.AppUnitOfWork.MatchRepository.GetPerformanceByUserIdV2(id);
+            // Newest first. The first ten are the same Recent Form GetPerformanceByUserIdV2 returns,
+            // and the full list gives the streak from the same single query.
+            var outcomes = await this.AppUnitOfWork.MatchRepository.GetOutcomesByUserId(id);
+            stats.LongestWinStreak = LongestWinStreak(outcomes);
 
             var result = new PlayerMatchesV2Dto
             {
                 Stats = stats,
-                Performance = performance
+                Performance = outcomes
+                    .Take(10)
+                    .Select(outcome => new PerformanceV2Dto { Outcome = outcome })
+                    .ToList()
             };
 
             await cacheService.SetAsync(key, result, TimeSpan.FromSeconds(30));
 
             return result;
+        }
+
+        private static int LongestWinStreak(List<string> outcomes)
+        {
+            int longest = 0;
+            int current = 0;
+
+            foreach (var outcome in outcomes)
+            {
+                current = outcome == "W" ? current + 1 : 0;
+                longest = Math.Max(longest, current);
+            }
+
+            return longest;
         }
 
         /// <summary>

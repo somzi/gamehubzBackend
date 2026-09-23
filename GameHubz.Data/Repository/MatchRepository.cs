@@ -515,6 +515,27 @@ namespace GameHubz.Data.Repository
             return recent;
         }
 
+        // GetPerformanceByUserIdV2 without its Take(10): every completed match's outcome, newest
+        // first. The profile takes Recent Form (the first ten) and the longest win streak from this
+        // one list, so the streak costs no second scan of the user's matches.
+        public async Task<List<string>> GetOutcomesByUserId(Guid userId)
+        {
+            return await this.BaseDbSet()
+                .Where(m =>
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
+                    && m.Status == MatchStatus.Completed)
+                .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
+                .Select(m => m.WinnerParticipantId == null
+                    ? "D"
+                    : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                        ? m.HomeParticipantId
+                        : m.AwayParticipantId) == m.WinnerParticipantId
+                        ? "W"
+                        : "L")
+                .ToListAsync();
+        }
+
         // Head-to-head between two users. Filters on the same participant/team-match dual model
         // GetLastMatchesByUserId uses, aggregates outcomes in memory (typical H2H count is small
         // enough that the trip is cheaper than mirrored SQL branches), and snapshots the most
