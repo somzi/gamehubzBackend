@@ -366,7 +366,7 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
-        public async Task SwapBracketParticipants_CanSwapAByeTeamViaRegenerate()
+        public async Task SwapBracketParticipants_CanSwapAByeTeam()
         {
             var harness = new BracketTestHarness(useSqlite: true);
             var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);

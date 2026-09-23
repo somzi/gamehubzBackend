@@ -71,6 +71,10 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public INotificationRepository NotificationRepository => this.GetRepository<NotificationRepository>();
 
+        public IUserDeviceRepository UserDeviceRepository => this.GetRepository<UserDeviceRepository>();
+
+        public IMatchResultVerificationRepository MatchResultVerificationRepository => this.GetRepository<MatchResultVerificationRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

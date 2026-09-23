@@ -123,5 +123,16 @@ namespace GameHubz.Data.Repository
                 .Select(r => r.UserId)
                 .ToListAsync();
         }
+
+        public Task<int> DeleteByMatchIds(IReadOnlyCollection<Guid> matchIds)
+        {
+            if (matchIds.Count == 0) return Task.FromResult(0);
+
+            // IgnoreQueryFilters: a soft-deleted cursor still holds the unique (match, user) slot and the FK.
+            return this.ContextBase.Set<MatchChatReadEntity>()
+                .IgnoreQueryFilters()
+                .Where(r => matchIds.Contains(r.MatchId))
+                .ExecuteDeleteAsync();
+        }
     }
 }

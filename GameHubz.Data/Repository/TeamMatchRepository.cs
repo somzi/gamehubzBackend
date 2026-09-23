@@ -87,6 +87,7 @@ namespace GameHubz.Data.Repository
                     RequireResultApproval = tm.Tournament!.RequireResultApproval,
                     RequireMatchCheckIn = tm.Tournament!.RequireMatchCheckIn,
                     CheckInGraceMinutes = tm.Tournament!.CheckInGraceMinutes,
+                    RequireResultVerification = tm.Tournament!.RequireResultVerification,
                     WinCondition = tm.Tournament!.TeamWinCondition,
                     HomeTeam = tm.HomeTeamParticipant != null && tm.HomeTeamParticipant.Team != null
                         ? new TeamMatchTeamProjection
@@ -191,6 +192,8 @@ namespace GameHubz.Data.Repository
                         ProposedByUserId = sm.ProposedByUserId,
                         AdminHelpRequested = sm.AdminHelpRequested,
                         AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId,
+                        HasResultVerifications = sm.ResultVerifications!.Any(v =>
+                            v.Status == MatchVerificationStatus.Verified || v.Status == MatchVerificationStatus.Failed),
                         // Each individual game of the tie is its own series. Resolved here (match
                         // override, else the tournament default) so the client can render the
                         // per-game entry form without a second lookup.

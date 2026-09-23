@@ -39,6 +39,12 @@
         /// <summary>Pending → Scheduled at the given kick-off, dropping any old check-in state; false when no longer Pending.</summary>
         Task<bool> TryScheduleFromAvailability(Guid matchId, DateTime scheduledStart, DateTime modifiedOn);
 
+        /// <summary>Confirms an externally agreed time without updating participants or other match data.</summary>
+        Task<bool> TrySetScheduled(Guid matchId, DateTime scheduledStart, Guid modifiedByUserId);
+
+        /// <summary>Clears only the schedule, availability and check-in columns of a Scheduled match.</summary>
+        Task<bool> TryClearSchedule(Guid matchId, DateTime modifiedOn, Guid modifiedByUserId);
+
         Task<MatchEntity?> GetWithTournamentStage(Guid id);
 
         Task<bool> IsExistingByStageId(Guid? id);
@@ -70,6 +76,13 @@
         Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId);
 
         Task<List<MatchEntity>> GetByStageId(Guid groupStageId);
+
+        /// <summary>
+        /// The two participant ids as committed right now, or null when the match no longer exists.
+        /// Result writes compare this with the row they loaded, so a report never lands on a fixture
+        /// whose players changed underneath it.
+        /// </summary>
+        Task<(Guid? HomeParticipantId, Guid? AwayParticipantId)?> GetParticipantIds(Guid matchId);
 
         // Every match in a tournament. Spans all stages — needed for double elimination, where a
         // Losers-Bracket match's loser-edge feeder lives in the Winners stage. Used by the

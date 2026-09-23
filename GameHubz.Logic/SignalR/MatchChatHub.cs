@@ -13,15 +13,18 @@ namespace GameHubz.Logic.SignalR
         private readonly IUnitOfWorkFactory unitOfWorkFactory;
         private readonly AccessTokenReader accessTokenReader;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly MatchChatConnectionRegistry connectionRegistry;
 
         public MatchChatHub(
             IUnitOfWorkFactory unitOfWorkFactory,
             AccessTokenReader accessTokenReader,
-            TournamentAuthorizationService tournamentAuth)
+            TournamentAuthorizationService tournamentAuth,
+            MatchChatConnectionRegistry connectionRegistry)
         {
             this.unitOfWorkFactory = unitOfWorkFactory;
             this.accessTokenReader = accessTokenReader;
             this.tournamentAuth = tournamentAuth;
+            this.connectionRegistry = connectionRegistry;
         }
 
         // Frontend zove ovu metodu kad uđe na ekran meča
@@ -50,12 +53,25 @@ namespace GameHubz.Logic.SignalR
                 throw new HubException("You are not a participant of this match.");
 
             await Groups.AddToGroupAsync(Context.ConnectionId, matchId);
+
+            // Remembered so the connection can be taken back out if this user stops being a
+            // participant while the chat is open (see MatchChatAccessRevoker).
+            connectionRegistry.Add(matchGuid, Context.ConnectionId, user.UserId);
         }
 
         // Frontend zove ovo kad izađe sa ekrana (clean-up)
         public async Task LeaveMatchGroup(string matchId)
         {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, matchId);
+
+            if (Guid.TryParse(matchId, out var matchGuid))
+                connectionRegistry.Remove(matchGuid, Context.ConnectionId);
+        }
+
+        public override async Task OnDisconnectedAsync(Exception? exception)
+        {
+            connectionRegistry.RemoveConnection(Context.ConnectionId);
+            await base.OnDisconnectedAsync(exception);
         }
 
         private static bool IsMatchParticipant(MatchEntity match, Guid userId)

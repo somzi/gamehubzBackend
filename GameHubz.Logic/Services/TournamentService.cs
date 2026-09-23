@@ -596,6 +596,11 @@ namespace GameHubz.Logic.Services
                 inputDto.CheckInGraceMinutes = existing.CheckInGraceMinutes;
             }
 
+            // Result verification, same reasoning: an app that predates it sends nothing, and reading
+            // that as "off" would quietly drop the requirement the organizer switched on. Editable for
+            // the whole tournament — it only gates reports that have not been made yet.
+            inputDto.RequireResultVerification ??= existing.RequireResultVerification;
+
             // The scheduled opening travels under its own opt-in flag rather than
             // AllowStructuralEdits: the currently shipped client already sets that flag and knows
             // nothing about this field, so folding the two together would let its edits null the

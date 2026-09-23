@@ -21,6 +21,12 @@ namespace GameHubz.DataModels.Models
         /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
         public int? CheckInGraceMinutes { get; set; }
 
+        /// <summary>
+        /// Result verification. The result path needs it to refuse a participant's report until that
+        /// participant has a verified record for the match.
+        /// </summary>
+        public bool RequireResultVerification { get; set; }
+
         /// <summary>Tournament default Best-of. 1 for every tournament created before series existed.</summary>
         public int BestOf { get; set; } = 1;
 

@@ -32,6 +32,9 @@ namespace GameHubz.DataModels.Models
         /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
         public int? CheckInGraceMinutes { get; set; }
 
+        /// <summary>Result verification before a report — see TournamentEntity.RequireResultVerification.</summary>
+        public bool RequireResultVerification { get; set; }
+
         public HubEdit? Hub { get; set; }
 
         public List<TournamentRegistrationEdit>? TournamentRegistrations { get; set; } = new();

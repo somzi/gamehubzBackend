@@ -58,5 +58,15 @@ namespace GameHubz.Data.Repository
                 .Where(x => x.MediaType == mediaType && x.Match!.TournamentId == tournamentId)
                 .ToListAsync();
         }
+
+        public Task<bool> AnyForMatches(IReadOnlyCollection<Guid> matchIds, bool includeSoftDeleted)
+        {
+            if (matchIds.Count == 0) return Task.FromResult(false);
+
+            var query = this.ContextBase.Set<MatchEvidenceEntity>().AsNoTracking();
+            if (includeSoftDeleted) query = query.IgnoreQueryFilters();
+
+            return query.AnyAsync(x => x.MatchId != null && matchIds.Contains(x.MatchId.Value));
+        }
     }
 }

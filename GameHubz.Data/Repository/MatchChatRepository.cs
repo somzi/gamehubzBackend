@@ -91,5 +91,16 @@ namespace GameHubz.Data.Repository
                 .Distinct()
                 .ToListAsync();
         }
+
+        public Task<int> DeleteByMatchIds(IReadOnlyCollection<Guid> matchIds)
+        {
+            if (matchIds.Count == 0) return Task.FromResult(0);
+
+            // IgnoreQueryFilters: a soft-deleted message is still a row pointing at the match.
+            return this.ContextBase.Set<MatchChatEntity>()
+                .IgnoreQueryFilters()
+                .Where(x => x.MatchId != null && matchIds.Contains(x.MatchId.Value))
+                .ExecuteDeleteAsync();
+        }
     }
 }

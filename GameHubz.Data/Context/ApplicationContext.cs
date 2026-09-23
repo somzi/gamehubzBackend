@@ -53,6 +53,56 @@ namespace GameHubz.Data.Context
             StreamConfigurator(modelBuilder);
             MatchChatReadConfigurator(modelBuilder);
             NotificationConfigurator(modelBuilder);
+            ResultVerificationConfigurator(modelBuilder);
+        }
+
+        private static void ResultVerificationConfigurator(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<UserDeviceEntity>().ToTable("UserDevice")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<UserDeviceEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserDeviceEntity>()
+                .HasIndex(x => new { x.UserId, x.DeviceId })
+                .IsUnique();
+
+            modelBuilder.Entity<UserDeviceEntity>()
+                .HasIndex(x => x.DeviceId);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>().ToTable("MatchResultVerification")
+                .HasQueryFilter(x => x.IsDeleted == false);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>()
+                .HasOne(x => x.Match)
+                .WithMany(x => x.ResultVerifications)
+                .HasForeignKey(x => x.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>()
+                .HasOne(x => x.UserDevice)
+                .WithMany()
+                .HasForeignKey(x => x.UserDeviceId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>()
+                .HasOne(x => x.MatchEvidence)
+                .WithMany()
+                .HasForeignKey(x => x.MatchEvidenceId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MatchResultVerificationEntity>()
+                .HasIndex(x => new { x.MatchId, x.UserId });
         }
 
         private static void NotificationConfigurator(ModelBuilder modelBuilder)
@@ -584,11 +634,14 @@ namespace GameHubz.Data.Context
 
             modelBuilder.Entity<MatchChatEntity>().ToTable("MatchChat").HasQueryFilter(x => x.IsDeleted == false);
 
+            // Cascade, matching the database since migration 86: a thread belongs to one pairing and
+            // goes when its match is deleted.
             modelBuilder.Entity<MatchChatEntity>().ToTable("MatchChat")
                 .HasOne(x => x.Match)
                 .WithMany(x => x.MatchChats)
                 .HasForeignKey(x => x.MatchId)
-                .HasPrincipalKey(x => x.Id);
+                .HasPrincipalKey(x => x.Id)
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<MatchEntity>().ToTable("Match").HasQueryFilter(x => x.IsDeleted == false);
 

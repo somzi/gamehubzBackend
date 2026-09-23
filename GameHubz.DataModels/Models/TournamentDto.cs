@@ -66,6 +66,9 @@ namespace GameHubz.DataModels.Models
         /// <summary>Grace minutes for the ready check. Null = the system default.</summary>
         public int? CheckInGraceMinutes { get; set; }
 
+        /// <summary>Result verification before a report — see TournamentEntity.RequireResultVerification.</summary>
+        public bool RequireResultVerification { get; set; }
+
         /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
         public bool IsExclusive { get; set; }
 

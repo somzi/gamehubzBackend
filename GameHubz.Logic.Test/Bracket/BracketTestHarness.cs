@@ -8,6 +8,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 
 using GameHubz.Common.Interfaces;
@@ -154,11 +155,16 @@ namespace GameHubz.Logic.Test.Bracket
             var discordDm = new Mock<IDiscordDmService>().Object;
             var shareLinks = Options.Create(new ShareLinksConfig());
 
+            // No test connection ever joins a chat group, so the registry stays empty and the mocked
+            // hub context is never reached.
+            var chatAccessRevoker = new MatchChatAccessRevoker(
+                new Mock<IHubContext<MatchChatHub>>().Object, new MatchChatConnectionRegistry());
+
             return new BracketService(
                 factory, userContext, localization,
                 hubActivityService, Cache, Notifications, tournamentAuth, badgeService,
                 tournamentNotifier, matchNotifier, bracketNotifier,
-                discordDm, shareLinks);
+                discordDm, shareLinks, chatAccessRevoker);
         }
 
         /// <summary>
@@ -189,9 +195,18 @@ namespace GameHubz.Logic.Test.Bracket
         /// cache with <see cref="DenyManageFor"/> (same null-UserHubService caveat as
         /// <see cref="BuildService"/>).
         /// </summary>
-        public MatchService NewMatchServiceAsUser(Guid userId, string role = "User")
+        public MatchService NewMatchServiceAsUser(
+            Guid userId, string role = "User", DbCommandInterceptor? interceptor = null)
         {
-            var factory = new TestUnitOfWorkFactory(newContext(), localization);
+            // Per-request interception lets race tests pause immediately before taking the lock,
+            // without intercepting the separate request that performs the competing swap.
+            var context = interceptor == null
+                ? newContext()
+                : new TestApplicationContext(new DbContextOptionsBuilder<TestApplicationContext>()
+                    .UseSqlite(sqliteConnection ?? throw new InvalidOperationException("Interception requires SQLite."))
+                    .AddInterceptors(interceptor)
+                    .Options);
+            var factory = new TestUnitOfWorkFactory(context, localization);
             var userContext = BuildReader(userId, role);
 
             IConfiguration configuration = new ConfigurationBuilder().Build();
@@ -218,6 +233,32 @@ namespace GameHubz.Logic.Test.Bracket
                 new Mock<IDiscordDmService>().Object,
                 Cache,
                 Options.Create(new ShareLinksConfig()));
+        }
+
+        /// <summary>
+        /// MatchVerificationService acting as a specific user — drives the "Verify Result" flow. Storage
+        /// is whatever the test hands in (a mock that "stores" the clip), since the final step uploads
+        /// one. Same fresh-context-per-operation rule and the same authz-cache caveat as
+        /// <see cref="NewMatchServiceAsUser"/>.
+        /// </summary>
+        public MatchVerificationService NewMatchVerificationServiceAsUser(
+            Guid userId,
+            IStorageService storage,
+            string role = "User",
+            ICacheService? cache = null)
+        {
+            var factory = new TestUnitOfWorkFactory(newContext(), localization);
+            var userContext = BuildReader(userId, role);
+
+            // A test may hand in its own cache to steer the key-issue counter; authorization keeps the
+            // shared one, where DenyManageFor pre-seeds its answers.
+            return new MatchVerificationService(
+                factory,
+                userContext,
+                localization,
+                storage,
+                new TournamentAuthorizationService(factory, userContext, localization, Cache, userHubService: null!),
+                cache ?? Cache);
         }
 
         /// <summary>

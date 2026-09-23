@@ -141,6 +141,13 @@ namespace GameHubz.DataModels.Domain
         // RequireMatchCheckIn is off.
         public int? CheckInGraceMinutes { get; set; }
 
+        // When true, a participant has to verify a match result before reporting it: a biometric
+        // unlock on a registered phone plus a screen recording of the final score, tied together in
+        // one MatchResultVerification row. Organizers are outside it — they are the escape hatch, as
+        // with the ready check. Editable for the whole life of the tournament: it only ever gates
+        // reports still to be made.
+        public bool RequireResultVerification { get; set; }
+
         // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
         // can see this tournament in their feed and register. Default false = open to all members.
         public bool IsExclusive { get; set; }

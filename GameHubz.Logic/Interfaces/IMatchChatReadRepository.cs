@@ -18,5 +18,11 @@
 
         /// <summary>Who has muted this match — skipped when a new message fans out.</summary>
         Task<List<Guid>> GetMutedUserIds(Guid matchId);
+
+        /// <summary>
+        /// Permanently deletes every read cursor on these matches, soft-deleted ones included. Runs at
+        /// once, in the caller's transaction if one is open.
+        /// </summary>
+        Task<int> DeleteByMatchIds(IReadOnlyCollection<Guid> matchIds);
     }
 }

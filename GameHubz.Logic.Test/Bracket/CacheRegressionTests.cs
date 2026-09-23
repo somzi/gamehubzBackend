@@ -139,7 +139,8 @@ namespace GameHubz.Logic.Test.Bracket
                 matchNotifier: null!,
                 bracketNotifier: null!,
                 discordDmService: null!,
-                Options.Create(new ShareLinksConfig()));
+                Options.Create(new ShareLinksConfig()),
+                chatAccessRevoker: null!);
         }
 
         private static ILocalizationService LocalizationFor(string language)

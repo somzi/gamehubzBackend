@@ -69,6 +69,10 @@ namespace GameHubz.Logic.Interfaces
 
         INotificationRepository NotificationRepository { get; }
 
+        IUserDeviceRepository UserDeviceRepository { get; }
+
+        IMatchResultVerificationRepository MatchResultVerificationRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

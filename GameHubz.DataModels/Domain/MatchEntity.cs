@@ -128,6 +128,12 @@ namespace GameHubz.DataModels.Domain
 
         public List<MatchEvidenceEntity>? MatchEvidences { get; set; } = new();
 
+        /// <summary>
+        /// Result verifications made on this match. Read by the detail projections, so a match keeps
+        /// showing the records it was verified with after the organizer switches the setting off.
+        /// </summary>
+        public List<MatchResultVerificationEntity>? ResultVerifications { get; set; } = new();
+
         public List<MatchChatEntity>? MatchChats { get; set; } = new();
         public DateTime? RoundOpenAt { get; set; }
         public Guid? TeamMatchId { get; set; }

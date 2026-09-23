@@ -64,6 +64,14 @@ namespace GameHubz.DataModels.Models
         public int? CheckInGraceMinutes { get; set; }
 
         /// <summary>
+        /// Result verification: a participant must verify (biometrics on a registered phone plus a
+        /// recording of the final score) before a result they report is accepted. Nullable for the same
+        /// reason as <see cref="RequireMatchCheckIn"/> — absence means "not sent" and preserves the
+        /// persisted value on an edit from a client that predates the feature. Null on create = off.
+        /// </summary>
+        public bool? RequireResultVerification { get; set; }
+
+        /// <summary>
         /// When true, the tournament is exclusive-only: visible/joinable only to hub members whose
         /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
         /// </summary>

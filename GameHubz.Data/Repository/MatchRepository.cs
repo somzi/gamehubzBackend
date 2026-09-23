@@ -102,6 +102,16 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
+        public async Task<(Guid? HomeParticipantId, Guid? AwayParticipantId)?> GetParticipantIds(Guid matchId)
+        {
+            var row = await this.BaseDbSet()
+                .Where(m => m.Id == matchId)
+                .Select(m => new { m.HomeParticipantId, m.AwayParticipantId })
+                .FirstOrDefaultAsync();
+
+            return row == null ? null : (row.HomeParticipantId, row.AwayParticipantId);
+        }
+
         // All matches in a tournament (BaseDbSet is no-tracking). The settle pass reloads this between
         // saves to read committed state; it crosses stages (DE WB ↔ LB feeders).
         public Task<List<MatchEntity>> GetAllByTournamentId(Guid tournamentId)
@@ -645,6 +655,9 @@ namespace GameHubz.Data.Repository
                     CheckInGraceMinutes = x.Tournament!.CheckInGraceMinutes,
                     HomeCheckedInOn = x.HomeCheckedInOn,
                     AwayCheckedInOn = x.AwayCheckedInOn,
+                    RequireResultVerification = x.Tournament!.RequireResultVerification,
+                    HasResultVerifications = x.ResultVerifications!.Any(v =>
+                        v.Status == MatchVerificationStatus.Verified || v.Status == MatchVerificationStatus.Failed),
                     ProposedHomeScore = x.ProposedHomeScore,
                     ProposedAwayScore = x.ProposedAwayScore,
                     ProposedByUserId = x.ProposedByUserId,
@@ -926,6 +939,42 @@ namespace GameHubz.Data.Repository
                     .SetProperty(m => m.AwayCheckedInOn, (DateTime?)null)
                     .SetProperty(m => m.CheckInResolvedOn, (DateTime?)null)
                     .SetProperty(m => m.ModifiedOn, modifiedOn));
+
+            return affected > 0;
+        }
+
+        public async Task<bool> TrySetScheduled(Guid matchId, DateTime scheduledStart, Guid modifiedByUserId)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(m => m.Id == matchId
+                    && m.Status != MatchStatus.Completed
+                    && m.Status != MatchStatus.NoShow)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.ScheduledStartTime, scheduledStart)
+                    .SetProperty(m => m.Status, MatchStatus.Scheduled)
+                    .SetProperty(m => m.CheckInResolvedOn, scheduledStart)
+                    .SetProperty(m => m.ModifiedOn, scheduledStart)
+                    .SetProperty(m => m.ModifiedBy, modifiedByUserId));
+
+            return affected > 0;
+        }
+
+        public async Task<bool> TryClearSchedule(Guid matchId, DateTime modifiedOn, Guid modifiedByUserId)
+        {
+            int affected = await this.BaseDbSet()
+                .Where(m => m.Id == matchId && m.Status == MatchStatus.Scheduled)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.ScheduledStartTime, (DateTime?)null)
+                    .SetProperty(m => m.Status, MatchStatus.Pending)
+                    .SetProperty(m => m.HomeSlotsJson, (string?)null)
+                    .SetProperty(m => m.AwaySlotsJson, (string?)null)
+                    .SetProperty(m => m.HomeSlotsSetOn, (DateTime?)null)
+                    .SetProperty(m => m.AwaySlotsSetOn, (DateTime?)null)
+                    .SetProperty(m => m.HomeCheckedInOn, (DateTime?)null)
+                    .SetProperty(m => m.AwayCheckedInOn, (DateTime?)null)
+                    .SetProperty(m => m.CheckInResolvedOn, (DateTime?)null)
+                    .SetProperty(m => m.ModifiedOn, modifiedOn)
+                    .SetProperty(m => m.ModifiedBy, modifiedByUserId));
 
             return affected > 0;
         }

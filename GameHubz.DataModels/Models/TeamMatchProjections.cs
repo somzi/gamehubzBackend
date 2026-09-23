@@ -18,6 +18,9 @@ namespace GameHubz.DataModels.Models
         public bool RequireMatchCheckIn { get; set; }
         public int? CheckInGraceMinutes { get; set; }
 
+        /// <summary>Result verification, read off the tournament — see TournamentEntity.RequireResultVerification.</summary>
+        public bool RequireResultVerification { get; set; }
+
         public TeamWinCondition WinCondition { get; set; }
 
         /// <summary>
@@ -75,6 +78,9 @@ namespace GameHubz.DataModels.Models
         public Guid? ProposedByUserId { get; set; }
         public bool AdminHelpRequested { get; set; }
         public Guid? AdminHelpRequestedByUserId { get; set; }
+
+        /// <summary>This game carries verification records — see MatchResultDetailDto.HasResultVerifications.</summary>
+        public bool HasResultVerifications { get; set; }
 
         // Series format for this individual game, already resolved against the tournament default.
         public int BestOf { get; set; } = 1;

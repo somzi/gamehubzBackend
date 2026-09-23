@@ -25,5 +25,10 @@
         /// </summary>
         Task<List<Guid>> GetChatUserIds(Guid matchId);
 
+        /// <summary>
+        /// Permanently deletes every message on these matches, soft-deleted ones included. Runs at once,
+        /// in the caller's transaction if one is open.
+        /// </summary>
+        Task<int> DeleteByMatchIds(IReadOnlyCollection<Guid> matchIds);
     }
 }

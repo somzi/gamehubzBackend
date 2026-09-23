@@ -97,6 +97,20 @@ namespace GameHubz.DataModels.Models
         public DateTime? AwayCheckedInOn { get; set; }
         public DateTime? CheckInOpensAt { get; set; }
         public DateTime? CheckInDeadline { get; set; }
+
+        /// <summary>
+        /// Tournament setting: a participant has to verify the result before reporting it. The records
+        /// themselves come from GET api/match/{id}/verification, which the client only calls when this
+        /// is on.
+        /// </summary>
+        public bool RequireResultVerification { get; set; }
+
+        /// <summary>
+        /// Verification records exist on this match (verified or failed). Separate from the setting: an
+        /// organizer who switches verification off mid-tournament still needs to see what the matches
+        /// already played were verified with.
+        /// </summary>
+        public bool HasResultVerifications { get; set; }
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }

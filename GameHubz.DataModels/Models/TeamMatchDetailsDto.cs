@@ -30,6 +30,12 @@ namespace GameHubz.DataModels.Models
         /// </summary>
         public bool RequireMatchCheckIn { get; set; }
         public int? CheckInGraceMinutes { get; set; }
+
+        /// <summary>
+        /// Result verification for this tournament. Like the ready check it belongs to each GAME of the
+        /// tie: the player nominated for a game verifies that game's result.
+        /// </summary>
+        public bool RequireResultVerification { get; set; }
     }
 
     public class TeamMatchTeamInfoDto
@@ -81,6 +87,12 @@ namespace GameHubz.DataModels.Models
         public DateTime? AwayCheckedInOn { get; set; }
         public DateTime? CheckInOpensAt { get; set; }
         public DateTime? CheckInDeadline { get; set; }
+
+        /// <summary>
+        /// This game carries verification records. Per game, because each game of the tie is verified
+        /// by its own player; see MatchResultDetailDto.HasResultVerifications for why it exists.
+        /// </summary>
+        public bool HasResultVerifications { get; set; }
     }
 
     public class TeamAggregateScoreDto

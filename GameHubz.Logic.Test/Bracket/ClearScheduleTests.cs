@@ -20,7 +20,7 @@ namespace GameHubz.Logic.Test.Bracket
         [Test]
         public async Task ClearSchedule_AsOrganizer_UnschedulesAndWipesBothSidesAvailability()
         {
-            var harness = new BracketTestHarness();
+            var harness = new BracketTestHarness(useSqlite: true);
             var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
             await harness.NewService().GenerateLeagueTournament(tid);
 
@@ -42,7 +42,7 @@ namespace GameHubz.Logic.Test.Bracket
         [Test]
         public async Task ClearSchedule_IsRefusedToAPlayerOfTheMatch()
         {
-            var harness = new BracketTestHarness();
+            var harness = new BracketTestHarness(useSqlite: true);
             var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
             await harness.NewService().GenerateLeagueTournament(tid);
 
@@ -67,7 +67,7 @@ namespace GameHubz.Logic.Test.Bracket
         [Test]
         public async Task ClearSchedule_IsRefusedOnAMatchThatWasNeverScheduled()
         {
-            var harness = new BracketTestHarness();
+            var harness = new BracketTestHarness(useSqlite: true);
             var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
             await harness.NewService().GenerateLeagueTournament(tid);
 
@@ -110,7 +110,7 @@ namespace GameHubz.Logic.Test.Bracket
         [Test]
         public async Task ClearSchedule_EvictsTheCachedBracketSoTheBoardStopsShowingTheOldKickOff()
         {
-            var harness = new BracketTestHarness();
+            var harness = new BracketTestHarness(useSqlite: true);
             var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
             await harness.NewService().GenerateLeagueTournament(tid);
 

@@ -207,9 +207,55 @@ namespace GameHubz.Logic.Services
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            var userId = user.UserId;
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
             if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            var outcome = await WithCurrentMatchAsync(match,
+                current => SaveAvailabilityAsync(current, user, selectedSlots));
+            match = outcome.Match;
+            bool isHome = outcome.IsHome;
+            bool justScheduled = outcome.JustScheduled;
+
+            // Only when the two lists just met. The offered hours themselves never reach the bracket,
+            // but the kick-off and the Scheduled status this branch wrote do — the same cached state
+            // ClearSchedule drops on the way back out.
+            if (justScheduled)
+                await InvalidateBracketCacheAsync(match.TournamentId);
+
+            // A team game that just got a kick-off in a ready-check tournament, with a side that has nobody
+            // nominated for it: nobody on that side can check in, so at kick-off + grace the game goes to
+            // the other team by forfeit. Only the captain can fix that, and until now nobody told them.
+            if (justScheduled && match.TeamMatchId.HasValue && (match.HomeUserId == null || match.AwayUserId == null))
+            {
+                var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+                if (settings?.RequireMatchCheckIn == true)
+                {
+                    var captains = new List<Guid>();
+                    if (match.HomeUserId == null && match.HomeParticipant?.Team?.CaptainUserId is Guid homeCaptain) captains.Add(homeCaptain);
+                    if (match.AwayUserId == null && match.AwayParticipant?.Team?.CaptainUserId is Guid awayCaptain) captains.Add(awayCaptain);
+
+                    await PushLineupMissingAsync(match, captains, PushText.FromKey("Push.LineupMissing.Body"));
+                }
+            }
+
+            await NotifyOpponentOfAvailabilityAsync(matchId, user, match, isHome);
+
+            // 4. Return DTO for UI
+            return new MatchAvailabilityDto
+            {
+                MatchId = match.Id!.Value,
+                MySlots = isHome ? match.HomeSlots : match.AwaySlots,
+                OpponentSlots = isHome ? match.AwaySlots : match.HomeSlots,
+                ConfirmedTime = match.ScheduledStartTime,
+                MatchDeadline = match.RoundDeadline
+            };
+        }
+
+        private async Task<(MatchEntity Match, bool IsHome, bool JustScheduled)> SaveAvailabilityAsync(
+            MatchEntity match, TokenUserInfo user, List<DateTime> selectedSlots)
+        {
+            Guid matchId = match.Id!.Value;
+            Guid userId = user.UserId;
 
             // 1. Determine side (Home vs Away)
             bool isHome = match.HomeParticipant != null &&
@@ -281,39 +327,33 @@ namespace GameHubz.Logic.Services
                     ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
             }
 
-            // Only when the two lists just met. The offered hours themselves never reach the bracket,
-            // but the kick-off and the Scheduled status this branch wrote do — the same cached state
-            // ClearSchedule drops on the way back out.
-            if (justScheduled)
-                await InvalidateBracketCacheAsync(match.TournamentId);
+            return (match, isHome, justScheduled);
+        }
 
-            // A team game that just got a kick-off in a ready-check tournament, with a side that has nobody
-            // nominated for it: nobody on that side can check in, so at kick-off + grace the game goes to
-            // the other team by forfeit. Only the captain can fix that, and until now nobody told them.
-            if (justScheduled && match.TeamMatchId.HasValue && (match.HomeUserId == null || match.AwayUserId == null))
+        // A request may have loaded the old pairing while a swap held the tournament lock. Reload
+        // after acquiring that same lock, reject a changed pairing, and keep the lock until all
+        // writes finish. Using the fresh entity also preserves schedule/check-in changes made while
+        // this request waited. Team games include the nominated users in the identity check.
+        private async Task<T> WithCurrentMatchAsync<T>(MatchEntity expected, Func<MatchEntity, Task<T>> write)
+        {
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(expected.TournamentId);
+            try
             {
-                var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
-                if (settings?.RequireMatchCheckIn == true)
-                {
-                    var captains = new List<Guid>();
-                    if (match.HomeUserId == null && match.HomeParticipant?.Team?.CaptainUserId is Guid homeCaptain) captains.Add(homeCaptain);
-                    if (match.AwayUserId == null && match.AwayParticipant?.Team?.CaptainUserId is Guid awayCaptain) captains.Add(awayCaptain);
+                var current = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(expected.Id!.Value)
+                    ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
-                    await PushLineupMissingAsync(match, captains, PushText.FromKey("Push.LineupMissing.Body"));
-                }
+                if (current.HomeParticipantId != expected.HomeParticipantId
+                    || current.AwayParticipantId != expected.AwayParticipantId
+                    || current.HomeUserId != expected.HomeUserId
+                    || current.AwayUserId != expected.AwayUserId)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
+
+                return await write(current);
             }
-
-            await NotifyOpponentOfAvailabilityAsync(matchId, user, match, isHome);
-
-            // 4. Return DTO for UI
-            return new MatchAvailabilityDto
+            finally
             {
-                MatchId = match.Id!.Value,
-                MySlots = mySlots,
-                OpponentSlots = opponentSlots,
-                ConfirmedTime = match.ScheduledStartTime,
-                MatchDeadline = match.RoundDeadline
-            };
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(expected.TournamentId);
+            }
         }
 
         private void ThrowIfMatchDecided(MatchEntity match)
@@ -369,32 +409,28 @@ namespace GameHubz.Logic.Services
         public async Task SetScheduled(Guid matchId)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
-            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
-
-            // F31: forcing a match to Scheduled is restricted to its participants or a tournament admin.
-            if (!IsMatchParticipant(match, user.UserId) && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+            await WithCurrentMatchAsync(match, async current =>
             {
-                throw new UnauthorizedAccessToServiceException(this.LocalizationService);
-            }
+                // Forcing Scheduled is restricted to the current participants or a tournament admin.
+                if (!IsMatchParticipant(current, user.UserId)
+                    && !await this.tournamentAuth.CanManageTournamentAsync(current.TournamentId, user))
+                    throw new UnauthorizedAccessToServiceException(this.LocalizationService);
 
-            match.ScheduledStartTime = DateTime.UtcNow;
-            match.Status = MatchStatus.Scheduled;
+                ThrowIfMatchDecided(current);
 
-            // "We agreed outside the app" is bookkeeping, not a kick-off anyone is being held to:
-            // the timestamp is simply now, and the opponent is told nothing. Left unruled, the ready
-            // check treats it as a fixture that has already started — the window is open, the
-            // deadline is now + grace, and one sweep later the opponent who never heard about any
-            // of it loses the match by forfeit (or both do, as a double no-show). It would also
-            // refuse the pair the very report this button exists to unlock.
-            //
-            // So the check is closed here rather than run: this path means the two have sorted the
-            // match out between themselves, which is precisely the case the feature stays out of.
-            match.CheckInResolvedOn = DateTime.UtcNow;
+                // An agreement outside the app is bookkeeping, not a kick-off the ready-check
+                // sweep should rule on. Close the check along with the new time, without writing
+                // participant ids, results or other fields from this request's snapshot.
+                bool saved = await this.AppUnitOfWork.MatchRepository
+                    .TrySetScheduled(matchId, DateTime.UtcNow, user.UserId);
+                if (!saved)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
+                return true;
+            });
 
             await InvalidateBracketCacheAsync(match.TournamentId);
         }
@@ -409,50 +445,30 @@ namespace GameHubz.Logic.Services
         public async Task ClearSchedule(Guid matchId)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
-            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
-            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            match = await WithCurrentMatchAsync(match, async current =>
+            {
+                // A player cannot cancel an agreed time. Check the current fixture under the lock.
+                if (!await this.tournamentAuth.CanManageTournamentAsync(current.TournamentId, user))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsClearSchedule"]);
 
-            // Deliberately narrower than SetScheduled: a player must not be able to walk away from a
-            // time they agreed to. 400 rather than 401 — see GetAdminHelpRequests for why.
-            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsClearSchedule"]);
+                if (current.Status != MatchStatus.Scheduled)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotScheduled"]);
 
-            // Only a scheduled fixture can be unscheduled. A played, forfeited or tie-break match
-            // keeps its ScheduledStartTime as the record of when it was actually played.
-            if (match.Status != MatchStatus.Scheduled)
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotScheduled"]);
+                // Both offered lists and all check-in state belong to the cancelled kick-off.
+                // Clear only those columns, so unrelated concurrent writes are not overwritten.
+                bool saved = await this.AppUnitOfWork.MatchRepository
+                    .TryClearSchedule(matchId, DateTime.UtcNow, user.UserId);
+                if (!saved)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotScheduled"]);
 
-            match.ScheduledStartTime = null;
-            match.Status = MatchStatus.Pending;
+                return await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
+                    ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            });
 
-            // Null, not "[]": HomeSlots/AwaySlots serialize an empty list to a literal empty array,
-            // and every reader (including the organizer panel) treats a null column as "never answered".
-            match.HomeSlotsJson = null;
-            match.AwaySlotsJson = null;
-            match.HomeSlotsSetOn = null;
-            match.AwaySlotsSetOn = null;
-
-            // The ready check belonged to the time that just went away: a player who confirmed for
-            // 17:00 has not confirmed for whatever the pair agree next, and leaving his stamp
-            // behind would hand him a forfeit win at the new kick-off without him doing anything.
-            match.HomeCheckedInOn = null;
-            match.AwayCheckedInOn = null;
-
-            // The verdict marker goes with them. It says "this kick-off has been ruled on" — and
-            // this kick-off no longer exists. Kept, it would silently exempt the fixture from the
-            // ready check for the rest of the tournament, however many times the pair reschedule.
-            match.CheckInResolvedOn = null;
-
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
-
-            // The board is still holding the kick-off that just went away: bracket cards read their
-            // Scheduled pill, their report affordance and the ready-check counter out of a payload
-            // cached for five minutes. Dropped here so an organizer who cancels a time sees the
-            // fixture fall back to unscheduled at once, rather than on the next expiry.
             await InvalidateBracketCacheAsync(match.TournamentId);
-
             await NotifyScheduleClearedAsync(match);
         }
 
@@ -526,10 +542,31 @@ namespace GameHubz.Logic.Services
         public async Task<MatchCheckInDto> CheckIn(Guid matchId)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-
             var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
+            var outcome = await WithCurrentMatchAsync(match, current => SaveCheckInAsync(current, user));
+            match = outcome.Match;
+
+            if (outcome.Stamped)
+            {
+                await InvalidateBracketCacheAsync(match.TournamentId);
+
+                // Only the first side's check-in starts the opponent's clock.
+                bool opponentWasWaiting = outcome.IsHome
+                    ? match.AwayCheckedInOn == null
+                    : match.HomeCheckedInOn == null;
+                if (opponentWasWaiting)
+                    await NotifyOpponentOfCheckInAsync(match, user, outcome.IsHome, outcome.Grace);
+            }
+
+            return BuildCheckInDto(match, outcome.Grace, outcome.IsHome);
+        }
+
+        private async Task<(MatchEntity Match, int Grace, bool IsHome, bool Stamped)> SaveCheckInAsync(
+            MatchEntity match, TokenUserInfo user)
+        {
+            Guid matchId = match.Id!.Value;
             // GetApprovalContext is the one-query tournament slice the match paths already share;
             // it carries the ready-check settings alongside the approval / series ones.
             var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId)
@@ -562,49 +599,23 @@ namespace GameHubz.Logic.Services
 
             bool alreadyIn = isHome.Value ? match.HomeCheckedInOn.HasValue : match.AwayCheckedInOn.HasValue;
 
+            bool stamped = false;
             if (!alreadyIn)
             {
-                // One column, conditionally — never UpdateEntity. The two sides press at the same
-                // moment by design, and a full-entity write from this request's snapshot would null
-                // whatever the opponent's request stamped a millisecond earlier: both get a green
-                // tick, one stamp is gone, and the sweep forfeits the player who did check in.
-                bool stamped = await this.AppUnitOfWork.MatchRepository
-                    .TryStampCheckIn(match.Id!.Value, isHome.Value, start, now);
+                // Keep the existing conditional single-column write: the sweep can still decide
+                // a fixture, and the opponent's stamp must never be replaced with our snapshot.
+                stamped = await this.AppUnitOfWork.MatchRepository
+                    .TryStampCheckIn(matchId, isHome.Value, start, now);
 
-                // Re-read either way: the opponent's stamp may have landed since we loaded the row,
-                // and the DTO, the deadline and the "was the opponent waiting" test all hang off it.
                 match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId)
                     ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
                 bool nowIn = isHome.Value ? match.HomeCheckedInOn.HasValue : match.AwayCheckedInOn.HasValue;
-
-                // Nothing written and still not in: the fixture moved under us — ruled by the
-                // sweep, rescheduled, or reported. A double tap that lost to its own first press
-                // is in, and falls through to the idempotent answer below.
                 if (!stamped && !nowIn)
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
-
-                if (!stamped)
-                    return BuildCheckInDto(match, grace, isHome);
-
-                bool opponentWasWaiting = isHome.Value
-                    ? match.AwayCheckedInOn == null
-                    : match.HomeCheckedInOn == null;
-
-                // The bracket renders the check-in state on its cards, and that payload is cached
-                // for five minutes — long enough for a player to confirm, look at the bracket and
-                // be told he has not. Dropped here rather than left to expire, exactly as a
-                // reported result does.
-                await InvalidateBracketCacheAsync(match.TournamentId);
-
-                // Only the first side's check-in is news: it starts the clock the opponent is now
-                // racing. Telling the second player "your opponent is ready" right after they
-                // confirmed themselves would be noise.
-                if (opponentWasWaiting)
-                    await NotifyOpponentOfCheckInAsync(match, user, isHome.Value, grace);
             }
 
-            return BuildCheckInDto(match, grace, isHome);
+            return (match, grace, isHome.Value, stamped);
         }
 
         /// <summary>
@@ -721,7 +732,8 @@ namespace GameHubz.Logic.Services
 
         // Video is enumerated rather than prefix-matched: "video/" must not become a way to park
         // arbitrary files on the account, and these are the containers a phone actually produces.
-        private static readonly HashSet<string> AllowedVideoTypes = new(StringComparer.OrdinalIgnoreCase)
+        // Internal: the verification recording is held to the same list.
+        internal static readonly HashSet<string> AllowedVideoTypes = new(StringComparer.OrdinalIgnoreCase)
         {
             "video/mp4", "video/quicktime", "video/x-m4v", "video/3gpp", "video/webm"
         };

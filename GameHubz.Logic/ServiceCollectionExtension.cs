@@ -7,6 +7,7 @@ using GameHubz.Logic.Queuing.Queues;
 using GameHubz.Logic.Queuing.Services.LocalQueueServices;
 using GameHubz.Logic.Queuing.Services.RabbitMqServices;
 using GameHubz.Logic.Services;
+using GameHubz.Logic.SignalR;
 using GameHubz.Logic.Tokens;
 using GameHubz.Logic.Validators;
 using Microsoft.Extensions.Configuration;
@@ -83,10 +84,16 @@ namespace GameHubz.Logic
             services.AddTransient<HubActivityService>();
 
             services.AddTransient<MatchEvidenceService>();
+            services.AddTransient<MatchVerificationService>();
 
             services.AddTransient<HubSocialService>();
 
             services.AddTransient<MatchChatService>();
+
+            // Who is in which match-chat group, so a player swapped out of a fixture can be taken out
+            // of its live group. Singleton: it mirrors the in-process SignalR groups.
+            services.AddSingleton<MatchChatConnectionRegistry>();
+            services.AddTransient<MatchChatAccessRevoker>();
 
             services.AddTransient<TournamentTeamService>();
             services.AddTransient<TeamMatchService>();

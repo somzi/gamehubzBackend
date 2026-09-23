@@ -2,6 +2,7 @@
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Enums;
+using GameHubz.Logic.SignalR;
 using Microsoft.Extensions.Options;
 
 namespace GameHubz.Logic.Services
@@ -18,6 +19,7 @@ namespace GameHubz.Logic.Services
         private readonly BracketNotifier bracketNotifier;
         private readonly IDiscordDmService discordDmService;
         private readonly ShareLinksConfig shareLinksConfig;
+        private readonly MatchChatAccessRevoker chatAccessRevoker;
 
         public BracketService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -32,7 +34,8 @@ namespace GameHubz.Logic.Services
             MatchNotifier matchNotifier,
             BracketNotifier bracketNotifier,
             IDiscordDmService discordDmService,
-            IOptions<ShareLinksConfig> shareLinksOptions)
+            IOptions<ShareLinksConfig> shareLinksOptions,
+            MatchChatAccessRevoker chatAccessRevoker)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubActivityService = hubActivityService;
@@ -45,6 +48,7 @@ namespace GameHubz.Logic.Services
             this.bracketNotifier = bracketNotifier;
             this.discordDmService = discordDmService;
             this.shareLinksConfig = shareLinksOptions.Value;
+            this.chatAccessRevoker = chatAccessRevoker;
         }
 
         public async Task<TournamentStructureDto> GetTournamentStructure(Guid tournamentId)
@@ -400,9 +404,11 @@ namespace GameHubz.Logic.Services
 
             // Refuse if any 2-sided knockout match has kicked off. Byes (one side null) hold a
             // Completed status as a bookkeeping artefact from the draw, not a played result, so
-            // they're excluded from the check. Once a real fixture is Live or Completed the
+            // they're excluded from the check. Once a real fixture has anything reported on it the
             // organiser must revert those results individually before another reset is allowed —
-            // otherwise a reset would silently discard played fixtures.
+            // otherwise a reset would silently discard played fixtures. Status alone does not say
+            // that: a tie stays Pending while its games are being played, and a proposal waiting
+            // for approval leaves a match Pending or Scheduled.
             int totalKnockoutMatches = 0;
             bool anyPlayed = false;
             foreach (var stageId in stageIds)
@@ -413,7 +419,7 @@ namespace GameHubz.Logic.Services
                     totalKnockoutMatches += teamMatches.Count;
                     if (teamMatches.Any(tm => tm.HomeTeamParticipantId.HasValue
                                            && tm.AwayTeamParticipantId.HasValue
-                                           && tm.Status != TeamMatchStatus.Pending))
+                                           && !IsOpenTeamMatch(tm)))
                     {
                         anyPlayed = true;
                     }
@@ -424,8 +430,7 @@ namespace GameHubz.Logic.Services
                     totalKnockoutMatches += matches.Count;
                     if (matches.Any(m => m.HomeParticipantId.HasValue
                                       && m.AwayParticipantId.HasValue
-                                      && m.Status != MatchStatus.Pending
-                                      && m.Status != MatchStatus.Scheduled))
+                                      && !IsOpenMatch(m)))
                     {
                         anyPlayed = true;
                     }
@@ -483,9 +488,19 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Manual re-seed (admin only): exchange the bracket positions of two first-round participants.
-        /// When both sit in unplayed real fixtures the swap is surgical — only those two change (team
-        /// sub-matches rebuilt for them alone). When a bye is involved it falls back to a full re-seed
-        /// from the swapped slots. Either way nothing may have been played yet (reset to re-seed after play).
+        /// Always surgical: the two trade places in every fixture that holds either of them — their
+        /// first-round match, a bye's bookkeeping row and the match a bye already advanced them into —
+        /// and nothing else in the bracket moves. Everyone else keeps their fixture, agreed time and chat,
+        /// and a match played elsewhere in the bracket does not stand in the way.
+        ///
+        /// Every fixture the swap touches must still be open: no result, series game, proposal, evidence
+        /// or verified recording on it (for a tie, on any of its games). A fixture whose pairing changes
+        /// drops the old pair's arrangement and chat (<see cref="ResetFixtureArrangement"/>), and whoever
+        /// left it is taken out of its live chat group.
+        ///
+        /// Runs in one transaction under the tournament's advancement lock. Every result write takes the
+        /// same lock and re-checks the participants under it (<see cref="EnsureParticipantsUnchangedAsync"/>),
+        /// so a report racing the swap is refused instead of landing on the old pairing.
         /// </summary>
         public async Task SwapBracketParticipants(Guid tournamentId, Guid participantAId, Guid participantBId)
         {
@@ -503,178 +518,335 @@ namespace GameHubz.Logic.Services
                 || (knockoutStage.Type != StageType.SingleEliminationBracket && knockoutStage.Type != StageType.DoubleEliminationWinnersBracket))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.NoKnockoutBracketToEdit"]);
 
-            bool useDoubleKnockout = knockoutStage.Type == StageType.DoubleEliminationWinnersBracket;
+            var stageIds = await KnockoutStageIdsAsync(tournamentId, knockoutStage);
 
-            if (tournament.IsTeamTournament)
+            BracketSwapOutcome outcome;
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
+            try
             {
-                var allMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(knockoutStage.Id!.Value);
-                var firstRound = allMatches.Where(tm => (tm.RoundNumber ?? 1) == 1).ToList();
-
-                var (matchA, aIsHome) = LocateTeamSlot(firstRound, participantAId);
-                var (matchB, bIsHome) = LocateTeamSlot(firstRound, participantBId);
-
-                if (matchA != null && matchB != null)
+                outcome = await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
                 {
-                    // Surgical: both teams sit in unplayed real fixtures — swap in place, rebuild only the
-                    // affected sub-matches (Distinct collapses a home-vs-away swap inside one match).
-                    if (aIsHome) matchA.HomeTeamParticipantId = participantBId; else matchA.AwayTeamParticipantId = participantBId;
-                    if (bIsHome) matchB.HomeTeamParticipantId = participantAId; else matchB.AwayTeamParticipantId = participantAId;
+                    var result = tournament.IsTeamTournament
+                        ? await SwapTeamBracketSlotsAsync(tournament, knockoutStage.Id!.Value, stageIds, participantAId, participantBId)
+                        : await SwapSoloBracketSlotsAsync(knockoutStage.Id!.Value, stageIds, participantAId, participantBId);
 
-                    var affected = new[] { matchA, matchB }.Distinct().ToList();
-                    var partIds = affected
-                        .SelectMany(tm => new[] { tm.HomeTeamParticipantId, tm.AwayTeamParticipantId })
-                        .Where(idv => idv.HasValue).Select(idv => idv!.Value).Distinct().ToList();
-                    var participants = new List<TournamentParticipantEntity>();
-                    foreach (var pid in partIds)
-                        participants.Add(await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(pid));
-                    var membersByParticipant = await BuildMembersByParticipantMap(participants);
+                    // Keep each team's Seed travelling with it so the bracket labels stay consistent.
+                    await SwapParticipantSeedsAsync(participantAId, participantBId);
 
-                    int teamSize = tournament.TeamSize ?? 1;
-                    var rand = new Random();
-                    foreach (var tm in affected)
-                    {
-                        foreach (var sm in tm.SubMatches ?? new List<MatchEntity>())
-                            await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
-                        foreach (var sm in BuildSubMatchesForTeamMatch(tm, teamSize, null, membersByParticipant, rand))
-                            await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
-                        await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(tm, this.UserContextReader);
-                    }
-                }
-                else
-                {
-                    // A bye is involved — re-seed from the swapped slots (rebuilds the whole knockout).
-                    EnsureNoKnockoutResultPlayed(allMatches, this.LocalizationService);
-                    await RegenerateBracketWithSwapAsync(
-                        tournament, tournamentId, knockoutStage, useDoubleKnockout,
-                        BuildSlotIdsFromTeamFirstRound(firstRound), participantAId, participantBId);
-                }
+                    await this.SaveAsync();
+                    return result;
+                });
             }
-            else
+            finally
             {
-                var allMatches = await this.AppUnitOfWork.MatchRepository.GetByStageId(knockoutStage.Id!.Value);
-                var firstRound = allMatches.Where(m => (m.RoundNumber ?? 1) == 1).ToList();
-
-                var (matchA, aIsHome) = LocateSoloSlot(firstRound, participantAId);
-                var (matchB, bIsHome) = LocateSoloSlot(firstRound, participantBId);
-
-                if (matchA != null && matchB != null)
-                {
-                    if (aIsHome) matchA.HomeParticipantId = participantBId; else matchA.AwayParticipantId = participantBId;
-                    if (bIsHome) matchB.HomeParticipantId = participantAId; else matchB.AwayParticipantId = participantAId;
-                    foreach (var m in new[] { matchA, matchB }.Distinct())
-                        await this.AppUnitOfWork.MatchRepository.UpdateEntity(m, this.UserContextReader);
-                }
-                else
-                {
-                    EnsureNoKnockoutResultPlayed(allMatches, this.LocalizationService);
-                    await RegenerateBracketWithSwapAsync(
-                        tournament, tournamentId, knockoutStage, useDoubleKnockout,
-                        BuildSlotIdsFromSoloFirstRound(firstRound), participantAId, participantBId);
-                }
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(tournamentId);
             }
 
-            // Keep each team's Seed travelling with it so the bracket labels stay consistent.
-            await SwapParticipantSeedsAsync(participantAId, participantBId);
+            foreach (var (matchId, userIds) in outcome.LeftChats)
+                await this.chatAccessRevoker.RevokeAsync(matchId, userIds);
 
-            await this.SaveAsync();
+            // Fixtures, kick-offs and unread chat changed for everyone in a touched fixture.
+            foreach (var userId in outcome.AffectedUserIds)
+                await this.badgeService.PushAsync(userId);
+
             await InvalidateTournamentBracketCaches(tournamentId);
         }
 
-        // Rebuilds the whole knockout after exchanging two first-round slots — used when a bye is involved
-        // and the surgical in-place swap can't apply. Order is preserved (no re-randomised seeding); only
-        // the two named teams move. The bracket must be unplayed (caller checks).
-        private async Task RegenerateBracketWithSwapAsync(
-            TournamentEntity tournament, Guid tournamentId, TournamentStageEntity knockoutStage, bool useDoubleKnockout,
-            Guid?[] slotIds, Guid aId, Guid bId)
+        // What a committed swap still owes outside its transaction.
+        private sealed class BracketSwapOutcome
         {
-            int ia = -1, ib = -1;
-            for (int i = 0; i < slotIds.Length; i++)
-            {
-                if (slotIds[i] == aId) ia = i;
-                if (slotIds[i] == bId) ib = i;
-            }
-            if (ia < 0 || ib < 0)
+            /// <summary>Per re-paired fixture, the users who left it — to be taken out of its live chat group.</summary>
+            public List<(Guid MatchId, List<Guid> UserIds)> LeftChats { get; } = new();
+
+            /// <summary>Everyone who played in a touched fixture — their badges changed.</summary>
+            public HashSet<Guid> AffectedUserIds { get; } = new();
+        }
+
+        private async Task<BracketSwapOutcome> SwapSoloBracketSlotsAsync(Guid knockoutStageId, List<Guid> stageIds, Guid aId, Guid bId)
+        {
+            var matches = new List<MatchEntity>();
+            foreach (var stageId in stageIds)
+                matches.AddRange(await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId));
+
+            var firstRound = matches.Where(m => m.TournamentStageId == knockoutStageId && (m.RoundNumber ?? 1) == 1).ToList();
+            if (!firstRound.Any(m => m.HomeParticipantId == aId || m.AwayParticipantId == aId)
+                || !firstRound.Any(m => m.HomeParticipantId == bId || m.AwayParticipantId == bId))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamsMustBeFirstRound"]);
 
-            (slotIds[ia], slotIds[ib]) = (slotIds[ib], slotIds[ia]);
+            var affected = matches
+                .Where(m => HoldsEither(m.HomeParticipantId, m.AwayParticipantId, m.WinnerParticipantId, aId, bId))
+                .ToList();
 
-            var byId = new Dictionary<Guid, TournamentParticipantEntity>();
-            foreach (var pid in slotIds.Where(x => x.HasValue).Select(x => x!.Value).Distinct())
-                byId[pid] = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(pid);
-
-            var slots = slotIds.Select(x => x.HasValue ? byId[x!.Value] : (TournamentParticipantEntity?)null).ToList();
-
-            await TearDownKnockoutMatchesAsync(tournament, knockoutStage);
-            await this.SaveAsync(); // commit the teardown before repopulating the same stage
-            await PopulateKnockoutFromSlots(tournament, tournamentId, knockoutStage, useDoubleKnockout, slots, new Random());
-        }
-
-        // First-round slot ids (index 2*order = home, 2*order+1 = away; null = bye), reconstructed from
-        // the seeded first round so a re-seed can rebuild the bracket from a swapped arrangement.
-        private static Guid?[] BuildSlotIdsFromTeamFirstRound(List<TeamMatchEntity> firstRound)
-        {
-            var slots = new Guid?[firstRound.Count * 2];
-            foreach (var tm in firstRound)
+            var openIds = new List<Guid>();
+            foreach (var m in affected)
             {
-                int o = tm.MatchOrder ?? 0;
-                if (2 * o + 1 >= slots.Length) continue;
-                slots[2 * o] = tm.HomeTeamParticipantId;
-                slots[2 * o + 1] = tm.AwayTeamParticipantId;
+                if (IsSoloByeRecord(m)) continue;
+                if (!IsOpenMatch(m))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapMatchAlreadyReported"]);
+                openIds.Add(m.Id!.Value);
             }
-            return slots;
-        }
 
-        private static Guid?[] BuildSlotIdsFromSoloFirstRound(List<MatchEntity> firstRound)
-        {
-            var slots = new Guid?[firstRound.Count * 2];
-            foreach (var m in firstRound)
+            // Evidence or a verified recording means somebody is already reporting that fixture.
+            if (await this.AppUnitOfWork.MatchEvidenceRepository.AnyForMatches(openIds, includeSoftDeleted: false)
+                || await this.AppUnitOfWork.MatchResultVerificationRepository.AnyVerifiedForMatches(openIds))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapMatchAlreadyReported"]);
+
+            var userByParticipant = await ParticipantUserIdsAsync(
+                affected.SelectMany(m => new[] { m.HomeParticipantId, m.AwayParticipantId }));
+
+            var outcome = new BracketSwapOutcome();
+            var droppedThreads = new List<Guid>();
+
+            foreach (var m in affected)
             {
-                int o = m.MatchOrder ?? 0;
-                if (2 * o + 1 >= slots.Length) continue;
-                slots[2 * o] = m.HomeParticipantId;
-                slots[2 * o + 1] = m.AwayParticipantId;
+                bool isBye = IsSoloByeRecord(m);
+                Guid? homeBefore = m.HomeParticipantId, awayBefore = m.AwayParticipantId;
+
+                m.HomeParticipantId = Exchange(m.HomeParticipantId, aId, bId);
+                m.AwayParticipantId = Exchange(m.AwayParticipantId, aId, bId);
+                m.WinnerParticipantId = Exchange(m.WinnerParticipantId, aId, bId);
+
+                if (homeBefore == m.AwayParticipantId && awayBefore == m.HomeParticipantId)
+                {
+                    // The same two players with sides exchanged: their arrangement still stands, and each
+                    // side's part of it follows its player across.
+                    FlipSideState(m);
+                }
+                else
+                {
+                    if (!isBye)
+                        ResetFixtureArrangement(m, homeChanged: homeBefore != m.HomeParticipantId, awayChanged: awayBefore != m.AwayParticipantId);
+
+                    droppedThreads.Add(m.Id!.Value);
+
+                    var leftUserIds = new[] { homeBefore, awayBefore }
+                        .Where(p => p.HasValue && p != m.HomeParticipantId && p != m.AwayParticipantId)
+                        .Select(p => userByParticipant.GetValueOrDefault(p!.Value))
+                        .Where(u => u.HasValue).Select(u => u!.Value)
+                        .ToList();
+                    if (leftUserIds.Count > 0) outcome.LeftChats.Add((m.Id!.Value, leftUserIds));
+                }
+
+                // A and B only trade places, so the players before the swap are the players after it.
+                foreach (var p in new[] { homeBefore, awayBefore })
+                    if (p.HasValue && userByParticipant.GetValueOrDefault(p.Value) is Guid userId)
+                        outcome.AffectedUserIds.Add(userId);
+
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(m, this.UserContextReader);
             }
-            return slots;
+
+            // A re-paired fixture's thread belonged to the old pair: the newcomer must not read it, and
+            // the one who left must stop hearing from it (a new message notifies everyone who ever wrote
+            // there). Its read cursors and mutes go with it.
+            await this.AppUnitOfWork.MatchChatRepository.DeleteByMatchIds(droppedThreads);
+            await this.AppUnitOfWork.MatchChatReadRepository.DeleteByMatchIds(droppedThreads);
+
+            return outcome;
         }
 
-        private static void EnsureNoKnockoutResultPlayed(List<TeamMatchEntity> matches, ILocalizationService localization)
+        private async Task<BracketSwapOutcome> SwapTeamBracketSlotsAsync(
+            TournamentEntity tournament, Guid knockoutStageId, List<Guid> stageIds, Guid aId, Guid bId)
         {
-            if (matches.Any(tm => tm.Status == TeamMatchStatus.Completed
-                    && tm.HomeTeamParticipantId.HasValue && tm.AwayTeamParticipantId.HasValue))
-                throw new BusinessRuleException(localization["BusinessRule.KnockoutAlreadyPlayed"]);
-        }
+            var teamMatches = new List<TeamMatchEntity>();
+            foreach (var stageId in stageIds)
+                teamMatches.AddRange(await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(stageId));
 
-        private static void EnsureNoKnockoutResultPlayed(List<MatchEntity> matches, ILocalizationService localization)
-        {
-            if (matches.Any(m => m.Status == MatchStatus.Completed
-                    && m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue))
-                throw new BusinessRuleException(localization["BusinessRule.KnockoutAlreadyPlayed"]);
-        }
+            var firstRound = teamMatches.Where(tm => tm.TournamentStageId == knockoutStageId && (tm.RoundNumber ?? 1) == 1).ToList();
+            if (!firstRound.Any(tm => tm.HomeTeamParticipantId == aId || tm.AwayTeamParticipantId == aId)
+                || !firstRound.Any(tm => tm.HomeTeamParticipantId == bId || tm.AwayTeamParticipantId == bId))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamsMustBeFirstRound"]);
 
-        // First-round fixture + side (true = home) that holds the participant, but only when it is a real,
-        // unplayed match (both sides present, still pending). Byes and played matches return null.
-        private static (TeamMatchEntity? Match, bool IsHome) LocateTeamSlot(List<TeamMatchEntity> firstRound, Guid participantId)
-        {
-            foreach (var tm in firstRound)
+            var affected = teamMatches
+                .Where(tm => HoldsEither(tm.HomeTeamParticipantId, tm.AwayTeamParticipantId, tm.WinnerTeamParticipantId, aId, bId))
+                .ToList();
+
+            foreach (var tm in affected)
             {
-                if (tm.Status != TeamMatchStatus.Pending) continue;
-                if (!tm.HomeTeamParticipantId.HasValue || !tm.AwayTeamParticipantId.HasValue) continue;
-                if (tm.HomeTeamParticipantId == participantId) return (tm, true);
-                if (tm.AwayTeamParticipantId == participantId) return (tm, false);
+                if (!IsTeamByeRecord(tm) && !IsOpenTeamMatch(tm))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapMatchAlreadyReported"]);
             }
-            return (null, false);
+
+            // Every tie that changes hands gets its games rebuilt for the new line-ups, so the old games
+            // are hard-deleted — and a soft-deleted evidence row blocks that delete as surely as a live one.
+            var oldGames = affected.SelectMany(tm => tm.SubMatches ?? new List<MatchEntity>()).ToList();
+            var oldGameIds = oldGames.Select(sm => sm.Id!.Value).ToList();
+            if (await this.AppUnitOfWork.MatchEvidenceRepository.AnyForMatches(oldGameIds, includeSoftDeleted: true)
+                || await this.AppUnitOfWork.MatchResultVerificationRepository.AnyVerifiedForMatches(oldGameIds))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapMatchAlreadyReported"]);
+
+            // The new games take over the round settings the old ones were stamped with.
+            var templateByTie = affected
+                .Where(tm => tm.SubMatches != null && tm.SubMatches.Count > 0)
+                .ToDictionary(tm => tm.Id!.Value, tm => tm.SubMatches[0]);
+
+            var outcome = new BracketSwapOutcome();
+            foreach (var sm in oldGames)
+            {
+                if (sm.HomeUserId.HasValue) outcome.AffectedUserIds.Add(sm.HomeUserId.Value);
+                if (sm.AwayUserId.HasValue) outcome.AffectedUserIds.Add(sm.AwayUserId.Value);
+            }
+
+            foreach (var tm in affected)
+            {
+                tm.HomeTeamParticipantId = Exchange(tm.HomeTeamParticipantId, aId, bId);
+                tm.AwayTeamParticipantId = Exchange(tm.AwayTeamParticipantId, aId, bId);
+                tm.WinnerTeamParticipantId = Exchange(tm.WinnerTeamParticipantId, aId, bId);
+
+                // A tie-break representative is a player of the side's old team.
+                tm.HomeTeamRepresentativeUserId = null;
+                tm.AwayTeamRepresentativeUserId = null;
+
+                await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(tm, this.UserContextReader);
+            }
+
+            // The old games' chat belonged to the old line-ups. Deleted here rather than left to the
+            // cascade, so the swap does not depend on migration 86 having run.
+            await this.AppUnitOfWork.MatchChatRepository.DeleteByMatchIds(oldGameIds);
+            await this.AppUnitOfWork.MatchChatReadRepository.DeleteByMatchIds(oldGameIds);
+            foreach (var sm in oldGames)
+                await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
+
+            // Flushed before the new games go in: they take the old games' (stage, round, order) slots,
+            // which UX_Match_Slot_Ungrouped keeps unique. Still inside the caller's transaction.
+            await this.SaveAsync();
+
+            var rebuilt = affected
+                .Where(tm => !IsTeamByeRecord(tm) && tm.HomeTeamParticipantId.HasValue && tm.AwayTeamParticipantId.HasValue)
+                .ToList();
+            if (rebuilt.Count == 0) return outcome;
+
+            var participants = new List<TournamentParticipantEntity>();
+            foreach (var pid in rebuilt.SelectMany(tm => new[] { tm.HomeTeamParticipantId!.Value, tm.AwayTeamParticipantId!.Value }).Distinct())
+                participants.Add(await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(pid));
+            var membersByParticipant = await BuildMembersByParticipantMap(participants);
+
+            int teamSize = tournament.TeamSize ?? 1;
+            var rand = new Random();
+            foreach (var tm in rebuilt)
+            {
+                templateByTie.TryGetValue(tm.Id!.Value, out var template);
+                DateTime? roundDeadline = template != null
+                    ? template.RoundDeadline
+                    : await GetRoundDeadline(tm.TournamentStageId!.Value, tm.RoundNumber ?? 1);
+
+                foreach (var sm in BuildSubMatchesForTeamMatch(tm, teamSize, null, membersByParticipant, rand))
+                {
+                    sm.RoundDeadline = roundDeadline;
+                    if (template != null)
+                    {
+                        sm.RoundOpenAt = template.RoundOpenAt;
+                        sm.BestOf = template.BestOf;
+                        sm.TiebreakBestOf = template.TiebreakBestOf;
+                    }
+
+                    await this.AppUnitOfWork.MatchRepository.AddEntity(sm, this.UserContextReader);
+
+                    if (sm.HomeUserId.HasValue) outcome.AffectedUserIds.Add(sm.HomeUserId.Value);
+                    if (sm.AwayUserId.HasValue) outcome.AffectedUserIds.Add(sm.AwayUserId.Value);
+                }
+            }
+
+            return outcome;
         }
 
-        private static (MatchEntity? Match, bool IsHome) LocateSoloSlot(List<MatchEntity> firstRound, Guid participantId)
+        // The knockout's stages: the single-elimination / winners bracket, plus the losers bracket that
+        // sits at the next order for double elimination.
+        private async Task<List<Guid>> KnockoutStageIdsAsync(Guid tournamentId, TournamentStageEntity knockoutStage)
         {
-            foreach (var m in firstRound)
+            var stageIds = new List<Guid> { knockoutStage.Id!.Value };
+
+            if (knockoutStage.Type == StageType.DoubleEliminationWinnersBracket)
             {
-                if (m.Status != MatchStatus.Pending && m.Status != MatchStatus.Scheduled) continue;
-                if (!m.HomeParticipantId.HasValue || !m.AwayParticipantId.HasValue) continue;
-                if (m.HomeParticipantId == participantId) return (m, true);
-                if (m.AwayParticipantId == participantId) return (m, false);
+                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournamentId, 3);
+                if (lbStage != null && lbStage.Type == StageType.DoubleEliminationLosersBracket)
+                    stageIds.Add(lbStage.Id!.Value);
             }
-            return (null, false);
+
+            return stageIds;
+        }
+
+        private static Guid? Exchange(Guid? id, Guid a, Guid b) => id == a ? b : id == b ? a : id;
+
+        private static bool HoldsEither(Guid? home, Guid? away, Guid? winner, Guid a, Guid b)
+            => home == a || home == b || away == a || away == b || winner == a || winner == b;
+
+        // The row the draw leaves for a bye: one side, completed, won by that side, nothing played.
+        private static bool IsSoloByeRecord(MatchEntity m)
+            => m.HomeParticipantId.HasValue != m.AwayParticipantId.HasValue
+               && m.Status == MatchStatus.Completed
+               && m.WinnerParticipantId == (m.HomeParticipantId ?? m.AwayParticipantId)
+               && string.IsNullOrEmpty(m.GamesJson);
+
+        // Nothing reported in any form. Status alone is not enough: a proposal waiting for approval
+        // leaves the match Pending or Scheduled.
+        private static bool IsOpenMatch(MatchEntity m)
+            => (m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled)
+               && !m.WinnerParticipantId.HasValue
+               && m.ProposedByUserId == null
+               && m.ProposedHomeScore == null
+               && string.IsNullOrEmpty(m.GamesJson)
+               && string.IsNullOrEmpty(m.ProposedGamesJson);
+
+        private static bool IsTeamByeRecord(TeamMatchEntity tm)
+            => tm.HomeTeamParticipantId.HasValue != tm.AwayTeamParticipantId.HasValue
+               && tm.Status == TeamMatchStatus.Completed
+               && tm.WinnerTeamParticipantId == (tm.HomeTeamParticipantId ?? tm.AwayTeamParticipantId)
+               && (tm.SubMatches == null || tm.SubMatches.Count == 0);
+
+        // A tie stays Pending until every one of its games is in, so its own status says nothing about
+        // the games already played: each of them has to be open too.
+        private static bool IsOpenTeamMatch(TeamMatchEntity tm)
+            => tm.Status == TeamMatchStatus.Pending
+               && !tm.WinnerTeamParticipantId.HasValue
+               && (tm.SubMatches ?? new List<MatchEntity>()).All(IsOpenMatch);
+
+        /// <summary>
+        /// A fixture whose pairing changed keeps nothing of the old pair's arrangement: the agreed
+        /// kick-off and the ready check belonged to two players who no longer meet, and the side that
+        /// changed hands takes its offered hours with it. The side that stayed keeps its hours, so the
+        /// newcomer can simply pick one. The "your opponent is decided" push and the round-deadline
+        /// reminders go out again, to the pair that will actually play.
+        /// </summary>
+        private static void ResetFixtureArrangement(MatchEntity m, bool homeChanged, bool awayChanged)
+        {
+            if (m.Status == MatchStatus.Scheduled) m.Status = MatchStatus.Pending;
+            m.ScheduledStartTime = null;
+
+            // Null, not "[]" — see MatchService.ClearSchedule.
+            if (homeChanged)
+            {
+                m.HomeSlotsJson = null;
+                m.HomeSlotsSetOn = null;
+            }
+            if (awayChanged)
+            {
+                m.AwaySlotsJson = null;
+                m.AwaySlotsSetOn = null;
+            }
+
+            ResetCheckIn(m);
+            m.OpponentNotifiedOn = null;
+            m.RoundReminderStage = 0;
+        }
+
+        private static void FlipSideState(MatchEntity m)
+        {
+            (m.HomeSlotsJson, m.AwaySlotsJson) = (m.AwaySlotsJson, m.HomeSlotsJson);
+            (m.HomeSlotsSetOn, m.AwaySlotsSetOn) = (m.AwaySlotsSetOn, m.HomeSlotsSetOn);
+            (m.HomeCheckedInOn, m.AwayCheckedInOn) = (m.AwayCheckedInOn, m.HomeCheckedInOn);
+            (m.HomeUserId, m.AwayUserId) = (m.AwayUserId, m.HomeUserId);
+        }
+
+        // participantId -> the player behind it; null for a team participant.
+        private async Task<Dictionary<Guid, Guid?>> ParticipantUserIdsAsync(IEnumerable<Guid?> participantIds)
+        {
+            var userByParticipant = new Dictionary<Guid, Guid?>();
+            foreach (var id in participantIds.Where(p => p.HasValue).Select(p => p!.Value).Distinct())
+            {
+                var participant = await this.AppUnitOfWork.TournamentParticipantRepository.GetById(id);
+                userByParticipant[id] = participant?.UserId;
+            }
+            return userByParticipant;
         }
 
         private async Task SwapParticipantSeedsAsync(Guid aId, Guid bId)
@@ -691,41 +863,44 @@ namespace GameHubz.Logic.Services
         // fixtures removed so callers can tell an already-drawn bracket from an empty one.
         private async Task<int> TearDownKnockoutMatchesAsync(TournamentEntity tournament, TournamentStageEntity knockoutStage)
         {
-            var stageIds = new List<Guid> { knockoutStage.Id!.Value };
+            var stageIds = await KnockoutStageIdsAsync(tournament.Id!.Value, knockoutStage);
 
-            if (knockoutStage.Type == StageType.DoubleEliminationWinnersBracket)
-            {
-                var lbStage = await this.AppUnitOfWork.TournamentStageRepository.GetByOrder(tournament.Id!.Value, 3);
-                if (lbStage != null && lbStage.Type == StageType.DoubleEliminationLosersBracket)
-                    stageIds.Add(lbStage.Id!.Value);
-            }
-
-            int removed = 0;
+            var teamMatches = new List<TeamMatchEntity>();
+            var matches = new List<MatchEntity>();
             foreach (var stageId in stageIds)
             {
                 if (tournament.IsTeamTournament)
                 {
-                    var teamMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(stageId);
-                    foreach (var tm in teamMatches)
-                    {
-                        if (tm.SubMatches != null)
-                            foreach (var sm in tm.SubMatches)
-                                await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
-                        await this.AppUnitOfWork.TeamMatchRepository.HardDeleteEntity(tm);
-                        removed++;
-                    }
+                    var stageTeamMatches = await this.AppUnitOfWork.TeamMatchRepository.GetByStageId(stageId);
+                    teamMatches.AddRange(stageTeamMatches);
+                    matches.AddRange(stageTeamMatches.SelectMany(tm => tm.SubMatches ?? new List<MatchEntity>()));
                 }
                 else
                 {
-                    var matches = await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId);
-                    foreach (var m in matches)
-                    {
-                        await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(m);
-                        removed++;
-                    }
+                    matches.AddRange(await this.AppUnitOfWork.MatchRepository.GetByStageId(stageId));
                 }
             }
-            return removed;
+
+            // Chat and read cursors cascade with the match (migration 86); evidence deliberately does not.
+            await EnsureNoEvidenceBeforeDeleteAsync(matches.Select(m => m.Id!.Value).ToList());
+
+            foreach (var m in matches)
+                await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(m);
+            foreach (var tm in teamMatches)
+                await this.AppUnitOfWork.TeamMatchRepository.HardDeleteEntity(tm);
+
+            return tournament.IsTeamTournament ? teamMatches.Count : matches.Count;
+        }
+
+        /// <summary>
+        /// Refuses to hard-delete matches that carry evidence. Its foreign key has no cascade on purpose
+        /// — the row is the only handle on a stored file — so the delete would fail on the key anyway;
+        /// this turns that into a clear 400. Soft-deleted rows count: they hold the key all the same.
+        /// </summary>
+        private async Task EnsureNoEvidenceBeforeDeleteAsync(IReadOnlyCollection<Guid> matchIds)
+        {
+            if (await this.AppUnitOfWork.MatchEvidenceRepository.AnyForMatches(matchIds, includeSoftDeleted: true))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchEvidenceBlocksRemoval"]);
         }
 
         private async Task InvalidateTournamentBracketCaches(Guid tournamentId)
@@ -2539,6 +2714,22 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInRequiredToPropose"]);
             }
 
+            // Result verification: a participant's report — a direct result or a proposal alike — is only
+            // taken once that participant holds a verified record for this match (biometric proof from a
+            // registered phone plus the recording of the final score; see MatchVerificationService).
+            // Organizers stay outside it, as with the ready check: they are the escape hatch when a phone
+            // cannot verify at all.
+            if (approvalCtx.RequireResultVerification && !isPrivileged)
+            {
+                // Only a participant can ever start a verification, so with the setting on nobody else
+                // can reach the report below — refused here with the reason that actually applies.
+                if (!IsMatchParticipant(match, currentUser.UserId))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
+
+                if (!await this.AppUnitOfWork.MatchResultVerificationRepository.HasVerified(match.Id!.Value, currentUser.UserId))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationRequiredToReport"]);
+            }
+
             // Resolve the series format in force for this match and read the submission through it.
             // Everything downstream works off `series` instead of the raw request scores, so the v1
             // and v2 paths converge here and only differ in what they were allowed to send.
@@ -2807,9 +2998,36 @@ namespace GameHubz.Logic.Services
             match.ScheduledStartTime ??= DateTime.UtcNow;
             ClearProposal(match);
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
+            // Serialised with a bracket swap and re-checked under the lock, like FinalizeMatchResult.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
+            {
+                await EnsureParticipantsUnchangedAsync(match);
+                await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                await this.SaveAsync();
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
+
             await InvalidateMatchCachesAsync(match);
+        }
+
+        /// <summary>
+        /// Refuses a result write when the match's participants are no longer the ones this request
+        /// loaded. Runs under the tournament's advancement lock, which a bracket swap holds for its whole
+        /// transaction: without the re-check, a report that waited on the lock would write the pre-swap
+        /// pairing back over the row and advance a player who was swapped out of the fixture. A team
+        /// game the swap rebuilt no longer exists at all.
+        /// </summary>
+        private async Task EnsureParticipantsUnchangedAsync(MatchEntity match)
+        {
+            var current = await this.AppUnitOfWork.MatchRepository.GetParticipantIds(match.Id!.Value)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            if (current.HomeParticipantId != match.HomeParticipantId || current.AwayParticipantId != match.AwayParticipantId)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
         }
 
         // A real result landing on a NoShow (double-walkover) team game: if the closed game already
@@ -4264,6 +4482,10 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
             try
             {
+                // The row this request loaded predates the lock; a bracket swap may have committed
+                // while it waited. Saving it would write the old pairing back.
+                await EnsureParticipantsUnchangedAsync(match);
+
                 if (match.TournamentStage?.Type == StageType.League || match.TournamentStage?.Type == StageType.GroupStage
                     || match.TournamentStage?.Type == StageType.Swiss)
                 {
@@ -4399,37 +4621,50 @@ namespace GameHubz.Logic.Services
             // columns — so the sweep's "CheckInResolvedOn == null" filter dropped the fixture for good
             // and the no-show dodged the forfeit. Before the window there is no ready check to close,
             // so the proposal takes the ordinary tracked path below.
-            if (requireMatchCheckIn
-                && match.Status == MatchStatus.Scheduled
-                && match.ScheduledStartTime.HasValue
-                && DateTime.UtcNow >= MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value)
-                && !match.CheckInResolvedOn.HasValue)
+            //
+            // Both writes are serialised with a bracket swap and re-checked under the lock, like
+            // FinalizeMatchResult: a proposal must not land on a fixture whose players were swapped
+            // while this request was running.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
+            try
             {
-                DateTime resolvedOn = DateTime.UtcNow;
-                bool proposalSaved = await this.AppUnitOfWork.MatchRepository.TrySaveCheckInProposal(
-                    match.Id!.Value,
-                    series.HomeScore,
-                    series.AwayScore,
-                    match.ProposedGamesJson,
-                    currentUser.UserId,
-                    resolvedOn);
+                await EnsureParticipantsUnchangedAsync(match);
 
-                if (!proposalSaved)
+                if (requireMatchCheckIn
+                    && match.Status == MatchStatus.Scheduled
+                    && match.ScheduledStartTime.HasValue
+                    && DateTime.UtcNow >= MatchCheckInRules.OpensAt(match.ScheduledStartTime.Value)
+                    && !match.CheckInResolvedOn.HasValue)
                 {
-                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+                    DateTime resolvedOn = DateTime.UtcNow;
+                    bool proposalSaved = await this.AppUnitOfWork.MatchRepository.TrySaveCheckInProposal(
+                        match.Id!.Value,
+                        series.HomeScore,
+                        series.AwayScore,
+                        match.ProposedGamesJson,
+                        currentUser.UserId,
+                        resolvedOn);
+
+                    if (!proposalSaved)
+                    {
+                        throw new BusinessRuleException(this.LocalizationService["BusinessRule.CheckInClosed"]);
+                    }
+
+                    // ExecuteUpdate bypasses this context's tracker; mirror audit values used by callers.
+                    match.CheckInResolvedOn = resolvedOn;
+                    match.ModifiedOn = resolvedOn;
+                    match.ModifiedBy = currentUser.UserId;
                 }
-
-                // ExecuteUpdate bypasses this context's tracker; mirror audit values used by callers.
-                match.CheckInResolvedOn = resolvedOn;
-                match.ModifiedOn = resolvedOn;
-                match.ModifiedBy = currentUser.UserId;
-
-                await PublishProposalSavedAsync(match, currentUser);
-                return;
+                else
+                {
+                    await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+                    await this.SaveAsync();
+                }
             }
-
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
-            await this.SaveAsync();
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(match.TournamentId);
+            }
 
             await PublishProposalSavedAsync(match, currentUser);
         }
@@ -4633,7 +4868,10 @@ namespace GameHubz.Logic.Services
             catch { /* never let a win-notification failure break tournament completion */ }
         }
 
-        private static bool IsMatchParticipant(MatchEntity match, Guid userId)
+        // Internal so result verification decides "who may verify" with the very rule this gate uses
+        // to decide "who may report" — two copies would drift, and a player able to report but not to
+        // verify (or the reverse) would be stuck in a verification-required tournament.
+        internal static bool IsMatchParticipant(MatchEntity match, Guid userId)
         {
             // Team sub-matches carry the player ids on the match itself; solo matches use the participants.
             if (match.TeamMatchId.HasValue)
@@ -4956,6 +5194,7 @@ namespace GameHubz.Logic.Services
             // already refuses this when the reset has progressed, so here the reset is still Pending.
             if (match.Stage == MatchStage.GrandFinal && nextMatch != null && nextMatch.Stage == MatchStage.GrandFinalReset)
             {
+                await EnsureNoEvidenceBeforeDeleteAsync(new[] { nextMatch.Id!.Value });
                 await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(nextMatch);
                 match.NextMatchId = null;
                 match.NextMatchHomeAwaySlot = null;
@@ -5122,6 +5361,7 @@ namespace GameHubz.Logic.Services
                 var resetMatch = await this.AppUnitOfWork.TeamMatchRepository.GetByIdWithSubMatches(teamMatch.NextTeamMatchId.Value);
                 if (resetMatch != null && resetMatch.IsGrandFinalReset)
                 {
+                    await EnsureNoEvidenceBeforeDeleteAsync(resetMatch.SubMatches.Select(sm => sm.Id!.Value).ToList());
                     foreach (var sm in resetMatch.SubMatches)
                         await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
                     await this.AppUnitOfWork.TeamMatchRepository.HardDeleteEntity(resetMatch);
@@ -5144,6 +5384,7 @@ namespace GameHubz.Logic.Services
                     else
                         nextTeamMatch.AwayTeamParticipantId = null;
 
+                    await EnsureNoEvidenceBeforeDeleteAsync(nextTeamMatch.SubMatches.Select(sm => sm.Id!.Value).ToList());
                     foreach (var sm in nextTeamMatch.SubMatches)
                     {
                         await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
@@ -5178,6 +5419,7 @@ namespace GameHubz.Logic.Services
                     else
                         loserBracketMatch.AwayTeamParticipantId = null;
 
+                    await EnsureNoEvidenceBeforeDeleteAsync(loserBracketMatch.SubMatches.Select(sm => sm.Id!.Value).ToList());
                     foreach (var sm in loserBracketMatch.SubMatches)
                         await this.AppUnitOfWork.MatchRepository.HardDeleteEntity(sm);
 

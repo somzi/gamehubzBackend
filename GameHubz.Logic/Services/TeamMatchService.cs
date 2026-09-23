@@ -233,6 +233,7 @@ namespace GameHubz.Logic.Services
                     ProposedByUserId = sm.ProposedByUserId,
                     AdminHelpRequested = sm.AdminHelpRequested,
                     AdminHelpRequestedByUserId = sm.AdminHelpRequestedByUserId,
+                    HasResultVerifications = sm.HasResultVerifications,
                     BestOf = sm.BestOf,
                     TiebreakBestOf = sm.TiebreakBestOf,
                     Games = DeserializeGames(sm.GamesJson),
@@ -303,7 +304,8 @@ namespace GameHubz.Logic.Services
                 },
                 RequireResultApproval = projection.RequireResultApproval,
                 RequireMatchCheckIn = projection.RequireMatchCheckIn,
-                CheckInGraceMinutes = projection.RequireMatchCheckIn ? checkInGrace : null
+                CheckInGraceMinutes = projection.RequireMatchCheckIn ? checkInGrace : null,
+                RequireResultVerification = projection.RequireResultVerification
             };
         }
 

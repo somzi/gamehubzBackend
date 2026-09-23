@@ -30,5 +30,11 @@ namespace GameHubz.Logic.Interfaces
         /// when a tournament is cancelled or deleted, where there is nothing left to prove.
         /// </summary>
         Task<List<MatchEvidenceEntity>> GetByTournament(Guid tournamentId, EvidenceMediaType mediaType);
+
+        /// <summary>
+        /// Whether any of these matches carries evidence. Pass <paramref name="includeSoftDeleted"/> before
+        /// hard-deleting the matches: a soft-deleted row still holds the foreign key.
+        /// </summary>
+        Task<bool> AnyForMatches(IReadOnlyCollection<Guid> matchIds, bool includeSoftDeleted);
     }
 }
