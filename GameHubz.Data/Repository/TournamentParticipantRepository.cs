@@ -112,7 +112,9 @@ namespace GameHubz.Data.Repository
                     PrizeCurrency = x.Tournament.PrizeCurrency,
                     Status = x.Tournament.Status,
                     Region = x.Tournament.Region,
-                    StartDate = x.Tournament.StartDate!.Value,
+                    // StartDate is optional; `!.Value` threw on a tournament without one. Same
+                    // fallback as the hub tournament lists.
+                    StartDate = x.Tournament.StartDate ?? DateTime.MinValue,
                     IsTeamTournament = x.Tournament.IsTeamTournament
                 })
                 .ToListAsync();
@@ -140,7 +142,7 @@ namespace GameHubz.Data.Repository
                     PrizeCurrency = x.Tournament.PrizeCurrency,
                     Status = x.Tournament.Status,
                     Region = x.Tournament.Region,
-                    StartDate = x.Tournament.StartDate!.Value,
+                    StartDate = x.Tournament.StartDate ?? DateTime.MinValue,
                     HubAvatarUrl = x.Tournament.Hub!.AvatarUrl,
                     HubName = x.Tournament.Hub.Name,
                     Format = x.Tournament.Format,

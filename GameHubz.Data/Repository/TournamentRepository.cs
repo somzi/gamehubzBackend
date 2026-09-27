@@ -225,6 +225,8 @@ namespace GameHubz.Data.Repository
         public async Task<TournamentEntity> GetWithPendingRegistration(Guid id)
         {
             return await this.BaseDbSet()
+                // Avoid multiplying every participant by every pending registration.
+                .AsSplitQuery()
                 .Include(x => x.TournamentParticipants)
                 .Include(x => x.TournamentRegistrations!
                     .Where(tr => tr.Status == TournamentRegistrationStatus.Pending))

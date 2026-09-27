@@ -35,6 +35,7 @@ namespace GameHubz.Data.Repository
         public async Task<TournamentStageEntity?> GetWithGroupsAndMatches(Guid Id)
         {
             return await this.BaseDbSet()
+                 .AsSplitQuery()
                  .Include(ts => ts.TournamentGroups!)
                  .Include(ts => ts.Matches!)
                  .FirstOrDefaultAsync(t => t.Id == Id);

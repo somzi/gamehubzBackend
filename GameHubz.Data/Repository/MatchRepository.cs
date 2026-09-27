@@ -629,7 +629,7 @@ namespace GameHubz.Data.Repository
 
         public async Task<MatchResultDetailDto?> GetWithEvidence(Guid id)
         {
-            return await this.BaseDbSet()
+            var result = await this.BaseDbSet()
                 .Where(x => x.Id == id)
                 .Select(x => new MatchResultDetailDto
                 {
@@ -657,8 +657,7 @@ namespace GameHubz.Data.Repository
                     HomeUserId = x.HomeParticipant!.UserId,
                     AwayUserScore = x.AwayUserScore ?? 0,
                     HomeUserScore = x.HomeUserScore ?? 0,
-                    Evidences = x.MatchEvidences.Select(e => e.Url!).ToList(),
-                    EvidenceItems = x.MatchEvidences
+                    EvidenceItems = x.MatchEvidences!
                         .Select(e => new MatchEvidenceItemDto { Url = e.Url!, MediaType = e.MediaType })
                         .ToList(),
                     ScheduledTime = x.ScheduledStartTime,
@@ -717,6 +716,13 @@ namespace GameHubz.Data.Repository
                             || x.TournamentStage.Type == StageType.PlayIn),
                 })
                 .FirstOrDefaultAsync();
+
+            // Both API fields describe the same evidence. Build the legacy URL list after
+            // materialization so SQL does not join the evidence collection to itself.
+            if (result != null)
+                result.Evidences = result.EvidenceItems.Select(e => e.Url).ToList();
+
+            return result;
         }
 
         public async Task<List<MatchAdminHelpItemDto>> GetAdminHelpRequests(Guid tournamentId)

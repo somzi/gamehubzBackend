@@ -42,10 +42,8 @@ namespace GameHubz.Data.Repository
                     Name = x.Name,
                     Description = x.Description,
                     UserId = x.UserId,
-                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments != null
-                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
-                        : 0,
+                    NumberOfUsers = x.UserHubs!.Count(),
+                    NumberOfTournaments = x.Tournaments!.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted),
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
                     IsPublic = x.IsPublic,
                     IsVerified = x.IsVerified
@@ -62,10 +60,8 @@ namespace GameHubz.Data.Repository
                     Id = x.Id!.Value,
                     Name = x.Name,
                     Description = x.Description,
-                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count : 0,
-                    NumberOfTournaments = x.Tournaments != null
-                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
-                        : 0,
+                    NumberOfUsers = x.UserHubs!.Count(),
+                    NumberOfTournaments = x.Tournaments!.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted),
                     UserId = x.UserId,
                     AvatarUrl = x.AvatarUrl,
                     OwnerName = x.User.Username,
@@ -74,15 +70,13 @@ namespace GameHubz.Data.Repository
                     CreatedOn = x.CreatedOn,
                     DiscordWebhookUrl = x.DiscordWebhookUrl,
                     DiscordNotificationSettings = x.DiscordNotificationSettings,
-                    HubSocials = x.HubSocials != null
-                            ? x.HubSocials.Select(s => new HubSocialDto
-                            {
-                                Id = s.Id,
-                                HubId = s.HubId,
-                                Type = s.Type,
-                                Username = s.Username
-                            }).ToList()
-                            : new List<HubSocialDto>()
+                    HubSocials = x.HubSocials!.Select(s => new HubSocialDto
+                    {
+                        Id = s.Id,
+                        HubId = s.HubId,
+                        Type = s.Type,
+                        Username = s.Username
+                    }).ToList()
                 })
                 .FirstOrDefaultAsync();
         }
@@ -114,10 +108,8 @@ namespace GameHubz.Data.Repository
                     Name = x.Name,
                     Description = x.Description,
                     UserId = x.UserId,
-                    NumberOfUsers = x.UserHubs != null ? x.UserHubs.Count() : 0,
-                    NumberOfTournaments = x.Tournaments != null
-                        ? x.Tournaments.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted)
-                        : 0,
+                    NumberOfUsers = x.UserHubs!.Count(),
+                    NumberOfTournaments = x.Tournaments!.Count(t => t.Status != TournamentStatus.Cancelled && t.Status != TournamentStatus.Deleted),
                     UserDisplayName = x.User.FirstName + " " + x.User.LastName,
                     AvatarUrl = x.AvatarUrl,
                     IsPublic = x.IsPublic,
@@ -153,42 +145,50 @@ namespace GameHubz.Data.Repository
 
         // Aggregates every completed match played inside this hub, per user. Trophies count only
         // wins IN THIS HUB (hub-scoped), so the leaderboard stays comparable across sort modes.
-        // Done in memory because the dual participant/team-match model plus subquery for trophies
-        // makes the equivalent SQL fragile — and the row count is bounded by "distinct players in
-        // one hub", not the whole platform.
+        // Counted in SQL: each completed match becomes one row per side (the player on that side
+        // and how the match went for them), grouped per player — so what comes back grows with the
+        // number of players in the hub, not with its whole match history.
         public async Task<List<HubLeaderboardEntryDto>> GetHubLeaderboard(Guid hubId)
         {
-            var matches = await this.ContextBase.Set<MatchEntity>()
+            var completed = this.ContextBase.Set<MatchEntity>()
                 .AsNoTracking()
                 .Where(m => m.Status == MatchStatus.Completed
-                    && m.Tournament!.HubId == hubId)
-                .Include(m => m.HomeParticipant).ThenInclude(p => p!.User)
-                .Include(m => m.AwayParticipant).ThenInclude(p => p!.User)
-                .Include(m => m.HomeUser)
-                .Include(m => m.AwayUser)
+                    && m.Tournament!.HubId == hubId);
+
+            // Team sub-matches carry the player directly (HomeUserId/AwayUserId); solo matches
+            // resolve through the participant. No winner = draw.
+            var sides = completed
                 .Select(m => new
                 {
-                    m.WinnerParticipantId,
-                    m.HomeParticipantId,
-                    m.AwayParticipantId,
-                    m.HomeUserId,
-                    m.AwayUserId,
-                    HomeParticipantUserId = m.HomeParticipant != null ? m.HomeParticipant.UserId : (Guid?)null,
-                    AwayParticipantUserId = m.AwayParticipant != null ? m.AwayParticipant.UserId : (Guid?)null,
-                    HomeUsername = m.HomeUser != null ? m.HomeUser.Username
-                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Username : null),
-                    HomeNickname = m.HomeUser != null ? m.HomeUser.Nickname
-                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Nickname : null),
-                    HomeAvatar = m.HomeUser != null ? m.HomeUser.AvatarUrl
-                        : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.AvatarUrl : null),
-                    AwayUsername = m.AwayUser != null ? m.AwayUser.Username
-                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Username : null),
-                    AwayNickname = m.AwayUser != null ? m.AwayUser.Nickname
-                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Nickname : null),
-                    AwayAvatar = m.AwayUser != null ? m.AwayUser.AvatarUrl
-                        : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.AvatarUrl : null),
+                    UserId = m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null),
+                    IsDraw = m.WinnerParticipantId == null,
+                    IsWin = m.WinnerParticipantId != null && m.WinnerParticipantId == m.HomeParticipantId,
+                })
+                .Concat(completed.Select(m => new
+                {
+                    UserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
+                    IsDraw = m.WinnerParticipantId == null,
+                    IsWin = m.WinnerParticipantId != null && m.WinnerParticipantId == m.AwayParticipantId,
+                }));
+
+            var totals = await sides
+                .Where(s => s.UserId != null)
+                .GroupBy(s => s.UserId!.Value)
+                .Select(g => new
+                {
+                    UserId = g.Key,
+                    TotalMatches = g.Count(),
+                    Draws = g.Count(s => s.IsDraw),
+                    Wins = g.Count(s => s.IsWin),
                 })
                 .ToListAsync();
+
+            var userIds = totals.Select(t => t.UserId).ToList();
+            var users = await this.ContextBase.Set<UserEntity>()
+                .AsNoTracking()
+                .Where(u => userIds.Contains(u.Id!.Value))
+                .Select(u => new { Id = u.Id!.Value, u.Username, u.Nickname, u.AvatarUrl })
+                .ToDictionaryAsync(u => u.Id);
 
             var trophies = await this.ContextBase.Set<TournamentEntity>()
                 .AsNoTracking()
@@ -199,17 +199,21 @@ namespace GameHubz.Data.Repository
 
             var byUser = new Dictionary<Guid, HubLeaderboardEntryDto>();
 
-            foreach (var m in matches)
+            foreach (var t in totals)
             {
-                Guid? homeUserId = m.HomeUserId ?? m.HomeParticipantUserId;
-                Guid? awayUserId = m.AwayUserId ?? m.AwayParticipantUserId;
-
-                Accumulate(homeUserId, m.HomeUsername, m.HomeNickname, m.HomeAvatar,
-                    isDraw: m.WinnerParticipantId == null,
-                    isWin: m.WinnerParticipantId != null && m.WinnerParticipantId == m.HomeParticipantId);
-                Accumulate(awayUserId, m.AwayUsername, m.AwayNickname, m.AwayAvatar,
-                    isDraw: m.WinnerParticipantId == null,
-                    isWin: m.WinnerParticipantId != null && m.WinnerParticipantId == m.AwayParticipantId);
+                users.TryGetValue(t.UserId, out var user);
+                byUser[t.UserId] = new HubLeaderboardEntryDto
+                {
+                    UserId = t.UserId,
+                    Username = user?.Username ?? "Unknown",
+                    Nickname = user?.Nickname,
+                    AvatarUrl = user?.AvatarUrl,
+                    TotalMatches = t.TotalMatches,
+                    Draws = t.Draws,
+                    Wins = t.Wins,
+                    // A draw has no winner, so draw and win never overlap — everything else lost.
+                    Losses = t.TotalMatches - t.Draws - t.Wins,
+                };
             }
 
             foreach (var kv in trophies)
@@ -228,28 +232,6 @@ namespace GameHubz.Data.Repository
             }
 
             return byUser.Values.ToList();
-
-            void Accumulate(Guid? userId, string? username, string? nickname, string? avatar, bool isDraw, bool isWin)
-            {
-                if (userId == null) return;
-
-                if (!byUser.TryGetValue(userId.Value, out var entry))
-                {
-                    entry = new HubLeaderboardEntryDto
-                    {
-                        UserId = userId.Value,
-                        Username = username ?? "Unknown",
-                        Nickname = nickname,
-                        AvatarUrl = avatar,
-                    };
-                    byUser[userId.Value] = entry;
-                }
-
-                entry.TotalMatches++;
-                if (isDraw) entry.Draws++;
-                else if (isWin) entry.Wins++;
-                else entry.Losses++;
-            }
         }
     }
 }

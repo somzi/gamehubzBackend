@@ -24,6 +24,8 @@ namespace GameHubz.Data.Repository
         public async Task<TeamMatchEntity?> GetByIdWithSubMatches(Guid teamMatchId)
         {
             return await this.BaseDbSet()
+                // Sub-matches and the two rosters are independent collections.
+                .AsSplitQuery()
                 .Where(tm => tm.Id == teamMatchId)
                 .Include(tm => tm.SubMatches)
                     .ThenInclude(m => m.HomeParticipant)
@@ -72,7 +74,8 @@ namespace GameHubz.Data.Repository
 
         public async Task<TeamMatchDetailsProjection?> GetDetailsProjection(Guid teamMatchId)
         {
-            return await this.BaseDbSet()
+            var result = await this.BaseDbSet()
+                .AsSplitQuery()
                 .Where(tm => tm.Id == teamMatchId)
                 .Select(tm => new TeamMatchDetailsProjection
                 {
@@ -181,12 +184,8 @@ namespace GameHubz.Data.Repository
                             : (sm.AwayParticipant != null && sm.AwayParticipant.User != null
                                 ? sm.AwayParticipant.User.AvatarUrl
                                 : null),
-                        Evidences = sm.MatchEvidences != null
-                            ? sm.MatchEvidences.Select(e => e.Url!).ToList()
-                            : new List<string>(),
-                        EvidenceItems = sm.MatchEvidences != null
-                            ? sm.MatchEvidences.Select(e => new MatchEvidenceItemDto { Url = e.Url!, MediaType = e.MediaType }).ToList()
-                            : new List<MatchEvidenceItemDto>(),
+                        EvidenceItems = sm.MatchEvidences!
+                            .Select(e => new MatchEvidenceItemDto { Url = e.Url!, MediaType = e.MediaType }).ToList(),
                         ProposedHomeScore = sm.ProposedHomeScore,
                         ProposedAwayScore = sm.ProposedAwayScore,
                         ProposedByUserId = sm.ProposedByUserId,
@@ -219,6 +218,15 @@ namespace GameHubz.Data.Repository
                     SeriesWinCondition = tm.Tournament!.SeriesWinCondition
                 })
                 .FirstOrDefaultAsync();
+
+            // Preserve the legacy URL-only field without a second evidence query per sub-match.
+            if (result != null)
+            {
+                foreach (var subMatch in result.SubMatches)
+                    subMatch.Evidences = subMatch.EvidenceItems.Select(e => e.Url).ToList();
+            }
+
+            return result;
         }
 
         public async Task<TieBreakProjection?> GetTieBreakProjection(Guid teamMatchId)
