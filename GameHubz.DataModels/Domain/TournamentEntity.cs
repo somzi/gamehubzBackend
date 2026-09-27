@@ -152,6 +152,23 @@ namespace GameHubz.DataModels.Domain
         // can see this tournament in their feed and register. Default false = open to all members.
         public bool IsExclusive { get; set; }
 
+        // Code-locked tournament: listed like any other (hub page, feed, counts — with a lock on the
+        // card), but only someone holding JoinCode can register: a solo sign-up or a new team must
+        // carry it (the organiser's invite link carries it too). Joining an existing team does not —
+        // the captain who created it already passed the gate and owns the roster. The organiser
+        // still approves every registration on top of the code.
+        // It also skips the hub-wide "come register" traffic: the new-tournament / registration-open
+        // announcement (push + Discord), the "registration closing soon" reminder and the Home
+        // highlights. Registration closed, started, finished and every participant notification go
+        // out as for any tournament.
+        public bool IsPrivate { get; set; }
+
+        // Six-digit code for IsPrivate tournaments, generated the first time the tournament becomes
+        // private and kept afterwards, so switching private off and on again brings the same code
+        // back and invites already sent keep working. Unique across every tournament ever given one
+        // (partial unique index, migration 89). Null on tournaments that were never private.
+        public string? JoinCode { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

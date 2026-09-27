@@ -7,6 +7,7 @@ namespace GameHubz.Logic.Services
         private readonly ICacheService cacheService;
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
+        private readonly TournamentAuthorizationService tournamentAuth;
 
         public TournamentTeamService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -14,12 +15,14 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             ICacheService cacheService,
             INotificationService notificationService,
-            BadgeService badgeService)
+            BadgeService badgeService,
+            TournamentAuthorizationService tournamentAuth)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.cacheService = cacheService;
             this.notificationService = notificationService;
             this.badgeService = badgeService;
+            this.tournamentAuth = tournamentAuth;
         }
 
         public async Task<TeamDto> CreateTeam(CreateTeamRequest request)
@@ -41,6 +44,15 @@ namespace GameHubz.Logic.Services
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, request.TournamentId);
             if (alreadyInTeam)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
+
+            // Private tournament: creating a team is how a captain enters one, so this is where the
+            // join code is checked. Joining someone's team is not gated — its captain already passed
+            // this check and decides who plays with them (RequiresApproval).
+            if (tournament.IsPrivate && !await this.tournamentAuth.CanManageTournamentAsync(request.TournamentId))
+            {
+                await TournamentJoinCodes.EnsureCanEnterAsync(
+                    tournament, request.JoinCode, user.UserId, this.cacheService, this.LocalizationService);
+            }
 
             var team = new TournamentTeamEntity
             {

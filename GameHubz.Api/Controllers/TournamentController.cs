@@ -256,6 +256,35 @@ namespace GameHubz.Api.Controllers
             return Ok(data);
         }
 
+        // "Join with code": resolves a private tournament's six-digit code to the tournament and
+        // answers with the v3 overview payload, so the app can preview it and register in one step.
+        // POST so the code stays out of URLs and access logs.
+        [HttpPost("join-code")]
+        public async Task<IActionResult> ResolveJoinCode([FromBody] JoinTournamentByCodeRequest request)
+        {
+            var data = await this.Service.ResolveJoinCode(request?.Code);
+
+            return Ok(data);
+        }
+
+        // Managers only: the invite code of a private tournament.
+        [HttpGet("{id}/join-code")]
+        public async Task<IActionResult> GetJoinCode([FromRoute] Guid id)
+        {
+            var data = await this.Service.GetJoinCode(id);
+
+            return Ok(data);
+        }
+
+        // Managers only: replace a leaked code. The share link keeps working.
+        [HttpPost("{id}/join-code/regenerate")]
+        public async Task<IActionResult> RegenerateJoinCode([FromRoute] Guid id)
+        {
+            var data = await this.Service.RegenerateJoinCode(id);
+
+            return Ok(data);
+        }
+
         [HttpGet("{id}/user/{userId}/registred")]
         public async Task<IActionResult> CheckIsUserRegistred(Guid id, Guid userId)
         {

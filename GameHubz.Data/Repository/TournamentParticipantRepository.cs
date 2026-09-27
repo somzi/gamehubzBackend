@@ -147,7 +147,8 @@ namespace GameHubz.Data.Repository
                     HubName = x.Tournament.Hub.Name,
                     Format = x.Tournament.Format,
                     RoundDurationMinutes = x.Tournament.RoundDurationMinutes,
-                    IsTeamTournament = x.Tournament.IsTeamTournament
+                    IsTeamTournament = x.Tournament.IsTeamTournament,
+                    IsPrivate = x.Tournament.IsPrivate
                 })
                 .ToListAsync();
 

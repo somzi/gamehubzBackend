@@ -24,6 +24,10 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Where(x => hubIds.Contains(x.HubId!.Value))
+                // Private tournaments are listed but never announced — highlights are an announcement
+                // feed, like the push they sit next to. Filtered on read rather than skipped on write
+                // so a tournament switched to private later also drops the rows it logged while public.
+                .Where(x => x.Tournament == null || !x.Tournament.IsPrivate)
                 .OrderByDescending(x => x.CreatedOn)
                 .Take(count)
                 .Select(x => new DashboardActivityDto
@@ -41,7 +45,9 @@ namespace GameHubz.Data.Repository
         public async Task<EntityListDto<DashboardActivityDto>> GetRecentActivityPaged(List<Guid> hubIds, int pageNumber, int pageSize)
         {
             var query = this.BaseDbSet()
-                .Where(x => hubIds.Contains(x.HubId!.Value));
+                .Where(x => hubIds.Contains(x.HubId!.Value))
+                // See GetRecentActivity.
+                .Where(x => x.Tournament == null || !x.Tournament.IsPrivate);
 
             var count = await query.CountAsync();
 

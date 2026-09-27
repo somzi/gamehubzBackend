@@ -174,7 +174,12 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (claimed == 0) continue;
 
-                    await LogRegistrationOpenedAsync(tournament.HubId!.Value, tournament.Id!.Value, now, ct);
+                    // A private tournament opens silently: no activity row here, and the notifier
+                    // below skips it too.
+                    if (!tournament.IsPrivate)
+                    {
+                        await LogRegistrationOpenedAsync(tournament.HubId!.Value, tournament.Id!.Value, now, ct);
+                    }
 
                     // The same caches TournamentService flushes on a manual open — the overview and
                     // every hub listing page still carry the pre-open status until they are dropped.
@@ -229,6 +234,9 @@ namespace GameHubz.Api.BackgroundTasks
                 .AsNoTracking()
                 .Where(t => t.Status == TournamentStatus.RegistrationOpen
                     && t.IsTeamTournament == false
+                    // Private tournaments are invite-only: nudging the hub's members would
+                    // announce one to exactly the people it is hidden from.
+                    && !t.IsPrivate
                     && t.HubId != null
                     && t.RegistrationDeadline != null
                     && t.RegistrationDeadline > now

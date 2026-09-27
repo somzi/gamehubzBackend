@@ -78,6 +78,15 @@ namespace GameHubz.DataModels.Models
         public bool IsExclusive { get; set; }
 
         /// <summary>
+        /// Invite-only tournament: hidden from every listing and announcement, reachable only through
+        /// its share link or join code. Nullable for the same reason as
+        /// <see cref="RequireResultVerification"/> — a client that predates the feature never sends
+        /// it, and reading that as "public" would silently expose a private tournament on every edit
+        /// it makes. Null on create = public. Editable for the whole life of the tournament.
+        /// </summary>
+        public bool? IsPrivate { get; set; }
+
+        /// <summary>
         /// Games a single match is played over (1 = one game decides it). Applies to solo matches
         /// and, in team tournaments, to each individual sub-match — the team tie itself is still
         /// settled by <see cref="TeamWinCondition"/> over those sub-matches.

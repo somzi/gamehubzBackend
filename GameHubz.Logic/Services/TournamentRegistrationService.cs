@@ -44,6 +44,17 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public override async Task<TournamentRegistrationDto> SaveEntity(TournamentRegistrationPost inputDto, bool doSave = true)
         {
+            // Create-only. A registration is never edited through this door: its status moves only
+            // through Approve/Reject (manager-checked), and nothing else about it is the sender's to
+            // change. With an Id the generic POST became an update of ANY registration — no owner
+            // check, and every rule in BeforeSave runs for new rows only — so a registration from a
+            // public tournament could be re-pointed at a private one without its code (review
+            // 2026-09-27). No client has ever sent an Id here; the app posts TournamentId/UserId/Status.
+            if (inputDto.Id.HasValue)
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RegistrationCannotBeEdited"]);
+            }
+
             var dto = await base.SaveEntity(inputDto, doSave);
 
             // New rows are always Pending (set in BeforeDtoMapToEntity). Edits keep their status;
@@ -78,6 +89,31 @@ namespace GameHubz.Logic.Services
                 entity.UserId = caller.UserId;
             }
 
+            // Team registrations. RegisterTeam is the intended door and checks the captain, but the
+            // generic POST lands here too, so a team's rules are enforced here for both. The team has
+            // to belong to this tournament: teams are created inside one, and the private-tournament
+            // code check below exempts team registrations precisely because creating a team there
+            // took the code — a team from another (say, public) tournament used to walk into a private
+            // one without it. Only the captain registers a team, and a team registration carries no
+            // UserId (F37: a body UserId is never trusted).
+            if (isNew && entity.TeamId.HasValue)
+            {
+                var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                var team = await this.AppUnitOfWork.TournamentTeamRepository.ShallowGetByIdOrThrowIfNull(entity.TeamId.Value);
+
+                if (team.TournamentId != entity.TournamentId)
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
+                }
+
+                if (team.CaptainUserId != caller.UserId)
+                {
+                    throw new UnauthorizedAccessToServiceException(this.LocalizationService);
+                }
+
+                entity.UserId = null;
+            }
+
             if (isNew && entity.TournamentId.HasValue && (entity.UserId.HasValue || entity.TeamId.HasValue))
             {
                 // F41: registrations are only accepted while the tournament's registration is open.
@@ -107,6 +143,22 @@ namespace GameHubz.Logic.Services
                 if (alreadyRegistered || alreadyParticipant)
                 {
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.AlreadyRegistered"]);
+                }
+
+                // Private tournament: a solo sign-up has to carry the join code. Team registrations
+                // are exempt — the team was checked above to belong to this tournament, and creating
+                // it there took the code (TournamentTeamService.CreateTeam). Managers are exempt:
+                // they hold the code anyway.
+                if (tournamentForStatus.IsPrivate
+                    && !entity.TeamId.HasValue
+                    && !await this.tournamentAuth.CanManageTournamentAsync(entity.TournamentId.Value))
+                {
+                    await TournamentJoinCodes.EnsureCanEnterAsync(
+                        tournamentForStatus,
+                        inputDto.JoinCode,
+                        entity.UserId!.Value,
+                        this.cacheService,
+                        this.LocalizationService);
                 }
             }
 

@@ -24,6 +24,12 @@ namespace GameHubz.Logic.Interfaces
 
         Task<bool> CheckIsUserIsRegistered(Guid id, Guid userId);
 
+        Task<bool> JoinCodeExists(string joinCode);
+
+        Task<Guid?> GetIdByJoinCode(string joinCode);
+
+        Task SetJoinCode(Guid tournamentId, string joinCode);
+
         Task<TournamentEntity> GetWithHubById(Guid tournamentId);
 
         Task<Guid?> GetHubOwnerUserId(Guid tournamentId);

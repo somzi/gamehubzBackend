@@ -237,6 +237,113 @@ namespace GameHubz.Logic.Services
             return data;
         }
 
+        /// <summary>
+        /// Resolves a private tournament's six-digit code to the tournament, returning the same
+        /// payload as the v3 overview so the app can preview it and offer Join in one step.
+        /// Unknown, cancelled and deleted codes all answer the same way.
+        /// </summary>
+        public async Task<TournamentOverview> ResolveJoinCode(string? code)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // Malformed input can never hit a tournament, so it doesn't cost an attempt.
+            string? normalized = TournamentJoinCodes.Normalize(code);
+            if (normalized == null)
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.JoinCodeInvalid"]);
+            }
+
+            // Spent before the lookup, from the same budget as the registration-side check — see
+            // TournamentJoinCodes.
+            await TournamentJoinCodes.ConsumeAttemptAsync(this.cacheService, this.LocalizationService, caller.UserId);
+
+            Guid? tournamentId = await this.AppUnitOfWork.TournamentRepository.GetIdByJoinCode(normalized);
+            if (tournamentId == null)
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.JoinCodeInvalid"]);
+            }
+
+            return await GetOverviewV3(tournamentId.Value);
+        }
+
+        /// <summary>
+        /// The invite code as the tournament's managers see it. Never cached and never part of the
+        /// overview: private tournaments are listed publicly, so the code is the one thing that
+        /// separates seeing the tournament from being able to register for it.
+        /// </summary>
+        public async Task<TournamentJoinCodeDto> GetJoinCode(Guid id)
+        {
+            await EnsureCanManageTournamentForJoinCode(id);
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetByIdOrThrowIfNull(id);
+            if (!tournament.IsPrivate)
+            {
+                return new TournamentJoinCodeDto { IsPrivate = false };
+            }
+
+            string? joinCode = tournament.JoinCode;
+            if (string.IsNullOrEmpty(joinCode))
+            {
+                // Self-heal: every write path issues a code, but a private tournament without one
+                // would be unreachable except by link, so mint it here rather than show nothing.
+                joinCode = await GenerateUniqueJoinCode();
+                await this.AppUnitOfWork.TournamentRepository.SetJoinCode(id, joinCode);
+            }
+
+            return new TournamentJoinCodeDto { IsPrivate = true, JoinCode = joinCode };
+        }
+
+        /// <summary>
+        /// Issues a fresh code for a private tournament whose code has leaked. The old code stops
+        /// working immediately — both for lookup and for registration, including invite links that
+        /// carry it; people already registered are unaffected.
+        /// </summary>
+        public async Task<TournamentJoinCodeDto> RegenerateJoinCode(Guid id)
+        {
+            await EnsureCanManageTournamentForJoinCode(id);
+
+            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetByIdOrThrowIfNull(id);
+            if (!tournament.IsPrivate)
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.JoinCodeNotPrivate"]);
+            }
+
+            string joinCode = await GenerateUniqueJoinCode();
+            await this.AppUnitOfWork.TournamentRepository.SetJoinCode(id, joinCode);
+
+            return new TournamentJoinCodeDto { IsPrivate = true, JoinCode = joinCode };
+        }
+
+        // 400, not 401, on purpose: the mobile 401 interceptor treats any 401 as an expired session.
+        private async Task EnsureCanManageTournamentForJoinCode(Guid id)
+        {
+            if (!await this.tournamentAuth.CanManageTournamentAsync(id))
+            {
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffManageTournament"]);
+            }
+        }
+
+        // 100000–999999: always six digits, so there is no leading zero for a person to drop when
+        // reading it out or typing it in.
+        private async Task<string> GenerateUniqueJoinCode()
+        {
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                string candidate = System.Security.Cryptography.RandomNumberGenerator
+                    .GetInt32(100000, 1000000)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+                if (!await this.AppUnitOfWork.TournamentRepository.JoinCodeExists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            // Twenty straight collisions means the code space is nearly exhausted — a capacity
+            // problem to fix in code, not something a user can act on.
+            throw new InvalidOperationException("Could not allocate a unique tournament join code.");
+        }
+
         // Exclusive-or-higher role (Exclusive/Admin/Owner) in the given hub for the current caller.
         private async Task<bool> CallerHasExclusiveRole(Guid hubId)
         {
@@ -517,7 +624,10 @@ namespace GameHubz.Logic.Services
                 model = await SaveTournamentAsync();
             }
 
-            if (inputDto.Id is null)
+            // A private tournament is created silently: no hub activity, no push, no Discord card —
+            // it is listed like any other, but only the people its organiser hands the code (or the
+            // invite link) to can register, so telling the whole hub would only frustrate them.
+            if (inputDto.Id is null && !model.IsPrivate)
             {
                 if (model.RegistrationOpensAt is null)
                 {
@@ -535,7 +645,7 @@ namespace GameHubz.Logic.Services
                     await this.tournamentNotifier.RegistrationScheduled(model);
                 }
             }
-            else
+            else if (inputDto.Id is not null)
             {
                 await cacheService.RemoveAsync($"tournament:{model.Id}");
                 // Tournament-level settings (e.g. RequireResultApproval) are projected into the
@@ -600,6 +710,10 @@ namespace GameHubz.Logic.Services
             // that as "off" would quietly drop the requirement the organizer switched on. Editable for
             // the whole tournament — it only gates reports that have not been made yet.
             inputDto.RequireResultVerification ??= existing.RequireResultVerification;
+
+            // Privacy, same reasoning again — and here the cost of getting it wrong is exposure: an
+            // older app's edit would otherwise quietly turn an invite-only tournament public.
+            inputDto.IsPrivate ??= existing.IsPrivate;
 
             // The scheduled opening travels under its own opt-in flag rather than
             // AllowStructuralEdits: the currently shipped client already sets that flag and knows
@@ -699,6 +813,13 @@ namespace GameHubz.Logic.Services
                     // already open, which is the one state this feature exists to prevent.
                     entity.Status = TournamentStatus.Draft;
                 }
+            }
+
+            // The code is issued the first time a tournament becomes private — at creation or on a
+            // later edit — and kept from then on (see TournamentEntity.JoinCode).
+            if (entity.IsPrivate && string.IsNullOrEmpty(entity.JoinCode))
+            {
+                entity.JoinCode = await GenerateUniqueJoinCode();
             }
 
             // Clamp rather than reject: Best-of arrives from a picker with a fixed set of options,

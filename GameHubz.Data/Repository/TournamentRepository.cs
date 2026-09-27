@@ -145,6 +145,7 @@ namespace GameHubz.Data.Repository
                      Id = x.Id!.Value!,
                      IsTeamTournament = x.IsTeamTournament,
                      IsExclusive = x.IsExclusive,
+                     IsPrivate = x.IsPrivate,
                      // Draft rows are listed on the hub page alongside open ones, so the card needs
                      // this to say "opens …" instead of looking like a tournament nobody can join.
                      RegistrationOpensAt = x.RegistrationOpensAt
@@ -189,6 +190,7 @@ namespace GameHubz.Data.Repository
                     IsTeamTournament = x.IsTeamTournament,
                     TeamWinCondition = x.TeamWinCondition,
                     IsExclusive = x.IsExclusive,
+                    IsPrivate = x.IsPrivate,
                     // Additive for v1 (which never returns a scheduled row); v2 needs it to render
                     // "opens …" instead of a join-ready card.
                     RegistrationOpensAt = x.RegistrationOpensAt
@@ -326,6 +328,7 @@ namespace GameHubz.Data.Repository
                       CheckInGraceMinutes = x.CheckInGraceMinutes,
                       RequireResultVerification = x.RequireResultVerification,
                       IsExclusive = x.IsExclusive,
+                      IsPrivate = x.IsPrivate,
                       DoubleRoundRobin = x.DoubleRoundRobin,
                       GroupsCount = x.GroupsCount,
                       QualifiersPerGroup = x.QualifiersPerGroup,
@@ -355,22 +358,44 @@ namespace GameHubz.Data.Repository
             // A user with no country sees only region/global tournaments. Codes are canonical ISO codes.
             IQueryable<TournamentEntity> query = this.BaseDbSet().AsNoTracking();
 
+            // Private tournaments are listed like any other in AvailableToJoin (the card carries a
+            // lock; registering needs the code). The other three tabs only ever list tournaments the
+            // user is IN, and a private one must show up there even though its entrants typically
+            // arrived through a code or invite link and don't follow the hub (or sit outside its
+            // region) — so on those tabs a private row skips the hub/region/exclusive visibility
+            // rules and the tab's own participation check is what scopes it. Composed per branch
+            // rather than as one OR over a flag, so the AvailableToJoin query keeps exactly the SQL
+            // it had.
+            bool ownTab = filter != TournamentUserStatus.AvailableToJoin;
+
             if (string.IsNullOrEmpty(userCountry))
             {
-                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
-                    && x.Countries == null
-                    && (x.Region == region || x.Region == RegionType.GLOBAL));
+                query = ownTab
+                    ? query.Where(x => x.IsPrivate
+                        || (hubIds.Contains(x.HubId!.Value)
+                            && x.Countries == null
+                            && (x.Region == region || x.Region == RegionType.GLOBAL)))
+                    : query.Where(x => hubIds.Contains(x.HubId!.Value)
+                        && x.Countries == null
+                        && (x.Region == region || x.Region == RegionType.GLOBAL));
             }
             else
             {
-                query = query.Where(x => hubIds.Contains(x.HubId!.Value)
-                    && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
-                        || (x.Countries != null && x.Countries.Contains(userCountry))));
+                query = ownTab
+                    ? query.Where(x => x.IsPrivate
+                        || (hubIds.Contains(x.HubId!.Value)
+                            && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
+                                || (x.Countries != null && x.Countries.Contains(userCountry)))))
+                    : query.Where(x => hubIds.Contains(x.HubId!.Value)
+                        && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
+                            || (x.Countries != null && x.Countries.Contains(userCountry))));
             }
 
             // Exclusive tournaments are visible only in hubs where the user has exclusive-or-higher
             // access. Non-exclusive tournaments stay visible to every member of the hub.
-            query = query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
+            query = ownTab
+                ? query.Where(x => x.IsPrivate || !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value))
+                : query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
 
             switch (filter)
             {
@@ -420,6 +445,36 @@ namespace GameHubz.Data.Repository
             }
 
             return query;
+        }
+
+        // Across soft-deleted rows as well: the unique index on JoinCode covers them, so a code that
+        // only a deleted tournament holds is still taken.
+        public async Task<bool> JoinCodeExists(string joinCode)
+        {
+            return await this.ContextBase.Set<TournamentEntity>()
+                .IgnoreQueryFilters()
+                .AnyAsync(t => t.JoinCode == joinCode);
+        }
+
+        // Targeted write for the same reason as SetBracketSeedingMode: a regenerated code must not
+        // ride on a full-row UpdateEntity that could roll back a concurrent edit to the tournament.
+        public async Task SetJoinCode(Guid tournamentId, string joinCode)
+        {
+            await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.JoinCode, joinCode));
+        }
+
+        // Cancelled and deleted tournaments are gone as far as a code is concerned — the code then
+        // answers exactly like one that never existed.
+        public async Task<Guid?> GetIdByJoinCode(string joinCode)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.JoinCode == joinCode
+                    && t.Status != TournamentStatus.Cancelled
+                    && t.Status != TournamentStatus.Deleted)
+                .Select(t => t.Id)
+                .FirstOrDefaultAsync();
         }
 
         public async Task<int> GetNumberOfTournamentsWonByUserId(Guid userId)

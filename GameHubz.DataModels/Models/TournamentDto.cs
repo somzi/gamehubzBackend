@@ -1,4 +1,5 @@
-﻿using GameHubz.DataModels.Enums;
+﻿using System.Text.Json.Serialization;
+using GameHubz.DataModels.Enums;
 
 namespace GameHubz.DataModels.Models
 {
@@ -71,6 +72,15 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
         public bool IsExclusive { get; set; }
+
+        /// <summary>
+        /// Invite-only tournament (see TournamentEntity.IsPrivate). Omitted when false so every
+        /// response for a public tournament stays byte-identical to what shipped clients receive.
+        /// The join code itself is never part of this DTO — only managers read it, through
+        /// GET api/tournament/{id}/join-code.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool IsPrivate { get; set; }
 
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 

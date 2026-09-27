@@ -134,6 +134,15 @@ namespace GameHubz.DataModels.Models
         public bool IsExclusive { get; set; }
 
         /// <summary>
+        /// Invite-only tournament: the card and the details screen show a "Private" lock. A static
+        /// property of the tournament, so it is safe in every shared cache entry. Omitted when false,
+        /// which keeps every existing (public) row byte-identical for shipped clients — a private
+        /// tournament can only be created by a build that knows the field.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool IsPrivate { get; set; }
+
+        /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or
         /// platform admin). Only populated by the v2 overview endpoint; omitted from the v1 payload
         /// so the legacy client keeps receiving an unchanged response.

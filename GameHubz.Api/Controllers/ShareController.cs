@@ -46,8 +46,12 @@ namespace GameHubz.Api.Controllers
             string Title, string Description, string? ImageUrl,
             int Total, int WinRate, int Wins, int Draws, int Losses, int Trophies);
 
+        // `code` is a private tournament's join code, carried by the organiser's invite link. It is
+        // only forwarded into the app's deep link, so the invite lands with the code already filled
+        // in; never rendered into the page, and anything that isn't six digits is dropped rather
+        // than passed along.
         [HttpGet("/tournament/{id:guid}")]
-        public async Task<ContentResult> Tournament(Guid id)
+        public async Task<ContentResult> Tournament(Guid id, [FromQuery] string? code = null)
         {
             var data = await context.Set<TournamentEntity>()
                 .AsNoTracking()
@@ -103,11 +107,13 @@ namespace GameHubz.Api.Controllers
                 parts.Insert(0, $"by {data.HubName}");
             }
 
+            string? joinCode = code is { Length: 6 } && code.All(char.IsAsciiDigit) ? code : null;
+
             return await SharePage(
                 ShareEntityType.Tournament,
                 "Tournament",
                 webPath: $"tournament/{id}",
-                deepPath: $"tournament/{id}",
+                deepPath: joinCode == null ? $"tournament/{id}" : $"tournament/{id}?code={joinCode}",
                 title: data.Name,
                 description: string.Join(" · ", parts),
                 imageUrl: data.HubAvatarUrl,
