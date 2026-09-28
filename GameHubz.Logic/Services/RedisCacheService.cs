@@ -56,16 +56,33 @@ namespace GameHubz.Logic.Services
             var db = _multiplexer.GetDatabase();
             string prefixedKey = InstanceName + key;
 
-            long value = await db.StringIncrementAsync(prefixedKey);
+            // Increment and expiry must be one operation: a disconnect between INCR and EXPIRE
+            // could otherwise leave a permanent lockout. Also repair old counters without a TTL.
+            // Existing expiry is never extended by further attempts.
+            const string script = """
+                local value = redis.call('INCR', KEYS[1])
+                if redis.call('PTTL', KEYS[1]) < 0 then
+                    redis.call('PEXPIRE', KEYS[1], ARGV[1])
+                end
+                return value
+                """;
+            return (long)await db.ScriptEvaluateAsync(script,
+                new RedisKey[] { prefixedKey },
+                new RedisValue[] { Math.Max(1L, (long)window.TotalMilliseconds) });
+        }
 
-            // Only the first hit sets the TTL. Refreshing it on every increment would let a steady
-            // stream of attempts push the expiry out forever, so the counter would never reset.
-            if (value == 1)
-            {
-                await db.KeyExpireAsync(prefixedKey, window);
-            }
-
-            return value;
+        public async Task DecrementCounterAsync(string key)
+        {
+            // Conditional in one script: a plain DECR on a key that expired a moment ago would
+            // create it at -1 with no TTL — a counter that never resets and hands out extra budget.
+            const string script = """
+                local value = tonumber(redis.call('GET', KEYS[1]) or '0')
+                if value > 0 then
+                    return redis.call('DECR', KEYS[1])
+                end
+                return 0
+                """;
+            await _multiplexer.GetDatabase().ScriptEvaluateAsync(script, new RedisKey[] { InstanceName + key });
         }
 
         public async Task<long> GetCounterAsync(string key)

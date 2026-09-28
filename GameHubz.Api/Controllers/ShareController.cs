@@ -120,7 +120,8 @@ namespace GameHubz.Api.Controllers
                 entityId: id,
                 stats: stats,
                 contextText: data.HubName,
-                contextImageUrl: data.HubAvatarUrl);
+                contextImageUrl: data.HubAvatarUrl,
+                copyPath: joinCode == null ? null : $"tournament/{id}?code={joinCode}");
         }
 
         [HttpGet("/hub/{id:guid}")]
@@ -383,7 +384,8 @@ namespace GameHubz.Api.Controllers
             string? contextText = null,
             string? contextImageUrl = null,
             bool compactStats = false,
-            PlayerScoreboard? scoreboard = null)
+            PlayerScoreboard? scoreboard = null,
+            string? copyPath = null)
         {
             await LogShare(entityType, entityId);
 
@@ -392,6 +394,7 @@ namespace GameHubz.Api.Controllers
                 Title = title,
                 Description = description,
                 CanonicalUrl = $"{config.BaseUrl.TrimEnd('/')}/{webPath}",
+                CopyUrl = copyPath == null ? null : $"{config.BaseUrl.TrimEnd('/')}/{copyPath}",
                 DeepLink = $"{config.AppScheme}://{deepPath}",
                 EntityLabel = entityLabel,
                 ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? config.DefaultImageUrl : imageUrl,

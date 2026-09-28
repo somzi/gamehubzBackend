@@ -239,7 +239,7 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Resolves a private tournament's six-digit code to the tournament, returning the same
-        /// payload as the v3 overview so the app can preview it and offer Join in one step.
+        /// payload as the v3 overview so the app can preview it before any registration action.
         /// Unknown, cancelled and deleted codes all answer the same way.
         /// </summary>
         public async Task<TournamentOverview> ResolveJoinCode(string? code)
@@ -253,7 +253,8 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.JoinCodeInvalid"]);
             }
 
-            // Spent before the lookup, from the same budget as the registration-side check — see
+            // Reserved before the lookup, from the same budget as the registration-side check, and
+            // given back when the code finds a tournament: only wrong codes count — see
             // TournamentJoinCodes.
             await TournamentJoinCodes.ConsumeAttemptAsync(this.cacheService, this.LocalizationService, caller.UserId);
 
@@ -262,6 +263,8 @@ namespace GameHubz.Logic.Services
             {
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.JoinCodeInvalid"]);
             }
+
+            await TournamentJoinCodes.RefundAttemptAsync(this.cacheService, caller.UserId);
 
             return await GetOverviewV3(tournamentId.Value);
         }

@@ -2,6 +2,7 @@ using GameHubz.DataModels.Models;
 using GameHubz.Logic.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace GameHubz.Api.Controllers
 {
@@ -47,16 +48,16 @@ namespace GameHubz.Api.Controllers
         }
 
         [HttpPost("{teamId}/join")]
-        public async Task<IActionResult> JoinTeam(Guid teamId)
+        public async Task<IActionResult> JoinTeam(Guid teamId, [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] JoinTournamentTeamRequest? request)
         {
-            var team = await this.tournamentTeamService.JoinTeam(teamId);
+            var team = await this.tournamentTeamService.JoinTeam(teamId, request?.JoinCode);
             return Ok(team);
         }
 
         [HttpPost("{teamId}/request-join")]
-        public async Task<IActionResult> RequestJoin(Guid teamId)
+        public async Task<IActionResult> RequestJoin(Guid teamId, [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] JoinTournamentTeamRequest? request)
         {
-            var team = await this.tournamentTeamService.RequestJoin(teamId);
+            var team = await this.tournamentTeamService.RequestJoin(teamId, request?.JoinCode);
             return Ok(team);
         }
 

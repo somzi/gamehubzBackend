@@ -45,9 +45,8 @@ namespace GameHubz.Logic.Services
             if (alreadyInTeam)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
-            // Private tournament: creating a team is how a captain enters one, so this is where the
-            // join code is checked. Joining someone's team is not gated — its captain already passed
-            // this check and decides who plays with them (RequiresApproval).
+            // Creating a team is an entry into a private tournament, just like joining an
+            // existing team or requesting a place on its roster; each route checks the code.
             if (tournament.IsPrivate && !await this.tournamentAuth.CanManageTournamentAsync(request.TournamentId))
             {
                 await TournamentJoinCodes.EnsureCanEnterAsync(
@@ -128,12 +127,16 @@ namespace GameHubz.Logic.Services
             await InvalidateCache(team.TournamentId!.Value);
         }
 
-        public async Task<TeamDto> JoinTeam(Guid teamId)
+        public async Task<TeamDto> JoinTeam(Guid teamId, string? joinCode = null)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var data = await this.AppUnitOfWork.TournamentTeamRepository.GetTeamForJoin(teamId, user.UserId);
             if (data == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamNotFound"]);
+
+            // The direct join route must not bypass the captain's approval setting.
+            if (data.RequiresApproval)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamRequiresJoinRequest"]);
 
             if (!data.TeamSize.HasValue)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.TeamSizeNotConfigured"]);
@@ -145,6 +148,11 @@ namespace GameHubz.Logic.Services
 
             if (data.UserAlreadyInTournament)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
+
+            // A private tournament also requires the same code as solo registration and team
+            // creation. Checked last: every check spends one of the caller's few attempts
+            // (TournamentJoinCodes), so it must not be burnt on a join that fails for another reason.
+            await EnsurePrivateTeamAccess(data.TournamentId, joinCode, user.UserId);
 
             bool joinsAsReserve = data.CurrentStarterCount >= data.TeamSize.Value;
 
@@ -208,7 +216,7 @@ namespace GameHubz.Logic.Services
             await InvalidateCache(team.TournamentId!.Value);
         }
 
-        public async Task<TeamDto> RequestJoin(Guid teamId)
+        public async Task<TeamDto> RequestJoin(Guid teamId, string? joinCode = null)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
@@ -230,6 +238,9 @@ namespace GameHubz.Logic.Services
             var alreadyRequested = await this.AppUnitOfWork.TeamJoinRequestRepository.HasPendingRequest(teamId, user.UserId);
             if (alreadyRequested)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.PendingRequestForTeam"]);
+
+            // Last, for the same reason as in JoinTeam: a code check spends an attempt.
+            await EnsurePrivateTeamAccess(data.TournamentId, joinCode, user.UserId);
 
             var request = new TeamJoinRequestEntity
             {
@@ -714,6 +725,16 @@ namespace GameHubz.Logic.Services
 
             promoted.IsReserve = false;
             await this.AppUnitOfWork.TournamentTeamMemberRepository.UpdateEntity(promoted, this.UserContextReader);
+        }
+
+        private async Task EnsurePrivateTeamAccess(Guid tournamentId, string? joinCode, Guid userId)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetByIdOrThrowIfNull(tournamentId);
+            if (tournament.IsPrivate && !await this.tournamentAuth.CanManageTournamentAsync(tournamentId))
+            {
+                await TournamentJoinCodes.EnsureCanEnterAsync(
+                    tournament, joinCode, userId, this.cacheService, this.LocalizationService);
+            }
         }
 
         private async Task InvalidateCache(Guid tournamentId)

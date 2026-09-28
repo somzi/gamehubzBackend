@@ -21,6 +21,11 @@
         // Current value of an IncrementAsync counter; 0 when the key has expired or never existed.
         Task<long> GetCounterAsync(string key);
 
+        // Gives back one IncrementAsync unit — for "reserve before checking, refund when the check
+        // passed" budgets. Only while the counter exists and is above zero: it never creates a key
+        // (which would have no window) and never goes negative. Keeps the key's existing expiry.
+        Task DecrementCounterAsync(string key);
+
         // Resets an IncrementAsync counter. Counters deliberately get their own delete rather than
         // reusing RemoveAsync: they are written as raw Redis strings, RemoveAsync goes through
         // IDistributedCache, and keeping both on one code path avoids relying on the two agreeing

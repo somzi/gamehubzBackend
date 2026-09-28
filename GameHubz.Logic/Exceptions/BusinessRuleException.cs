@@ -8,9 +8,12 @@ namespace GameHubz.Logic.Exceptions
     /// </summary>
     public class BusinessRuleException : BaseException
     {
-        public BusinessRuleException(string message)
+        public string? ErrorCode { get; }
+
+        public BusinessRuleException(string message, string? errorCode = null)
             : base(message)
         {
+            ErrorCode = errorCode;
         }
     }
 }

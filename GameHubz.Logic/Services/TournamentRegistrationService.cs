@@ -144,22 +144,6 @@ namespace GameHubz.Logic.Services
                 {
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.AlreadyRegistered"]);
                 }
-
-                // Private tournament: a solo sign-up has to carry the join code. Team registrations
-                // are exempt — the team was checked above to belong to this tournament, and creating
-                // it there took the code (TournamentTeamService.CreateTeam). Managers are exempt:
-                // they hold the code anyway.
-                if (tournamentForStatus.IsPrivate
-                    && !entity.TeamId.HasValue
-                    && !await this.tournamentAuth.CanManageTournamentAsync(entity.TournamentId.Value))
-                {
-                    await TournamentJoinCodes.EnsureCanEnterAsync(
-                        tournamentForStatus,
-                        inputDto.JoinCode,
-                        entity.UserId!.Value,
-                        this.cacheService,
-                        this.LocalizationService);
-                }
             }
 
             if (isNew && entity.UserId.HasValue && entity.TournamentId.HasValue)
@@ -184,6 +168,22 @@ namespace GameHubz.Logic.Services
                     {
                         throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentExclusiveOnly"]);
                     }
+                }
+
+                // Private tournament: a solo sign-up has to carry the join code. Checked last, once
+                // every other reason to refuse is ruled out — each check spends one of the caller's
+                // few attempts (TournamentJoinCodes). Team registrations never get here (they carry
+                // no UserId): the team was checked above to belong to this tournament, and creating
+                // or joining it there took the code. Managers are exempt: they hold the code anyway.
+                if (tournament.IsPrivate
+                    && !await this.tournamentAuth.CanManageTournamentAsync(entity.TournamentId.Value))
+                {
+                    await TournamentJoinCodes.EnsureCanEnterAsync(
+                        tournament,
+                        inputDto.JoinCode,
+                        entity.UserId.Value,
+                        this.cacheService,
+                        this.LocalizationService);
                 }
             }
 

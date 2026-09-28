@@ -3,28 +3,28 @@ namespace GameHubz.Logic.Services
     /// <summary>
     /// The rules around a private tournament's six-digit join code, shared by every door into one:
     /// looking a tournament up by its code (TournamentService.ResolveJoinCode), a solo registration
-    /// (TournamentRegistrationService) and creating a team (TournamentTeamService).
+    /// (TournamentRegistrationService), creating a team, and joining or requesting to join one
+    /// (TournamentTeamService).
     /// </summary>
     /// <remarks>
-    /// All three share one attempt budget per account. Private tournaments are listed like any
-    /// other, so their ids are no secret — the registration endpoints are as good a place to guess
-    /// codes as the lookup, and a budget per endpoint would just triple an attacker's allowance.
+    /// A player gets five WRONG codes per quarter hour; a correct code costs nothing, so looking a
+    /// tournament up and then registering with the same code never eats into the five. All entry
+    /// paths share the one budget per account: private tournaments are listed like any other, so
+    /// their ids are no secret, and a budget per endpoint would multiply an attacker's allowance.
     ///
-    /// Every check of a well-formed code spends one attempt, and spends it atomically BEFORE the
-    /// code is compared (Redis INCR hands each request its own count). Reading the counter first and
-    /// incrementing on a miss afterwards let any number of parallel requests pass the read together
-    /// — forty concurrent guesses all got through in review. Hits are counted as well: refunding
-    /// them would need a decrement for no real gain, since an honest player spends two or three
-    /// checks per tournament they join (look the code up, then register with it).
+    /// Counting only misses must still hold under parallel requests. Reading the counter first and
+    /// incrementing on a miss afterwards let any number of concurrent guesses pass the read together
+    /// — forty got through in review. So every check reserves an attempt atomically BEFORE the code
+    /// is compared (Redis INCR hands each request its own count, and anything past the limit is
+    /// refused on the spot), and a check that turns out right gives its reservation back.
     ///
-    /// Six digits is 900 000 codes; twenty checks per quarter hour makes walking that space from one
-    /// account hopeless, while a person fumbling a code they were sent never gets near the limit.
-    /// Counted per account, not per IP, for the reason AuthThrottleService spells out (behind our
-    /// proxy every client shares one address).
+    /// Six digits is 900 000 codes; five wrong guesses per quarter hour makes walking that space
+    /// from one account hopeless. Counted per account, not per IP, for the reason
+    /// AuthThrottleService spells out (behind our proxy every client shares one address).
     /// </remarks>
     public static class TournamentJoinCodes
     {
-        private const int MaxAttempts = 20;
+        private const int MaxWrongCodes = 5;
         private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
 
         /// <summary>
@@ -41,16 +41,43 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
-        /// Spends one attempt from the caller's budget, or throws when it is used up. Call it before
-        /// comparing a code, never after — see the remarks on the class.
+        /// Reserves one attempt from the caller's budget, or throws when five wrong codes have
+        /// already been spent. Call it before comparing a code, never after, and pair a correct
+        /// result with <see cref="RefundAttemptAsync"/> — see the remarks on the class.
         /// </summary>
         public static async Task ConsumeAttemptAsync(ICacheService cacheService, ILocalizationService localization, Guid userId)
         {
-            long used = await SafeCounterAsync(() => cacheService.IncrementAsync(AttemptKey(userId), AttemptWindow));
-
-            if (used > MaxAttempts)
+            long used;
+            try
             {
-                throw new BusinessRuleException(localization["BusinessRule.JoinCodeTooManyAttempts"]);
+                used = await cacheService.IncrementAsync(AttemptKey(userId), AttemptWindow);
+            }
+            catch
+            {
+                // Without the shared counter there is no reliable limit across API instances.
+                // Refuse code checks until it recovers instead of allowing unlimited guesses.
+                throw new BusinessRuleException(localization["BusinessRule.JoinCodeUnavailable"], "join_code_unavailable");
+            }
+
+            if (used > MaxWrongCodes)
+            {
+                throw new BusinessRuleException(localization["BusinessRule.JoinCodeTooManyAttempts"], "join_code_limit");
+            }
+        }
+
+        /// <summary>
+        /// Gives back the attempt a correct code reserved. Best effort: if the counter can't be
+        /// reached, the player loses one attempt — never the registration that just succeeded.
+        /// </summary>
+        public static async Task RefundAttemptAsync(ICacheService cacheService, Guid userId)
+        {
+            try
+            {
+                await cacheService.DecrementCounterAsync(AttemptKey(userId));
+            }
+            catch
+            {
+                // Swallowed on purpose — see the summary.
             }
         }
 
@@ -58,7 +85,7 @@ namespace GameHubz.Logic.Services
         /// The registration-side gate: throws unless <paramref name="code"/> is this private
         /// tournament's code. No-op for public tournaments. Callers let managers through before
         /// calling — they hold the code anyway, and must never be locked out of their own event.
-        /// A missing code is a prompt, not a guess, so it costs nothing.
+        /// A missing code is a prompt, not a guess, so it costs nothing; a correct one is refunded.
         /// </summary>
         public static async Task EnsureCanEnterAsync(
             TournamentEntity tournament,
@@ -72,31 +99,19 @@ namespace GameHubz.Logic.Services
             string? normalized = Normalize(code);
             if (normalized == null)
             {
-                throw new BusinessRuleException(localization["BusinessRule.JoinCodeRequired"]);
+                throw new BusinessRuleException(localization["BusinessRule.JoinCodeRequired"], "join_code_required");
             }
 
             await ConsumeAttemptAsync(cacheService, localization, userId);
 
             if (!string.Equals(normalized, tournament.JoinCode, StringComparison.Ordinal))
             {
-                throw new BusinessRuleException(localization["BusinessRule.JoinCodeWrong"]);
+                throw new BusinessRuleException(localization["BusinessRule.JoinCodeWrong"], "join_code_wrong");
             }
+
+            await RefundAttemptAsync(cacheService, userId);
         }
 
         private static string AttemptKey(Guid userId) => $"join_code_attempts:{userId}";
-
-        // The throttle is a guard, not a dependency: with Redis down the checks still run and only
-        // the budget is lost (fail open), exactly like AuthThrottleService.
-        private static async Task<long> SafeCounterAsync(Func<Task<long>> action)
-        {
-            try
-            {
-                return await action();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
     }
 }

@@ -58,6 +58,16 @@ namespace GameHubz.Logic.Test.Bracket
             return Task.FromResult(next);
         }
 
+        public Task DecrementCounterAsync(string key)
+        {
+            if (store.TryGetValue(key, out var existing) && existing is long current && current > 0)
+            {
+                store[key] = current - 1;
+            }
+
+            return Task.CompletedTask;
+        }
+
         public Task<long> GetCounterAsync(string key)
         {
             return Task.FromResult(store.TryGetValue(key, out var value) && value is long counter ? counter : 0);

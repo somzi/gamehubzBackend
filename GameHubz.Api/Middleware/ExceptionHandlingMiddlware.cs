@@ -126,6 +126,7 @@ namespace GameHubz.Api.Middleware
                 Details = this.environment.IsDevelopment() ? exception.ToString() : string.Empty,
 
                 ErrorId = errorId?.ToString(),
+                ErrorCode = (exception as BusinessRuleException)?.ErrorCode,
             };
 
             if (exception is ValidationException validationException)

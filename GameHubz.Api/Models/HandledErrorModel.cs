@@ -4,6 +4,10 @@ namespace GameHubz.Api.Models
     {
         public string Message { get; set; } = string.Empty;
 
+        // Stable identifier for client recovery; the displayed message remains localized.
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? ErrorCode { get; set; }
+
         public string Details { get; set; } = string.Empty;
 
         /// <summary>

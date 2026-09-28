@@ -17,6 +17,8 @@ namespace GameHubz.Api.Share
         public required string Description { get; init; }
 
         public required string CanonicalUrl { get; init; }
+        // An invite page keeps its code when the visitor taps Copy link. CanonicalUrl stays public.
+        public string? CopyUrl { get; init; }
 
         public required string DeepLink { get; init; }
 
@@ -522,7 +524,7 @@ namespace GameHubz.Api.Share
     <script>
         (function () {
             var deepLink = '{{J(model.DeepLink)}}';
-            var pageUrl = '{{J(model.CanonicalUrl)}}';
+            var pageUrl = '{{J(model.CopyUrl ?? model.CanonicalUrl)}}';
             var isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent || '');
 
             // If the app is installed the OS takes over; otherwise nothing happens
@@ -970,7 +972,7 @@ namespace GameHubz.Api.Share
     <script>
         (function () {
             var deepLink = '{{J(model.DeepLink)}}';
-            var pageUrl = '{{J(model.CanonicalUrl)}}';
+            var pageUrl = '{{J(model.CopyUrl ?? model.CanonicalUrl)}}';
             var isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent || '');
 
             if (isMobile) {
