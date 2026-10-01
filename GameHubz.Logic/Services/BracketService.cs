@@ -487,7 +487,13 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
-        /// Manual re-seed (admin only): exchange the bracket positions of two first-round participants.
+        /// Manual re-seed (platform admin only): exchange the bracket positions of two first-round participants.
+        /// Tournament staff are deliberately refused. The knockout after a group or Swiss phase is drawn by
+        /// fixed rules — pots, group separation, standings — and an organizer who plays in the tournament
+        /// could otherwise hand themselves an easier path than the draw gave them (it happened: an organizer
+        /// who also played moved themselves off a group winner a minute after the draw). The draw is final
+        /// for staff; a platform admin can still step in for support cases.
+        ///
         /// Always surgical: the two trade places in every fixture that holds either of them — their
         /// first-round match, a bye's bookkeeping row and the match a bye already advanced them into —
         /// and nothing else in the bracket moves. Everyone else keeps their fixture, agreed time and chat,
@@ -505,8 +511,8 @@ namespace GameHubz.Logic.Services
         public async Task SwapBracketParticipants(Guid tournamentId, Guid participantAId, Guid participantBId)
         {
             var currentUser = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
-            if (!await this.tournamentAuth.CanManageTournamentAsync(tournamentId, currentUser))
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffEditSeeding"]);
+            if (currentUser.RoleEnum != UserRoleEnum.Admin)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminEditSeeding"]);
 
             if (participantAId == participantBId)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickTwoDifferentTeams"]);
