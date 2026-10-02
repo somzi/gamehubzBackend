@@ -48,6 +48,11 @@ namespace GameHubz.DataModels.Domain
         public DateTime? HomeSlotsSetOn { get; set; }
         public DateTime? AwaySlotsSetOn { get; set; }
 
+        // Who pressed "agreed outside the app" (a player or an organizer). That path has no real
+        // kick-off: ScheduledStartTime is only the moment of the press. Null when the time came
+        // from the two availability lists meeting, so organizers can tell the two apart.
+        public Guid? ScheduledOutsideAppByUserId { get; set; }
+
         [NotMapped]
         public List<DateTime> HomeSlots
         {

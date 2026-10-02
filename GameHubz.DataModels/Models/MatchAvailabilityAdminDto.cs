@@ -14,10 +14,22 @@ namespace GameHubz.DataModels.Models
     {
         public Guid MatchId { get; set; }
 
-        /// <summary>Set once the two lists intersected and the match auto-scheduled.</summary>
+        /// <summary>
+        /// Set once the two lists intersected and the match auto-scheduled — or once someone marked
+        /// it agreed outside the app, in which case it is only the moment of that press (see below).
+        /// </summary>
         public DateTime? ConfirmedTime { get; set; }
 
         public DateTime? MatchDeadline { get; set; }
+
+        /// <summary>
+        /// Who marked the match "agreed outside the app". Null when <see cref="ConfirmedTime"/> came
+        /// from the two lists meeting.
+        /// </summary>
+        public Guid? AgreedOutsideAppByUserId { get; set; }
+
+        /// <summary>Their display name; null for a deleted account even when the id is set.</summary>
+        public string? AgreedOutsideAppByName { get; set; }
 
         public MatchAvailabilitySideDto Home { get; set; } = new();
 

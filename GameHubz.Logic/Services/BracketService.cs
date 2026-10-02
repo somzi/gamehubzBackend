@@ -817,6 +817,7 @@ namespace GameHubz.Logic.Services
         {
             if (m.Status == MatchStatus.Scheduled) m.Status = MatchStatus.Pending;
             m.ScheduledStartTime = null;
+            m.ScheduledOutsideAppByUserId = null;
 
             // Null, not "[]" — see MatchService.ClearSchedule.
             if (homeChanged)
@@ -5279,6 +5280,7 @@ namespace GameHubz.Logic.Services
                         // Players can re-agree once the upstream re-finalises and the slot is filled.
                         nextMatch.Status = MatchStatus.Pending;
                         nextMatch.ScheduledStartTime = null;
+                        nextMatch.ScheduledOutsideAppByUserId = null;
                     }
 
                     ResetCheckIn(nextMatch);
@@ -5322,6 +5324,7 @@ namespace GameHubz.Logic.Services
                             // a participant is pulled out, so reset to Pending.
                             loserBracketMatch.Status = MatchStatus.Pending;
                             loserBracketMatch.ScheduledStartTime = null;
+                            loserBracketMatch.ScheduledOutsideAppByUserId = null;
                         }
 
                         ResetCheckIn(loserBracketMatch);

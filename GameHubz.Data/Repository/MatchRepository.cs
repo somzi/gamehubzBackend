@@ -65,6 +65,14 @@ namespace GameHubz.Data.Repository
                     MatchId = x.Id!.Value,
                     ConfirmedTime = x.ScheduledStartTime,
                     MatchDeadline = x.RoundDeadline,
+                    AgreedOutsideAppByUserId = x.ScheduledOutsideAppByUserId,
+                    // Same nickname-or-username as the side rows, so the presser reads as they do above.
+                    AgreedOutsideAppByName = x.ScheduledOutsideAppByUserId == null
+                        ? null
+                        : this.ContextBase.Set<UserEntity>()
+                            .Where(u => u.Id == x.ScheduledOutsideAppByUserId)
+                            .Select(u => string.IsNullOrWhiteSpace(u.Nickname) ? u.Username : u.Nickname)
+                            .FirstOrDefault(),
                     Home = new MatchAvailabilitySideDto
                     {
                         UserId = x.HomeParticipant!.UserId,
@@ -961,6 +969,7 @@ namespace GameHubz.Data.Repository
                 .Where(m => m.Id == matchId && m.Status == MatchStatus.Pending)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.ScheduledStartTime, scheduledStart)
+                    .SetProperty(m => m.ScheduledOutsideAppByUserId, (Guid?)null)
                     .SetProperty(m => m.Status, MatchStatus.Scheduled)
                     .SetProperty(m => m.HomeCheckedInOn, (DateTime?)null)
                     .SetProperty(m => m.AwayCheckedInOn, (DateTime?)null)
@@ -978,6 +987,7 @@ namespace GameHubz.Data.Repository
                     && m.Status != MatchStatus.NoShow)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.ScheduledStartTime, scheduledStart)
+                    .SetProperty(m => m.ScheduledOutsideAppByUserId, modifiedByUserId)
                     .SetProperty(m => m.Status, MatchStatus.Scheduled)
                     .SetProperty(m => m.CheckInResolvedOn, scheduledStart)
                     .SetProperty(m => m.ModifiedOn, scheduledStart)
@@ -992,6 +1002,7 @@ namespace GameHubz.Data.Repository
                 .Where(m => m.Id == matchId && m.Status == MatchStatus.Scheduled)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.ScheduledStartTime, (DateTime?)null)
+                    .SetProperty(m => m.ScheduledOutsideAppByUserId, (Guid?)null)
                     .SetProperty(m => m.Status, MatchStatus.Pending)
                     .SetProperty(m => m.HomeSlotsJson, (string?)null)
                     .SetProperty(m => m.AwaySlotsJson, (string?)null)
