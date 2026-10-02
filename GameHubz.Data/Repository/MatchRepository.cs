@@ -420,13 +420,26 @@ namespace GameHubz.Data.Repository
                 .FirstAsync();
         }
 
+        private async Task<IQueryable<MatchEntity>> GetCompletedMatchesByUserId(Guid userId)
+        {
+            // Resolve only live participant rows first, as in the badge query. Keeping the
+            // membership filter on Match's own columns lets PostgreSQL use the participant
+            // and user indexes instead of filtering all completed matches after two joins.
+            var myParticipantIds = await GetMyParticipantIds(userId);
+
+            return this.BaseDbSet()
+                .Where(m => m.Status == MatchStatus.Completed &&
+                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null &&
+                        (myParticipantIds.Contains(m.HomeParticipantId.Value)
+                            || myParticipantIds.Contains(m.AwayParticipantId.Value)))
+                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null &&
+                        (m.HomeUserId == userId || m.AwayUserId == userId))));
+        }
+
         public async Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId, int pageSize, int pageNumber)
         {
-            return await this.BaseDbSet()
-                .Where(m =>
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
-                    && m.Status == MatchStatus.Completed)
+            var matches = await GetCompletedMatchesByUserId(userId);
+            return await matches
                 .OrderBy(m => m.ScheduledStartTime == null)
                 .ThenByDescending(m => m.ScheduledStartTime)
                 .Skip(pageNumber * pageSize)
@@ -472,11 +485,8 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<PerformanceDto>> GetPerformanceByUserId(Guid userId)
         {
-            return await this.BaseDbSet()
-                .Where(m =>
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
-                    && m.Status == MatchStatus.Completed)
+            var matches = await GetCompletedMatchesByUserId(userId);
+            return await matches
                 .OrderByDescending(m => m.ModifiedOn)
                 .Take(10)
                 .Select(m => new PerformanceDto
@@ -491,13 +501,9 @@ namespace GameHubz.Data.Repository
 
         public async Task<List<PerformanceV2Dto>> GetPerformanceByUserIdV2(Guid userId)
         {
-            // Take the 10 most recent in SQL, then reverse in memory so the caller gets
-            // oldest → latest — the order the UI labels expect.
-            var recent = await this.BaseDbSet()
-                .Where(m =>
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
-                    && m.Status == MatchStatus.Completed)
+            // Keep the ten most recent outcomes in newest-first order.
+            var matches = await GetCompletedMatchesByUserId(userId);
+            var recent = await matches
                 .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
                 .Take(10)
                 .Select(m => new PerformanceV2Dto
@@ -520,11 +526,8 @@ namespace GameHubz.Data.Repository
         // one list, so the streak costs no second scan of the user's matches.
         public async Task<List<string>> GetOutcomesByUserId(Guid userId)
         {
-            return await this.BaseDbSet()
-                .Where(m =>
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
-                    && m.Status == MatchStatus.Completed)
+            var matches = await GetCompletedMatchesByUserId(userId);
+            return await matches
                 .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
                 .Select(m => m.WinnerParticipantId == null
                     ? "D"
@@ -604,11 +607,8 @@ namespace GameHubz.Data.Repository
 
         public async Task<PlayerStatsDto> GetStatsByUserId(Guid userId)
         {
-            var stats = await this.BaseDbSet()
-            .Where(m =>
-                ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == userId || m.AwayParticipant!.UserId == userId))
-                || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == userId || m.AwayUserId == userId)))
-                && m.Status == MatchStatus.Completed)
+            var matches = await GetCompletedMatchesByUserId(userId);
+            var stats = await matches
             .GroupBy(_ => 1)
             .Select(g => new PlayerStatsDto
             {
