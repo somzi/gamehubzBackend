@@ -675,7 +675,13 @@ namespace GameHubz.Logic.Services
         /// </summary>
         protected override async Task BeforeDtoMapToEntity(TournamentPost inputDto, bool isNew)
         {
-            if (isNew || !inputDto.Id.HasValue) return;
+            if (isNew || !inputDto.Id.HasValue)
+            {
+                // Unlike the other switches this one defaults ON, and a null would map to false. A
+                // client that predates it keeps creating tournaments that behave as they always did.
+                inputDto.AllowScheduleOutsideApp ??= true;
+                return;
+            }
 
             var existing = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(inputDto.Id.Value);
             if (existing == null) return;
@@ -713,6 +719,10 @@ namespace GameHubz.Logic.Services
             // that as "off" would quietly drop the requirement the organizer switched on. Editable for
             // the whole tournament — it only gates reports that have not been made yet.
             inputDto.RequireResultVerification ??= existing.RequireResultVerification;
+
+            // "Agreed outside the app", same reasoning: an older app's edit would otherwise switch it
+            // off. Editable for the whole tournament — it only gates matches still waiting for a time.
+            inputDto.AllowScheduleOutsideApp ??= existing.AllowScheduleOutsideApp;
 
             // Privacy, same reasoning again — and here the cost of getting it wrong is exposure: an
             // older app's edit would otherwise quietly turn an invite-only tournament public.

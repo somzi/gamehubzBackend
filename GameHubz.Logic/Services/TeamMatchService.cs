@@ -305,7 +305,8 @@ namespace GameHubz.Logic.Services
                 RequireResultApproval = projection.RequireResultApproval,
                 RequireMatchCheckIn = projection.RequireMatchCheckIn,
                 CheckInGraceMinutes = projection.RequireMatchCheckIn ? checkInGrace : null,
-                RequireResultVerification = projection.RequireResultVerification
+                RequireResultVerification = projection.RequireResultVerification,
+                AllowScheduleOutsideApp = projection.AllowScheduleOutsideApp
             };
         }
 

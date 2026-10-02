@@ -111,6 +111,12 @@ namespace GameHubz.DataModels.Models
         /// already played were verified with.
         /// </summary>
         public bool HasResultVerifications { get; set; }
+
+        /// <summary>
+        /// Tournament setting: a participant may mark the match as agreed outside the app. Off = the
+        /// client hides that shortcut and the time has to come from the availability calendar.
+        /// </summary>
+        public bool AllowScheduleOutsideApp { get; set; } = true;
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }

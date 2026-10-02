@@ -421,6 +421,11 @@ namespace GameHubz.Logic.Services
 
                 ThrowIfMatchDecided(current);
 
+                // The organizer can require every kick-off to come from the in-app calendar.
+                var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(current.TournamentId);
+                if (settings?.AllowScheduleOutsideApp == false)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.ScheduleOutsideAppDisabled"]);
+
                 // An agreement outside the app is bookkeeping, not a kick-off the ready-check
                 // sweep should rule on. Close the check along with the new time, without writing
                 // participant ids, results or other fields from this request's snapshot.
@@ -433,6 +438,53 @@ namespace GameHubz.Logic.Services
             });
 
             await InvalidateBracketCacheAsync(match.TournamentId);
+            await NotifyAgreedOutsideAppAsync(match, user);
+        }
+
+        /// <summary>
+        /// Tells the other side their match was just marked scheduled. Without it they keep waiting on
+        /// an availability step that no longer exists, and in a ready-check tournament they never learn
+        /// the result can be reported. When an organizer pressed it, both players are told.
+        /// </summary>
+        private async Task NotifyAgreedOutsideAppAsync(MatchEntity match, TokenUserInfo user)
+        {
+            var userIds = new[] { GetParticipantUserId(match, isHome: true), GetParticipantUserId(match, isHome: false) }
+                .Where(id => id != null && id.Value != user.UserId)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            var recipients = new List<PushRecipient>();
+            var discordUserIds = new List<string?>();
+
+            // Resolved here, while the request-scoped DbContext is alive — see F109 on the sibling notifier.
+            foreach (var userId in userIds)
+            {
+                var player = await this.AppUnitOfWork.UserRepository.GetById(userId);
+                if (player == null) continue;
+
+                recipients.Add(PushRecipient.ForUser(userId, player.PushToken, player.Language));
+                if (player.DiscordDmEnabled) discordUserIds.Add(player.DiscordUserId);
+            }
+
+            // Sent even without a push token: the player still gets it in their inbox. tournamentId and
+            // teamMatchId let the tap open the match itself; a build that predates them lands on My Matches.
+            FireAndForgetPush(
+                recipients,
+                PushText.FromKey("Push.MatchAgreedOutsideApp.Title"),
+                PushText.FromKey("Push.MatchAgreedOutsideApp.Body", user.Username),
+                new
+                {
+                    matchId = match.Id!.Value.ToString(),
+                    tournamentId = match.TournamentId.ToString(),
+                    teamMatchId = match.TeamMatchId?.ToString(),
+                    type = "matchScheduled",
+                });
+
+            string dmContent = $"🤝 **{user.Username}** marked your match as agreed outside the app.\n"
+                + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
+            foreach (var discordUserId in discordUserIds)
+                discordDmService.SendDmInBackground(discordUserId, dmContent);
         }
 
         /// <summary>
