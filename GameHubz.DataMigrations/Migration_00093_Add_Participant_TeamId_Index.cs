@@ -1,7 +1,7 @@
 namespace GameHubz.DataMigrations
 {
-    [Migration(91, "Index participant lookup by team for player tournament lists and counts")]
-    public class Migration_00091_Add_Participant_TeamId_Index : ForwardOnlyMigration
+    [Migration(93, "Index participant lookup by team for player tournament lists and counts")]
+    public class Migration_00093_Add_Participant_TeamId_Index : ForwardOnlyMigration
     {
         public override void Up()
         {
