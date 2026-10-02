@@ -59,24 +59,24 @@ namespace GameHubz.Data.Repository
                 return new Dictionary<Guid, int>();
             }
 
-            // Correlated subquery resolves each user's per-match read cursor; a message
-            // counts as unread when there is no cursor or it was sent after the cursor.
-            var rows = await this.ContextBase.Set<MatchChatEntity>()
+            // Join the user's live read cursors once instead of probing the cursor table
+            // in scalar subqueries for every message. No cursor means all others' messages
+            // are unread; otherwise only messages strictly after LastReadAt count.
+            var cursors = this.ContextBase.Set<MatchChatReadEntity>()
                 .AsNoTracking()
-                .Where(mc => mc.MatchId != null
-                    && matchIds.Contains(mc.MatchId.Value)
-                    && mc.UserId != userId)
-                .Select(mc => new
-                {
-                    MatchId = mc.MatchId!.Value,
-                    mc.CreatedOn,
-                    LastRead = this.ContextBase.Set<MatchChatReadEntity>()
-                        .Where(r => r.MatchId == mc.MatchId!.Value && r.UserId == userId)
-                        .Select(r => (DateTime?)r.LastReadAt)
-                        .FirstOrDefault()
-                })
-                .Where(x => x.LastRead == null || x.CreatedOn > x.LastRead)
-                .GroupBy(x => x.MatchId)
+                .Where(r => r.UserId == userId);
+            var unread =
+                from message in this.BaseDbSet()
+                join cursor in cursors on message.MatchId equals (Guid?)cursor.MatchId into readCursors
+                from cursor in readCursors.DefaultIfEmpty()
+                where message.MatchId != null
+                    && matchIds.Contains(message.MatchId.Value)
+                    && message.UserId != userId
+                    && (cursor == null || message.CreatedOn > cursor.LastReadAt)
+                select message;
+
+            var rows = await unread
+                .GroupBy(message => message.MatchId!.Value)
                 .Select(g => new { MatchId = g.Key, Count = g.Count() })
                 .ToListAsync();
 

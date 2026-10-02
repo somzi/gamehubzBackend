@@ -356,7 +356,7 @@ namespace GameHubz.Logic.Test.Bracket
             var a = firstRound[0].HomeParticipantId!.Value;
             var b = firstRound[1].HomeParticipantId!.Value;
 
-            await harness.NewService().SwapBracketParticipants(tournamentId, a, b);
+            await harness.NewServiceAsPlatformAdmin().SwapBracketParticipants(tournamentId, a, b);
 
             var after = harness.Matches(tournamentId)
                 .Where(m => m.TournamentStageId == knockoutStage.Id && m.RoundNumber == 1)
@@ -396,7 +396,7 @@ namespace GameHubz.Logic.Test.Bracket
             var byeId = (byeMatch.HomeParticipantId ?? byeMatch.AwayParticipantId)!.Value;
             var realId = r1().First(m => m.HomeParticipantId.HasValue && m.AwayParticipantId.HasValue).HomeParticipantId!.Value;
 
-            await harness.NewService().SwapBracketParticipants(tournamentId, byeId, realId);
+            await harness.NewServiceAsPlatformAdmin().SwapBracketParticipants(tournamentId, byeId, realId);
 
             var byeIdsAfter = r1()
                 .Where(m => m.HomeParticipantId.HasValue ^ m.AwayParticipantId.HasValue)
@@ -404,6 +404,25 @@ namespace GameHubz.Logic.Test.Bracket
                 .ToHashSet();
             Assert.That(byeIdsAfter, Does.Contain(realId), "the formerly-playing team now holds the bye");
             Assert.That(byeIdsAfter, Does.Not.Contain(byeId), "the formerly-bye team now plays a first-round match");
+        }
+
+        [Test]
+        public async Task SwapBracketParticipants_RefusesHubOwnerWithoutPlatformAdminRole()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.SingleElimination, 4);
+            await harness.NewService().GenerateSingleEliminationBracket(tournamentId);
+
+            System.Func<System.Collections.Generic.List<(System.Guid?, System.Guid?)>> pairings = () => harness.Matches(tournamentId)
+                .Where(m => m.RoundNumber == 1).OrderBy(m => m.MatchOrder)
+                .Select(m => (m.HomeParticipantId, m.AwayParticipantId)).ToList();
+            var before = pairings();
+
+            // The default token is the hub owner. A rules-made draw is changed only by a platform admin.
+            var ex = Assert.ThrowsAsync<BusinessRuleException>(() => harness.NewService()
+                .SwapBracketParticipants(tournamentId, before[0].Item1!.Value, before[1].Item1!.Value));
+            Assert.That(ex!.Message, Does.Contain("platform admin"));
+            Assert.That(pairings(), Is.EqualTo(before), "a refused swap changes nothing");
         }
 
         /// <summary>

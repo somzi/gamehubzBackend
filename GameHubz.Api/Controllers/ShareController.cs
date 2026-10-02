@@ -4,6 +4,7 @@ using GameHubz.Data.Context;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Domain;
 using GameHubz.DataModels.Enums;
+using GameHubz.Logic.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -27,17 +28,20 @@ namespace GameHubz.Api.Controllers
         private readonly ShareLinksConfig config;
         private readonly ILogger<ShareController> logger;
         private readonly ICacheService cacheService;
+        private readonly IMatchRepository matchRepository;
 
         public ShareController(
             ApplicationContext context,
             IOptions<ShareLinksConfig> options,
             ILogger<ShareController> logger,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            IMatchRepository matchRepository)
         {
             this.context = context;
             this.config = options.Value;
             this.logger = logger;
             this.cacheService = cacheService;
+            this.matchRepository = matchRepository;
         }
 
         // Cached projection of the public player share card (F83). Flat primitives only, so it
@@ -164,9 +168,8 @@ namespace GameHubz.Api.Controllers
         [HttpGet("/user/{id:guid}")]
         public async Task<ContentResult> UserProfile(Guid id)
         {
-            // F83: this page is [AllowAnonymous] and the stats below are a full scan over MatchEntity plus
-            // a tournament subquery. Cache the computed card per user (5-min TTL) so repeated hits, link
-            // crawlers, or a GUID-looping attacker don't re-run the heavy aggregation on every request.
+            // Cache this anonymous page's stats for five minutes so repeated link previews
+            // reuse the card instead of recomputing the same player's aggregates.
             string cacheKey = $"share:user:{id}";
             var cachedCard = await this.cacheService.GetAsync<UserShareCache>(cacheKey);
             if (cachedCard != null)
@@ -201,38 +204,17 @@ namespace GameHubz.Api.Controllers
 
             string displayName = string.IsNullOrWhiteSpace(data.Nickname) ? data.Username : data.Nickname!;
 
-            // Same predicates as MatchRepository.GetStatsByUserId and
-            // TournamentRepository.GetNumberOfTournamentsWonByUserId, so the share
-            // card shows the exact numbers the in-app profile shows.
-            var matchStats = await context.Set<MatchEntity>()
-                .AsNoTracking()
-                .Where(m =>
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null && (m.HomeParticipant!.UserId == id || m.AwayParticipant!.UserId == id))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null && (m.HomeUserId == id || m.AwayUserId == id)))
-                    && m.Status == MatchStatus.Completed)
-                .GroupBy(_ => 1)
-                .Select(g => new
-                {
-                    Total = g.Count(),
-                    Wins = g.Count(m => m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == id || (m.TeamMatchId == null && m.HomeParticipant!.UserId == id))
-                            ? m.WinnerParticipantId == m.HomeParticipantId
-                            : m.WinnerParticipantId == m.AwayParticipantId)),
-                    Losses = g.Count(m => m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == id || (m.TeamMatchId == null && m.HomeParticipant!.UserId == id))
-                            ? m.WinnerParticipantId != m.HomeParticipantId
-                            : m.WinnerParticipantId != m.AwayParticipantId)),
-                })
-                .FirstOrDefaultAsync();
+            // Share the profile's indexed membership query and outcome rules.
+            var matchStats = await matchRepository.GetStatsByUserId(id);
 
             int trophies = await context.Set<TournamentEntity>()
                 .AsNoTracking()
                 .CountAsync(t => t.WinnerUserId == id
                     || (t.WinnerTeamId != null && t.WinnerTeam!.Members.Any(m => m.UserId == id)));
 
-            int total = matchStats?.Total ?? 0;
-            int wins = matchStats?.Wins ?? 0;
-            int losses = matchStats?.Losses ?? 0;
+            int total = matchStats.TotalMatches;
+            int wins = matchStats.Wins;
+            int losses = matchStats.Losses;
             int draws = total - wins - losses;
             int winRate = total > 0 ? (int)Math.Round(wins * 100.0 / total) : 0;
 

@@ -122,9 +122,7 @@ namespace GameHubz.Data.Repository
 
         public async Task<EntityListDto<TournamentOverview>> GetByUserIdPaged(Guid userid, int pageNumber, int pageSize)
         {
-            var query = this.BaseDbSet()
-                .Where(x => x.UserId == userid
-                    || (x.TeamId != null && x.Team!.Members.Any(m => m.UserId == userid)));
+            var query = GetParticipationsByUserId(userid);
 
             var count = await query.CountAsync();
 
@@ -159,12 +157,26 @@ namespace GameHubz.Data.Repository
         // Tournaments tab. Distinct because a user can end up with more than one row in a tournament.
         public async Task<int> CountTournamentsByUserId(Guid userId)
         {
-            return await this.BaseDbSet()
-                .Where(x => x.UserId == userId
-                    || (x.TeamId != null && x.Team!.Members.Any(m => m.UserId == userId)))
+            var query = GetParticipationsByUserId(userId);
+            return await query
                 .Select(x => x.TournamentId)
                 .Distinct()
                 .CountAsync();
+        }
+
+        private IQueryable<TournamentParticipantEntity> GetParticipationsByUserId(Guid userId)
+        {
+            // Separate indexed solo/team lookups without adding a database round trip.
+            // UNION removes overlap when one participant matches both membership paths.
+            // Keep live-team/live-member filters and reserves, just like the old predicate.
+            var teamIds = this.ContextBase.Set<TournamentTeamMemberEntity>().AsNoTracking()
+                .Where(m => m.UserId == userId && m.Team != null)
+                .Select(m => m.TeamId!.Value);
+            var soloParticipants = this.BaseDbSet().Where(p => p.UserId == userId).Select(p => p.Id!.Value);
+            var teamParticipants = this.BaseDbSet().Where(p => p.TeamId != null && teamIds.Contains(p.TeamId.Value))
+                .Select(p => p.Id!.Value);
+            var participantIds = soloParticipants.Union(teamParticipants);
+            return this.BaseDbSet().Where(p => participantIds.Contains(p.Id!.Value));
         }
 
         public Task<TournamentParticipantEntity> GetUserByTournamentId(Guid tournamentId, Guid userId)

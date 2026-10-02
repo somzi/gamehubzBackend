@@ -4,6 +4,7 @@ using GameHubz.Api.Middleware;
 using GameHubz.Api.Startup;
 using GameHubz.Common.Interfaces;
 using GameHubz.Data.Context;
+using GameHubz.Data.Repository;
 using GameHubz.Data.UnitOfWork;
 using GameHubz.DataModels.Config;
 using GameHubz.DataModels.Config.RabbitMqConfig;
@@ -185,6 +186,7 @@ namespace GameHubz.Api
             services.AddSingleton<ILocalizationService, LocalizationService>();
             services.AddTransient<IUserContextReader, UserContextReader>();
             services.AddScoped<IUnitOfWorkFactory, UnitOfWorkFactory>();
+            services.AddScoped<IMatchRepository, MatchRepository>();
             services.AddScoped<CloudinaryStorageService>();
             // Everything new goes through the interface; the concrete registration stays for the
             // avatar call sites that still take it directly. Both resolve to the same instance,

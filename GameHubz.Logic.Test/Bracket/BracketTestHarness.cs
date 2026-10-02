@@ -121,6 +121,14 @@ namespace GameHubz.Logic.Test.Bracket
         public BracketService NewServiceAsUser(Guid userId, string role = "User")
             => BuildService(BuildReader(userId, role));
 
+        /// <summary>
+        /// A BracketService acting as a platform admin: the default identity with RoleEnum set, as
+        /// AccessTokenReader does from the JWT. The default token carries only the "Admin" role string,
+        /// so it acts as the hub owner and is refused admin-only operations such as the bracket swap.
+        /// </summary>
+        public BracketService NewServiceAsPlatformAdmin()
+            => BuildService(BuildReader(OwnerUserId, "Admin", GameHubz.Common.Consts.UserRoleEnum.Admin));
+
         private BracketService BuildService(IUserContextReader userContext)
         {
             var factory = new TestUnitOfWorkFactory(newContext(), localization);
@@ -134,14 +142,12 @@ namespace GameHubz.Logic.Test.Bracket
             var tournamentAuth = new TournamentAuthorizationService(
                 factory, userContext, localization, Cache, userHubService: null!);
 
-            // PushAsync is best-effort (try/catch), so a bare mocked SignalR hub context is enough —
-            // the badge send no-ops while the badge computation still exercises the real repositories.
-            // The scope factory backs the fire-and-forget manager fan-out; the bare mock makes that
-            // background task no-op inside its own catch, which is what tests want.
+            // Bracket tests enqueue refreshes without starting the worker. Queue delivery and
+            // fresh-scope computation are covered independently by BadgeRefreshQueueTests.
             var badgeService = new BadgeService(
                 factory, userContext, localization,
                 new Mock<IHubContext<UserHub>>().Object,
-                new Mock<IServiceScopeFactory>().Object);
+                new BadgeRefreshQueue(new Mock<IServiceScopeFactory>().Object, NullLogger<BadgeRefreshQueue>.Instance));
 
             // Real notifiers over the shared store: test hubs never carry a DiscordWebhookUrl, so the
             // Discord branch resolves to "not configured" and only the mocked transport would be hit.
@@ -214,7 +220,7 @@ namespace GameHubz.Logic.Test.Bracket
             var badgeService = new BadgeService(
                 factory, userContext, localization,
                 new Mock<IHubContext<UserHub>>().Object,
-                new Mock<IServiceScopeFactory>().Object);
+                new BadgeRefreshQueue(new Mock<IServiceScopeFactory>().Object, NullLogger<BadgeRefreshQueue>.Instance));
 
             return new MatchService(
                 factory,
@@ -307,9 +313,10 @@ namespace GameHubz.Logic.Test.Bracket
             ctx.SaveChanges();
         }
 
-        private static IUserContextReader BuildReader(Guid userId, string role)
+        private static IUserContextReader BuildReader(Guid userId, string role,
+            GameHubz.Common.Consts.UserRoleEnum? roleEnum = null)
         {
-            var token = new TokenUserInfo { UserId = userId, Role = role };
+            var token = new TokenUserInfo { UserId = userId, Role = role, RoleEnum = roleEnum };
             var reader = new Mock<IUserContextReader>();
             reader.Setup(x => x.GetTokenUserInfoFromContext()).Returns(Task.FromResult<TokenUserInfo?>(token));
             reader.Setup(x => x.GetTokenUserInfoFromContextThrowIfNull()).Returns(Task.FromResult(token));

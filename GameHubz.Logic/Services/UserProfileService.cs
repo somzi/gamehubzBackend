@@ -172,14 +172,17 @@ namespace GameHubz.Logic.Services
             var cachedStats = await cacheService.GetAsync<PlayerMatchesV2Dto>(key);
             if (cachedStats != null) return cachedStats;
 
-            var stats = await this.AppUnitOfWork.MatchRepository.GetStatsByUserId(id);
-            var numberOfTournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id);
-            stats.TournamentsWon = numberOfTournamentsWon;
-            stats.TournamentsPlayed = await this.AppUnitOfWork.TournamentParticipantRepository.CountTournamentsByUserId(id);
-
-            // Newest first. The first ten are the same Recent Form GetPerformanceByUserIdV2 returns,
-            // and the full list gives the streak from the same single query.
+            // The full newest-first history already supplies recent form and the win streak.
+            // Count wins/losses from it too, avoiding a second participant lookup and match query.
             var outcomes = await this.AppUnitOfWork.MatchRepository.GetOutcomesByUserId(id);
+            var stats = new PlayerStatsDto
+            {
+                TotalMatches = outcomes.Count,
+                Wins = outcomes.Count(outcome => outcome == "W"),
+                Losses = outcomes.Count(outcome => outcome == "L"),
+                TournamentsWon = await this.AppUnitOfWork.TournamentRepository.GetNumberOfTournamentsWonByUserId(id),
+                TournamentsPlayed = await this.AppUnitOfWork.TournamentParticipantRepository.CountTournamentsByUserId(id)
+            };
             stats.LongestWinStreak = LongestWinStreak(outcomes);
 
             var result = new PlayerMatchesV2Dto
