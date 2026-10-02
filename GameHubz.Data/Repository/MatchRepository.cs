@@ -684,6 +684,7 @@ namespace GameHubz.Data.Repository
                     HomeCheckedInOn = x.HomeCheckedInOn,
                     AwayCheckedInOn = x.AwayCheckedInOn,
                     RequireResultVerification = x.Tournament!.RequireResultVerification,
+                    AllowScheduleOutsideApp = x.Tournament!.AllowScheduleOutsideApp,
                     HasResultVerifications = x.ResultVerifications!.Any(v =>
                         v.Status == MatchVerificationStatus.Verified || v.Status == MatchVerificationStatus.Failed),
                     ProposedHomeScore = x.ProposedHomeScore,

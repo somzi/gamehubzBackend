@@ -27,6 +27,12 @@ namespace GameHubz.DataModels.Models
         /// </summary>
         public bool RequireResultVerification { get; set; }
 
+        /// <summary>
+        /// "Agreed outside the app". SetScheduled needs it to refuse the shortcut when the organizer
+        /// wants every kick-off to come from the in-app calendar.
+        /// </summary>
+        public bool AllowScheduleOutsideApp { get; set; } = true;
+
         /// <summary>Tournament default Best-of. 1 for every tournament created before series existed.</summary>
         public int BestOf { get; set; } = 1;
 

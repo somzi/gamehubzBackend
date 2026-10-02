@@ -91,6 +91,7 @@ namespace GameHubz.Data.Repository
                     RequireMatchCheckIn = tm.Tournament!.RequireMatchCheckIn,
                     CheckInGraceMinutes = tm.Tournament!.CheckInGraceMinutes,
                     RequireResultVerification = tm.Tournament!.RequireResultVerification,
+                    AllowScheduleOutsideApp = tm.Tournament!.AllowScheduleOutsideApp,
                     WinCondition = tm.Tournament!.TeamWinCondition,
                     HomeTeam = tm.HomeTeamParticipant != null && tm.HomeTeamParticipant.Team != null
                         ? new TeamMatchTeamProjection

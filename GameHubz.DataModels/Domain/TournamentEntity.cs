@@ -148,6 +148,12 @@ namespace GameHubz.DataModels.Domain
         // reports still to be made.
         public bool RequireResultVerification { get; set; }
 
+        // When true (the default), a participant can mark a match as agreed outside the app and
+        // skip the availability step. Off = every kick-off has to come from the two availability
+        // lists meeting in the app's calendar. Editable for the whole life of the tournament: it
+        // only gates matches still waiting for a time.
+        public bool AllowScheduleOutsideApp { get; set; } = true;
+
         // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
         // can see this tournament in their feed and register. Default false = open to all members.
         public bool IsExclusive { get; set; }

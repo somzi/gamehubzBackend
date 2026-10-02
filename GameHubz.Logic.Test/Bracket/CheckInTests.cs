@@ -738,9 +738,9 @@ namespace GameHubz.Logic.Test.Bracket
 
         // ── "we agreed outside the app" ──────────────────────────────────────────────────────
 
-        // SetScheduled stamps the kick-off as *now* and tells the opponent nothing. Run as an
-        // ordinary fixture that has already started, the ready check would give that opponent one
-        // grace period to answer a message he never got, then take the match off him.
+        // SetScheduled stamps the kick-off as *now*. Run as an ordinary fixture that has already
+        // started, the ready check would give the opponent one grace period from the moment of the
+        // press, then take the match off him.
         [Test]
         public async Task AgreedOutsideTheApp_ClosesTheReadyCheckInsteadOfStartingOne()
         {
@@ -766,6 +766,33 @@ namespace GameHubz.Logic.Test.Bracket
                 "and no sweep may void a fixture the players arranged themselves");
 
             Assert.That(harness.Match(match.Id!.Value).Status, Is.EqualTo(MatchStatus.Scheduled));
+        }
+
+        // The organizer switched the shortcut off: every kick-off has to come from the calendar,
+        // and the match stays exactly where it was.
+        [Test]
+        public async Task AgreedOutsideTheApp_IsRefused_WhenTheTournamentSwitchedItOff()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.League, 4);
+            await harness.NewService().GenerateLeagueTournament(tid);
+
+            using (var ctx = harness.ReadContext())
+            {
+                ctx.Set<TournamentEntity>().Single(t => t.Id == tid).AllowScheduleOutsideApp = false;
+                ctx.SaveChanges();
+            }
+
+            var match = harness.Matches(tid).First(m => m.RoundNumber == 1);
+            var playerId = harness.ParticipantUserId(match.HomeParticipantId!.Value);
+
+            Assert.ThrowsAsync<BusinessRuleException>(async () =>
+                await harness.NewMatchServiceAsUser(playerId).SetScheduled(match.Id!.Value));
+
+            var unchanged = harness.Match(match.Id!.Value);
+            Assert.That(unchanged.Status, Is.EqualTo(MatchStatus.Pending));
+            Assert.That(unchanged.ScheduledStartTime, Is.Null);
+            Assert.That(unchanged.ScheduledOutsideAppByUserId, Is.Null);
         }
 
         // The marker says "this kick-off has been ruled on". Cancelling the kick-off has to take it

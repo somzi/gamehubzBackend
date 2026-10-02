@@ -70,6 +70,9 @@ namespace GameHubz.DataModels.Models
         /// <summary>Result verification before a report — see TournamentEntity.RequireResultVerification.</summary>
         public bool RequireResultVerification { get; set; }
 
+        /// <summary>"Agreed outside the app" allowed — see TournamentEntity.AllowScheduleOutsideApp.</summary>
+        public bool AllowScheduleOutsideApp { get; set; } = true;
+
         /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
         public bool IsExclusive { get; set; }
 

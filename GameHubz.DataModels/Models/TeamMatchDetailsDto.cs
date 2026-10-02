@@ -36,6 +36,9 @@ namespace GameHubz.DataModels.Models
         /// tie: the player nominated for a game verifies that game's result.
         /// </summary>
         public bool RequireResultVerification { get; set; }
+
+        /// <summary>"Agreed outside the app" allowed — see TournamentEntity.AllowScheduleOutsideApp.</summary>
+        public bool AllowScheduleOutsideApp { get; set; } = true;
     }
 
     public class TeamMatchTeamInfoDto

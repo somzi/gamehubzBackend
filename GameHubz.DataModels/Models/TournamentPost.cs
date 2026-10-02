@@ -72,6 +72,13 @@ namespace GameHubz.DataModels.Models
         public bool? RequireResultVerification { get; set; }
 
         /// <summary>
+        /// "Agreed outside the app": whether a participant may skip the availability step and mark
+        /// the match scheduled. Nullable for the same reason as <see cref="RequireMatchCheckIn"/> —
+        /// absence preserves the persisted value on an edit. Null on create = ON.
+        /// </summary>
+        public bool? AllowScheduleOutsideApp { get; set; }
+
+        /// <summary>
         /// When true, the tournament is exclusive-only: visible/joinable only to hub members whose
         /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
         /// </summary>

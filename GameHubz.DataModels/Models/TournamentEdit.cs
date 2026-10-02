@@ -35,6 +35,9 @@ namespace GameHubz.DataModels.Models
         /// <summary>Result verification before a report — see TournamentEntity.RequireResultVerification.</summary>
         public bool RequireResultVerification { get; set; }
 
+        /// <summary>"Agreed outside the app" allowed — see TournamentEntity.AllowScheduleOutsideApp.</summary>
+        public bool AllowScheduleOutsideApp { get; set; } = true;
+
         public HubEdit? Hub { get; set; }
 
         public List<TournamentRegistrationEdit>? TournamentRegistrations { get; set; } = new();
