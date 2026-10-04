@@ -2,6 +2,10 @@ namespace GameHubz.Logic.Interfaces
 {
     public interface IUserRepository : IRepository<UserEntity>
     {
+        Task<NotificationSourcePageDto> GetNotificationSources(Guid userId, string kind, int page, string? search);
+
+        Task<List<MutedNotificationRecipient>> GetMutedNotificationRecipients(NotificationScope scope, List<Guid> userIds, List<string> pushTokens, List<string> discordUserIds);
+
         Task<UserEntity?> GetByIdForEdit(Guid userId);
 
         Task<UserEntity?> GetByForgotPasswordToken(Guid getByForgotPasswordToken);

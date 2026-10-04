@@ -95,5 +95,9 @@ namespace GameHubz.DataModels.Domain
         /// muting (MatchChatRead.IsMuted) is the finer tool and works on any chat.
         /// </summary>
         public bool ModeratedChatNotifications { get; set; } = true;
+
+        // Personal delivery exclusions, stored as JSON GUID arrays. Null means none.
+        public string? MutedHubIdsJson { get; set; }
+        public string? MutedTournamentIdsJson { get; set; }
     }
 }

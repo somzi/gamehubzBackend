@@ -200,7 +200,7 @@ namespace GameHubz.Logic.Services
                         string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
                         this.discordDmService.SendDmInBackground(
                             recipient.DiscordUserId,
-                            $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                            $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)", match.TournamentId);
                     }
                 }
             }

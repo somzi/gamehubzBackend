@@ -402,7 +402,7 @@ namespace GameHubz.Logic.Services
                 string dmContent = match.Status == MatchStatus.Scheduled
                     ? $"📅 **Match scheduled** — your match vs **{user.Username}** is confirmed.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)"
                     : $"🕒 **{user.Username}** set their availability — add yours to confirm a time.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
-                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent);
+                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent, match.TournamentId);
             }
         }
 
@@ -484,7 +484,7 @@ namespace GameHubz.Logic.Services
             string dmContent = $"🤝 **{user.Username}** marked your match as agreed outside the app.\n"
                 + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
             foreach (var discordUserId in discordUserIds)
-                discordDmService.SendDmInBackground(discordUserId, dmContent);
+                discordDmService.SendDmInBackground(discordUserId, dmContent, match.TournamentId);
         }
 
         /// <summary>
@@ -774,7 +774,7 @@ namespace GameHubz.Logic.Services
             {
                 string dmContent = $"\u2705 **{user.Username}** checked in - you have **{minutesLeft} min** to confirm or you forfeit.\n"
                     + $"[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)";
-                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent);
+                discordDmService.SendDmInBackground(opponent.DiscordUserId, dmContent, match.TournamentId);
             }
         }
 

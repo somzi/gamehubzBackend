@@ -4732,7 +4732,7 @@ namespace GameHubz.Logic.Services
             {
                 this.discordDmService.SendDmInBackground(
                     opponent.DiscordUserId,
-                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)", match.TournamentId);
             }
         }
 
@@ -4799,7 +4799,7 @@ namespace GameHubz.Logic.Services
                 {
                     this.discordDmService.SendDmInBackground(
                         t.DiscordUserId,
-                        $"⚔️ **{homeName} vs {awayName}** ended level — pick your player for the tie-break in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)");
+                        $"⚔️ **{homeName} vs {awayName}** ended level — pick your player for the tie-break in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)", tournamentId);
                 }
             }
             catch { /* notifications must never break team-match aggregation */ }
@@ -4869,7 +4869,7 @@ namespace GameHubz.Logic.Services
                 string dmContent = $"🏆 Congratulations — you won **{title}**!\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)";
                 foreach (var discordUserId in discordUserIds)
                 {
-                    this.discordDmService.SendDmInBackground(discordUserId, dmContent);
+                    this.discordDmService.SendDmInBackground(discordUserId, dmContent, tournamentId);
                 }
             }
             catch { /* never let a win-notification failure break tournament completion */ }

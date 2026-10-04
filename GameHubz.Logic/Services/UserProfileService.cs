@@ -124,10 +124,7 @@ namespace GameHubz.Logic.Services
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(caller.UserId);
 
-            return new NotificationSettingsDto
-            {
-                ModeratedChatNotifications = user.ModeratedChatNotifications,
-            };
+            return NotificationSettingsDto.FromUser(user);
         }
 
         public async Task<NotificationSettingsDto> UpdateMyNotificationSettings(NotificationSettingsDto settings)
@@ -135,15 +132,18 @@ namespace GameHubz.Logic.Services
             var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
             var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(caller.UserId);
 
-            user.ModeratedChatNotifications = settings.ModeratedChatNotifications;
+            settings.ApplyTo(user);
 
             await this.AppUnitOfWork.UserRepository.UpdateEntity(user, this.UserContextReader);
             await this.SaveAsync();
 
-            return new NotificationSettingsDto
-            {
-                ModeratedChatNotifications = user.ModeratedChatNotifications,
-            };
+            return NotificationSettingsDto.FromUser(user);
+        }
+
+        public async Task<NotificationSourcePageDto> GetNotificationSources(string kind, int page, string? search)
+        {
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+            return await this.AppUnitOfWork.UserRepository.GetNotificationSources(caller.UserId, kind, page, search);
         }
 
         public async Task UploadAvatar(IFormFile file)

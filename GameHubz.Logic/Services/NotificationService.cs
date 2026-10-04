@@ -1,4 +1,5 @@
 using GameHubz.Logic.Interfaces;
+using GameHubz.DataModels.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
@@ -45,6 +46,9 @@ namespace GameHubz.Logic.Services
             if (string.IsNullOrWhiteSpace(pushToken))
                 return;
 
+            var muted = await GetMutedRecipientsAsync(data, new[] { new PushRecipient(pushToken, null) });
+            if (muted.Any(m => m.PushToken == pushToken)) return;
+
             var messages = new List<ExpoPushMessage>
             {
                 new ExpoPushMessage
@@ -69,7 +73,9 @@ namespace GameHubz.Logic.Services
             if (tokens.Count == 0)
                 return;
 
-            var allMessages = tokens.Select(token => new ExpoPushMessage
+            var muted = await GetMutedRecipientsAsync(data, tokens.Select(token => new PushRecipient(token, null)));
+            var mutedTokens = muted.Select(m => m.PushToken).ToHashSet();
+            var allMessages = tokens.Where(token => !mutedTokens.Contains(token)).Select(token => new ExpoPushMessage
             {
                 To = token,
                 Title = title,
@@ -111,8 +117,13 @@ namespace GameHubz.Logic.Services
                 // The inbox is per account, not per device: one row per user, token or no token.
                 var inboxLanguages = new Dictionary<Guid, string?>();
 
+                var muted = await GetMutedRecipientsAsync(push.Data, push.Recipients);
+                var mutedUsers = muted.Select(m => m.UserId).ToHashSet();
+                var mutedTokens = muted.Where(m => !string.IsNullOrEmpty(m.PushToken)).Select(m => m.PushToken).ToHashSet();
                 foreach (PushRecipient recipient in push.Recipients)
                 {
+                    if (recipient.UserId.HasValue ? mutedUsers.Contains(recipient.UserId.Value) : mutedTokens.Contains(recipient.PushToken))
+                        continue;
                     if (recipient.UserId is Guid userId && userId != Guid.Empty)
                     {
                         inboxLanguages[userId] = recipient.Language;
@@ -194,6 +205,21 @@ namespace GameHubz.Logic.Services
             {
                 await this.PushInboxSummariesAsync(usersWithRows);
             }
+        }
+
+        private async Task<List<MutedNotificationRecipient>> GetMutedRecipientsAsync(object? data, IEnumerable<PushRecipient> recipients)
+        {
+            var payload = data == null ? null : JsonSerializer.SerializeToNode(data, PayloadJsonOptions) as JsonObject;
+            Guid? Id(string key) => Guid.TryParse(payload?[key]?.ToString(), out var id) && id != Guid.Empty ? id : null;
+            var notificationScope = new NotificationScope(Id("hubId"), Id("tournamentId"), Id("matchId"), Id("teamMatchId"));
+            if (notificationScope.IsEmpty) return new();
+            var targets = recipients.ToList();
+            using var scope = serviceScopeFactory.CreateScope();
+            var factory = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>();
+            using var uow = factory.CreateAppUnitOfWork();
+            return await uow.UserRepository.GetMutedNotificationRecipients(notificationScope,
+                targets.Where(r => r.UserId.HasValue).Select(r => r.UserId!.Value).Distinct().ToList(),
+                targets.Where(r => !string.IsNullOrWhiteSpace(r.PushToken)).Select(r => r.PushToken).Distinct().ToList(), new());
         }
 
         private sealed record PreparedPush(

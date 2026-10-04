@@ -80,7 +80,7 @@ namespace GameHubz.Logic.Test.Services
                     if (afterPush != null) await afterPush();
                 });
             discord = new Mock<IDiscordDmService>();
-            discord.Setup(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+            discord.Setup(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>())).Returns(Task.CompletedTask);
             var localization = new Mock<ILocalizationService>();
             localization.Setup(l => l[It.IsAny<string>(), It.IsAny<string>()]).Returns("Reminder");
             logger = new Mock<ILogger<DeadlineNotificationRunner>>();
@@ -111,7 +111,7 @@ namespace GameHubz.Logic.Test.Services
             Assert.That(pushes.Count, Is.EqualTo(1));
             Assert.That(pushes[0].Body.ResourceKey, Is.EqualTo("Push.RoundDeadlineFinal.Body"));
             Assert.That(pushes[0].Recipients.Select(r => r.UserId), Is.EquivalentTo(new[] { home.Id, away.Id }));
-            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Exactly(2));
+            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()), Times.Exactly(2));
             Assert.That(await ReminderStageAsync(), Is.EqualTo(2));
         }
 
@@ -204,7 +204,7 @@ namespace GameHubz.Logic.Test.Services
 
             Assert.That(pushes.Count, Is.EqualTo(1));
             Assert.That(pushes[0].Recipients.Select(r => r.UserId), Is.EquivalentTo(new[] { home.Id, away.Id }));
-            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Exactly(2));
+            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()), Times.Exactly(2));
         }
 
         [TestCase("completed")]
@@ -230,7 +230,7 @@ namespace GameHubz.Logic.Test.Services
             await RunAsync();
 
             Assert.That(pushes.Count, Is.EqualTo(1), "the push was sent while the match was still unplayed");
-            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()), Times.Never);
             if (change == "rescheduled")
                 Assert.That(await ReminderStageAsync(), Is.Zero, "the old push must not consume the new deadline's reminder");
         }
@@ -238,12 +238,12 @@ namespace GameHubz.Logic.Test.Services
         [Test]
         public async Task MatchCompletedDuringDiscordFanOut_SkipsRemainingDm()
         {
-            discord.Setup(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            discord.Setup(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()))
                 .Returns(() => ChangeMatchAsync("completed"));
 
             await RunAsync();
 
-            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()), Times.Once);
         }
 
         private async Task RunAsync()
@@ -256,7 +256,7 @@ namespace GameHubz.Logic.Test.Services
         private void AssertNoReminders()
         {
             Assert.That(pushes, Is.Empty);
-            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            discord.Verify(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()), Times.Never);
         }
 
         private Task<int> ReminderStageAsync()

@@ -322,7 +322,7 @@ namespace GameHubz.Api.BackgroundTasks
                             // own language is the only thing that can decide the wording.
                             string dmContent = $"⏰ **{tournament.Name}** — {this.localizationService["Dm.RegistrationClosingSoon.Body", target.Language]}\n"
                                 + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}>)";
-                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
+                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent, tournament.Id);
                         }
                     }
 
@@ -505,7 +505,7 @@ namespace GameHubz.Api.BackgroundTasks
 
                         string dmContent = $"⏰ **{reminder.TournamentName}** — {this.localizationService[reminder.BodyKey, target.Language]}\n"
                             + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{reminder.TournamentId}>)";
-                        await discordDmService.SendDmAsync(target.DiscordUserId, dmContent);
+                        await discordDmService.SendDmAsync(target.DiscordUserId, dmContent, reminder.TournamentId);
                     }
                     catch (Exception ex)
                     {

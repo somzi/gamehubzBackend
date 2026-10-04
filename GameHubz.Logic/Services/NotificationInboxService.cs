@@ -92,9 +92,12 @@ namespace GameHubz.Logic.Services
                 rows.RemoveAt(rows.Count - 1);
             }
 
+            var items = rows.Select(ToDto).ToList();
+            await this.AttachHubAvatarsAsync(items);
+
             return new NotificationPageDto
             {
-                Items = rows.Select(ToDto).ToList(),
+                Items = items,
                 // CreatedOn is the main key and Id is its deterministic tie-breaker. Raw ticks preserve
                 // sub-millisecond precision that the JSON timestamp converter does not expose.
                 NextCursor = hasMore
@@ -300,6 +303,69 @@ namespace GameHubz.Logic.Services
             CreatedOn = row.CreatedOn!.Value,
             ReadOn = row.ReadOn,
         };
+
+        /// <summary>
+        /// Puts the hub's avatar on every row whose payload names a hub or a tournament — one lookup for
+        /// the whole page. Best-effort: the rows are complete without it, so a failed lookup leaves the
+        /// app showing each row's kind icon instead.
+        /// </summary>
+        private async Task AttachHubAvatarsAsync(List<NotificationDto> items)
+        {
+            var hubIdByItem = new Dictionary<NotificationDto, Guid>();
+            var tournamentIdByItem = new Dictionary<NotificationDto, Guid>();
+
+            foreach (NotificationDto item in items)
+            {
+                if (ReadGuid(item.Data, "hubId") is Guid hubId)
+                {
+                    hubIdByItem[item] = hubId;
+                }
+                else if (ReadGuid(item.Data, "tournamentId") is Guid tournamentId)
+                {
+                    tournamentIdByItem[item] = tournamentId;
+                }
+            }
+
+            if (hubIdByItem.Count == 0 && tournamentIdByItem.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var (byHub, byTournament) = await this.AppUnitOfWork.HubRepository.GetAvatarUrls(
+                    hubIdByItem.Values.Distinct().ToList(),
+                    tournamentIdByItem.Values.Distinct().ToList());
+
+                foreach (var (item, hubId) in hubIdByItem)
+                {
+                    if (byHub.TryGetValue(hubId, out string? avatar)) item.HubAvatarUrl = avatar;
+                }
+
+                foreach (var (item, tournamentId) in tournamentIdByItem)
+                {
+                    if (byTournament.TryGetValue(tournamentId, out string? avatar)) item.HubAvatarUrl = avatar;
+                }
+            }
+            catch
+            {
+                // best-effort — see above
+            }
+        }
+
+        // Push payload values travel as strings; accept a raw GUID value too.
+        private static Guid? ReadGuid(JsonElement? data, string property)
+        {
+            if (data is not JsonElement element
+                || element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty(property, out JsonElement value)
+                || value.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            return Guid.TryParse(value.GetString(), out Guid id) ? id : null;
+        }
 
         private static JsonElement? ParseData(string? json)
         {
