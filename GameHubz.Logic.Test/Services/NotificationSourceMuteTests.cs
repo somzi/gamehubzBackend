@@ -228,15 +228,32 @@ namespace GameHubz.Logic.Test.Services
         }
 
         [Test]
-        public async Task TournamentPickerIncludesMemberAnnouncementsAndHidesUnpublishedDrafts()
+        public async Task TournamentPickerListsOnlyTheUsersOwnTournamentsLiveFirst()
         {
+            // A plain member of `hub`: its live tournament is not theirs, so it stays out (muting the hub covers it).
             context.Add(new UserHubEntity { Id = Guid.NewGuid(), UserId = muted.Id, Hub = hub, HubRole = HubRole.HubMember });
-            context.Add(new TournamentEntity { Id = Guid.NewGuid(), Name = "Unpublished", Hub = hub, Status = TournamentStatus.Draft });
-            context.Add(new TournamentEntity { Id = Guid.NewGuid(), Name = "Scheduled", Hub = hub, Status = TournamentStatus.Draft, RegistrationOpensAt = DateTime.UtcNow.AddDays(1) });
-            context.Add(new TournamentEntity { Id = Guid.NewGuid(), Name = "Exclusive", Hub = hub, Status = TournamentStatus.RegistrationOpen, IsExclusive = true });
+            context.Add(new TournamentEntity { Id = Guid.NewGuid(), Name = "Open in a followed hub", Hub = hub, Status = TournamentStatus.RegistrationOpen });
+
+            var registered = new TournamentEntity { Id = Guid.NewGuid(), Name = "B registered", Hub = hub, Status = TournamentStatus.RegistrationOpen };
+            var rejected = new TournamentEntity { Id = Guid.NewGuid(), Name = "Rejected", Hub = hub, Status = TournamentStatus.RegistrationOpen };
+            var playing = new TournamentEntity { Id = Guid.NewGuid(), Name = "Z playing", Hub = hub, Status = TournamentStatus.InProgress };
+            var finished = new TournamentEntity { Id = Guid.NewGuid(), Name = "Finished", Hub = hub, Status = TournamentStatus.Completed };
+            context.AddRange(registered, rejected, playing, finished);
+            context.Add(new TournamentRegistrationEntity { Id = Guid.NewGuid(), UserId = muted.Id, Tournament = registered, Status = TournamentRegistrationStatus.Pending });
+            context.Add(new TournamentRegistrationEntity { Id = Guid.NewGuid(), UserId = muted.Id, Tournament = rejected, Status = TournamentRegistrationStatus.Rejected });
+            context.Add(new TournamentParticipantEntity { Id = Guid.NewGuid(), UserId = muted.Id, Tournament = playing });
+            context.Add(new TournamentParticipantEntity { Id = Guid.NewGuid(), UserId = muted.Id, Tournament = finished });
+
+            // A hub they admin: its tournaments are theirs to run.
+            var adminHub = new HubEntity { Id = Guid.NewGuid(), Name = "Admin hub", UserId = Guid.NewGuid() };
+            context.Add(new UserHubEntity { Id = Guid.NewGuid(), UserId = muted.Id, Hub = adminHub, HubRole = HubRole.HubAdmin });
+            context.Add(new TournamentEntity { Id = Guid.NewGuid(), Name = "C run by me", Hub = adminHub, Status = TournamentStatus.Draft });
             await context.SaveChangesAsync();
+
             var page = await users.GetNotificationSources(muted.Id!.Value, "tournaments", 0, null);
-            Assert.That(page.Items.Select(i => i.Name), Is.EquivalentTo(new[] { tournament.Name, "Scheduled" }));
+
+            Assert.That(page.Items.Select(i => i.Name), Is.EqualTo(new[] { "Z playing", "B registered", "C run by me" }));
+            Assert.That(page.Items.Select(i => i.IsLive), Is.EqualTo(new[] { true, false, false }));
         }
 
         [Test]

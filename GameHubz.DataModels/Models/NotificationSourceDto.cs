@@ -7,6 +7,8 @@ namespace GameHubz.DataModels.Models
         public string? AvatarUrl { get; set; }
         public Guid? HubId { get; set; }
         public string? HubName { get; set; }
+        /// <summary>A tournament being played right now — listed first.</summary>
+        public bool IsLive { get; set; }
     }
 
     public class NotificationSourcePageDto

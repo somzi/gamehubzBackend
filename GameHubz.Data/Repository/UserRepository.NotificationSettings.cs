@@ -16,27 +16,29 @@ namespace GameHubz.Data.Repository
             {
                 sources = ContextBase.Set<HubEntity>()
                     .Where(h => h.UserId == userId || memberships.Any(m => m.HubId == h.Id))
-                    .Select(h => new NotificationSourceDto { Id = h.Id!.Value, Name = h.Name, AvatarUrl = h.AvatarUrl });
+                    .Select(h => new NotificationSourceDto { Id = h.Id!.Value, Name = h.Name, AvatarUrl = h.AvatarUrl, IsLive = false });
             }
             else
             {
-                var user = await BaseDbSet().Where(u => u.Id == userId).Select(u => new { u.Region, u.Country }).SingleAsync();
-                var registrations = ContextBase.Set<TournamentRegistrationEntity>().Where(r => r.UserId == userId
-                    || (r.Team != null && r.Team.Members.Any(m => m.UserId == userId)));
+                // A registration still in play (pending or approved) — a rejected one is not a tournament of yours.
+                var registrations = ContextBase.Set<TournamentRegistrationEntity>().Where(r => r.Status != TournamentRegistrationStatus.Rejected
+                    && (r.UserId == userId || (r.Team != null && r.Team.Members.Any(m => m.UserId == userId))));
                 sources = ContextBase.Set<TournamentEntity>()
+                    // Nothing more will be sent about a finished, cancelled or deleted tournament, so
+                    // there is nothing to mute.
+                    .Where(t => t.Status != TournamentStatus.Completed
+                        && t.Status != TournamentStatus.Cancelled
+                        && t.Status != TournamentStatus.Deleted)
+                    // Only the tournaments that are the user's: ones run from a hub they own or admin, ones
+                    // they play in, and ones they've registered for. Tournaments that merely sit in a hub they
+                    // follow are left out — muting the hub covers those.
                     .Where(t =>
                         t.Hub!.UserId == userId
                         || memberships.Any(m => m.HubId == t.HubId && (m.HubRole == HubRole.HubOwner || m.HubRole == HubRole.HubAdmin))
                         || t.TournamentParticipants!.Any(p => p.UserId == userId || (p.Team != null && p.Team.Members.Any(m => m.UserId == userId)))
-                        || registrations.Any(r => r.TournamentId == t.Id)
-                        || (memberships.Any(m => m.HubId == t.HubId)
-                            && (t.Status != TournamentStatus.Draft || t.RegistrationOpensAt != null)
-                            && t.Status != TournamentStatus.Deleted
-                            && (!t.IsExclusive || memberships.Any(m => m.HubId == t.HubId && m.HubRole == HubRole.HubExclusive))
-                            && ((t.Countries == null && (t.Region == user.Region || t.Region == RegionType.GLOBAL))
-                                || (user.Country != null && t.Countries != null && t.Countries.Contains(user.Country)))))
+                        || registrations.Any(r => r.TournamentId == t.Id))
                     // A tournament has no picture of its own; it wears its hub's avatar.
-                    .Select(t => new NotificationSourceDto { Id = t.Id!.Value, Name = t.Name, AvatarUrl = t.Hub!.AvatarUrl, HubId = t.HubId, HubName = t.Hub!.Name });
+                    .Select(t => new NotificationSourceDto { Id = t.Id!.Value, Name = t.Name, AvatarUrl = t.Hub!.AvatarUrl, HubId = t.HubId, HubName = t.Hub!.Name, IsLive = t.Status == TournamentStatus.InProgress });
             }
 
             if (!string.IsNullOrWhiteSpace(search))
@@ -44,7 +46,8 @@ namespace GameHubz.Data.Repository
                 var term = search.Trim().ToLower();
                 sources = sources.Where(s => s.Name.ToLower().Contains(term));
             }
-            var items = await sources.OrderBy(s => s.Name).ThenBy(s => s.Id).Skip(page * pageSize).Take(pageSize + 1).ToListAsync();
+            // Live tournaments first (the ones sending notifications right now), then by name. Hubs are never live.
+            var items = await sources.OrderByDescending(s => s.IsLive).ThenBy(s => s.Name).ThenBy(s => s.Id).Skip(page * pageSize).Take(pageSize + 1).ToListAsync();
             bool hasMore = items.Count > pageSize;
             if (hasMore) items.RemoveAt(pageSize);
             return new NotificationSourcePageDto { Items = items, NextPage = hasMore ? page + 1 : null };
