@@ -98,6 +98,18 @@ namespace GameHubz.Logic.Services
                 && rows.Any(x => x.Status == TournamentPlayerDeviceStatus.Pending && SamePhone(x.UserDevice, device));
         }
 
+        /// <summary>
+        /// Whether another phone has taken this one's place for the player in the tournament. Read only —
+        /// never binds — for the steps after Start: an attempt begun on a phone the organizer has since
+        /// replaced does not go on to finish on it. No active phone at all contradicts nothing.
+        /// </summary>
+        public async Task<bool> IsReplaced(Guid tournamentId, UserDeviceEntity device)
+        {
+            var rows = await this.AppUnitOfWork.TournamentPlayerDeviceRepository.GetForPlayer(tournamentId, device.UserId);
+            var active = rows.SingleOrDefault(x => x.Status == TournamentPlayerDeviceStatus.Active);
+            return active != null && !SamePhone(active.UserDevice, device);
+        }
+
         // Used by enrollment and by Start. Callers must first establish participation and ownership.
         public async Task<TournamentPlayerDeviceStatus> BindOrCheck(Guid tournamentId, UserDeviceEntity device)
         {

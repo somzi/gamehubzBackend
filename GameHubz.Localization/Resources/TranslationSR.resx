@@ -245,4 +245,7 @@
   <data name="BusinessRule.VerificationPhoneManagerRequired" xml:space="preserve">
     <value>Samo organizatori turnira mogu da upravljaju telefonima za verifikaciju.</value>
   </data>
+  <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
+    <value>Ovaj telefon je zamenjen za ovaj turnir. Verifikuj sa telefona koji je organizator odobrio.</value>
+  </data>
 </root>

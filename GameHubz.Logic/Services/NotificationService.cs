@@ -106,10 +106,20 @@ namespace GameHubz.Logic.Services
 
         public async Task SendLocalizedBatchAsync(IReadOnlyCollection<LocalizedPush> pushes)
         {
-            var prepared = new List<PreparedPush>(pushes.Count);
+            var batch = pushes.ToList();
+            var prepared = new List<PreparedPush>(batch.Count);
 
-            foreach (LocalizedPush push in pushes)
+            // Serialized once per push: the mute read takes its scope from it, and the devices get it.
+            var payloads = batch
+                .Select(push => push.Data == null ? null : JsonSerializer.SerializeToNode(push.Data, PayloadJsonOptions) as JsonObject)
+                .ToList();
+            // One mute read for the whole batch, where a sweep's hundreds of reminders used to read once each.
+            var mutedByPush = await GetMutedRecipientsAsync(
+                batch.Select((push, index) => (payloads[index], (IReadOnlyCollection<PushRecipient>)push.Recipients)).ToList());
+
+            for (int index = 0; index < batch.Count; index++)
             {
+                LocalizedPush push = batch[index];
                 // One device may be registered once per language bucket at most: de-duplicate on the
                 // token so a user who somehow appears twice does not get two copies.
                 var byToken = new Dictionary<string, PushRecipient>(StringComparer.Ordinal);
@@ -117,7 +127,7 @@ namespace GameHubz.Logic.Services
                 // The inbox is per account, not per device: one row per user, token or no token.
                 var inboxLanguages = new Dictionary<Guid, string?>();
 
-                var muted = await GetMutedRecipientsAsync(push.Data, push.Recipients);
+                var muted = mutedByPush[index];
                 var mutedUsers = muted.Select(m => m.UserId).ToHashSet();
                 var mutedTokens = muted.Where(m => !string.IsNullOrEmpty(m.PushToken)).Select(m => m.PushToken).ToHashSet();
                 foreach (PushRecipient recipient in push.Recipients)
@@ -142,11 +152,7 @@ namespace GameHubz.Logic.Services
                     continue;
                 }
 
-                JsonObject? payload = push.Data == null
-                    ? null
-                    : JsonSerializer.SerializeToNode(push.Data, PayloadJsonOptions) as JsonObject;
-
-                prepared.Add(new PreparedPush(push, byToken, inboxLanguages, payload));
+                prepared.Add(new PreparedPush(push, byToken, inboxLanguages, payloads[index]));
             }
 
             if (prepared.Count == 0)
@@ -210,16 +216,30 @@ namespace GameHubz.Logic.Services
         private async Task<List<MutedNotificationRecipient>> GetMutedRecipientsAsync(object? data, IEnumerable<PushRecipient> recipients)
         {
             var payload = data == null ? null : JsonSerializer.SerializeToNode(data, PayloadJsonOptions) as JsonObject;
-            Guid? Id(string key) => Guid.TryParse(payload?[key]?.ToString(), out var id) && id != Guid.Empty ? id : null;
-            var notificationScope = new NotificationScope(Id("hubId"), Id("tournamentId"), Id("matchId"), Id("teamMatchId"));
-            if (notificationScope.IsEmpty) return new();
-            var targets = recipients.ToList();
+            return (await GetMutedRecipientsAsync(new[] { (payload, (IReadOnlyCollection<PushRecipient>)recipients.ToList()) }))[0];
+        }
+
+        /// <summary>Who of each notification's recipients muted where it is from — one read for all of them.</summary>
+        private async Task<IReadOnlyList<List<MutedNotificationRecipient>>> GetMutedRecipientsAsync(
+            IReadOnlyList<(JsonObject? Payload, IReadOnlyCollection<PushRecipient> Recipients)> notifications)
+        {
+            var queries = new List<MutedRecipientsQuery>(notifications.Count);
+            foreach (var (payload, targets) in notifications)
+            {
+                Guid? Id(string key) => Guid.TryParse(payload?[key]?.ToString(), out var id) && id != Guid.Empty ? id : null;
+                queries.Add(new MutedRecipientsQuery(
+                    new NotificationScope(Id("hubId"), Id("tournamentId"), Id("matchId"), Id("teamMatchId")),
+                    targets.Where(r => r.UserId.HasValue).Select(r => r.UserId!.Value).Distinct().ToList(),
+                    targets.Where(r => !string.IsNullOrWhiteSpace(r.PushToken)).Select(r => r.PushToken).Distinct().ToList()));
+            }
+
+            // Nothing in the batch belongs to a hub or a tournament: nothing to read.
+            if (queries.All(q => q.Scope.IsEmpty)) return queries.Select(_ => new List<MutedNotificationRecipient>()).ToList();
+
             using var scope = serviceScopeFactory.CreateScope();
             var factory = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>();
             using var uow = factory.CreateAppUnitOfWork();
-            return await uow.UserRepository.GetMutedNotificationRecipients(notificationScope,
-                targets.Where(r => r.UserId.HasValue).Select(r => r.UserId!.Value).Distinct().ToList(),
-                targets.Where(r => !string.IsNullOrWhiteSpace(r.PushToken)).Select(r => r.PushToken).Distinct().ToList(), new());
+            return await uow.UserRepository.GetMutedNotificationRecipientsBatch(queries);
         }
 
         private sealed record PreparedPush(

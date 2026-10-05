@@ -245,4 +245,7 @@
   <data name="BusinessRule.VerificationPhoneManagerRequired" xml:space="preserve">
     <value>Only tournament organizers can manage verification phones.</value>
   </data>
+  <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
+    <value>This phone was replaced for this tournament. Verify from the phone the organizer approved.</value>
+  </data>
 </root>

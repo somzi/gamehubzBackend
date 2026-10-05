@@ -77,5 +77,92 @@ namespace GameHubz.Data.Repository
                     || (tournamentId.HasValue && NotificationSettingsDto.ReadIds(u.MutedTournamentIdsJson).Contains(tournamentId.Value)))
                 .Select(u => new MutedNotificationRecipient { UserId = u.Id!.Value, PushToken = u.PushToken, DiscordUserId = u.DiscordUserId }).ToList();
         }
+
+        /// <summary>
+        /// The same answer for every notification of a batch — a sweep's hundreds of reminders — from one
+        /// read of the recipients' preferences (and nothing more when none of them muted anything), then
+        /// one read per kind of ancestry the scopes need: matches, team matches, tournaments. The per-call
+        /// method above paid all of that once for every notification.
+        /// </summary>
+        public async Task<List<List<MutedNotificationRecipient>>> GetMutedNotificationRecipientsBatch(IReadOnlyList<MutedRecipientsQuery> items)
+        {
+            var results = items.Select(_ => new List<MutedNotificationRecipient>()).ToList();
+            var scoped = Enumerable.Range(0, items.Count).Where(i => !items[i].Scope.IsEmpty).ToList();
+            if (scoped.Count == 0) return results;
+
+            var userIds = scoped.SelectMany(i => items[i].UserIds).Distinct().ToList();
+            var pushTokens = scoped.SelectMany(i => items[i].PushTokens).Distinct().ToList();
+            var users = (await BaseDbSet().AsNoTracking()
+                    .Where(u => (userIds.Contains(u.Id!.Value) || (u.PushToken != null && pushTokens.Contains(u.PushToken)))
+                        && (u.MutedHubIdsJson != null || u.MutedTournamentIdsJson != null))
+                    .Select(u => new { Id = u.Id!.Value, u.PushToken, u.DiscordUserId, u.MutedHubIdsJson, u.MutedTournamentIdsJson })
+                    .ToListAsync())
+                .Select(u => new
+                {
+                    u.Id,
+                    u.PushToken,
+                    u.DiscordUserId,
+                    Hubs = NotificationSettingsDto.ReadIds(u.MutedHubIdsJson).ToHashSet(),
+                    Tournaments = NotificationSettingsDto.ReadIds(u.MutedTournamentIdsJson).ToHashSet(),
+                })
+                .Where(u => u.Hubs.Count > 0 || u.Tournaments.Count > 0)
+                .ToList();
+            if (users.Count == 0) return results;
+
+            // The same resolution as the single call: the tournament from the scope, else its match, else
+            // its team match; the hub from the scope, else that tournament's.
+            var tournamentOf = scoped.ToDictionary(i => i, i => items[i].Scope.TournamentId);
+
+            var matchIds = scoped.Where(i => tournamentOf[i] == null && items[i].Scope.MatchId != null)
+                .Select(i => items[i].Scope.MatchId!.Value).Distinct().ToList();
+            if (matchIds.Count > 0)
+            {
+                var byMatch = await ContextBase.Set<MatchEntity>().IgnoreQueryFilters()
+                    .Where(m => matchIds.Contains(m.Id!.Value))
+                    .Select(m => new { Id = m.Id!.Value, m.TournamentId })
+                    .ToDictionaryAsync(m => m.Id, m => m.TournamentId);
+                foreach (int i in scoped.Where(i => tournamentOf[i] == null && items[i].Scope.MatchId != null))
+                    if (byMatch.TryGetValue(items[i].Scope.MatchId!.Value, out var tournamentId)) tournamentOf[i] = tournamentId;
+            }
+
+            var teamMatchIds = scoped.Where(i => tournamentOf[i] == null && items[i].Scope.TeamMatchId != null)
+                .Select(i => items[i].Scope.TeamMatchId!.Value).Distinct().ToList();
+            if (teamMatchIds.Count > 0)
+            {
+                var byTeamMatch = await ContextBase.Set<TeamMatchEntity>().IgnoreQueryFilters()
+                    .Where(m => teamMatchIds.Contains(m.Id!.Value))
+                    .Select(m => new { Id = m.Id!.Value, m.TournamentId })
+                    .ToDictionaryAsync(m => m.Id, m => m.TournamentId);
+                foreach (int i in scoped.Where(i => tournamentOf[i] == null && items[i].Scope.TeamMatchId != null))
+                    if (byTeamMatch.TryGetValue(items[i].Scope.TeamMatchId!.Value, out var tournamentId)) tournamentOf[i] = tournamentId;
+            }
+
+            var hubOf = scoped.ToDictionary(i => i, i => items[i].Scope.HubId);
+            var tournamentIds = scoped.Where(i => hubOf[i] == null && tournamentOf[i] != null)
+                .Select(i => tournamentOf[i]!.Value).Distinct().ToList();
+            if (tournamentIds.Count > 0)
+            {
+                var byTournament = await ContextBase.Set<TournamentEntity>().IgnoreQueryFilters()
+                    .Where(t => tournamentIds.Contains(t.Id!.Value))
+                    .Select(t => new { Id = t.Id!.Value, t.HubId })
+                    .ToDictionaryAsync(t => t.Id, t => t.HubId);
+                foreach (int i in scoped.Where(i => hubOf[i] == null && tournamentOf[i] != null))
+                    if (byTournament.TryGetValue(tournamentOf[i]!.Value, out var hubId)) hubOf[i] = hubId;
+            }
+
+            foreach (int i in scoped)
+            {
+                var item = items[i];
+                Guid? hub = hubOf[i];
+                Guid? tournament = tournamentOf[i];
+                results[i] = users
+                    .Where(u => (item.UserIds.Contains(u.Id) || (u.PushToken != null && item.PushTokens.Contains(u.PushToken)))
+                        && ((hub.HasValue && u.Hubs.Contains(hub.Value)) || (tournament.HasValue && u.Tournaments.Contains(tournament.Value))))
+                    .Select(u => new MutedNotificationRecipient { UserId = u.Id, PushToken = u.PushToken, DiscordUserId = u.DiscordUserId })
+                    .ToList();
+            }
+
+            return results;
+        }
     }
 }

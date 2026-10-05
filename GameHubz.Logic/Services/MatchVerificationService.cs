@@ -278,6 +278,10 @@ namespace GameHubz.Logic.Services
             if (device == null)
                 throw new VerificationDeviceUnknownException(this.LocalizationService["BusinessRule.VerificationDeviceNotRegistered"]);
 
+            var attemptMatch = await this.AppUnitOfWork.MatchRepository.ShallowGetById(verification.MatchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            await this.ThrowIfPhoneReplaced(attemptMatch.TournamentId, device);
+
             string message = VerificationProof.BuildMessage(
                 verification.Id!.Value, verification.MatchId, verification.UserId, verification.DeviceId, verification.Challenge);
 
@@ -357,6 +361,8 @@ namespace GameHubz.Logic.Services
 
             // Settled while the player was picking the clip: there is no longer a report to verify.
             ThrowIfMatchClosed(match);
+
+            await this.ThrowIfPhoneReplaced(match.TournamentId, uploadDevice);
 
             // A second attempt the player kept open while another one finished. Start refuses a new
             // attempt once the game has their verification; this is the same rule for one that was
@@ -899,6 +905,17 @@ namespace GameHubz.Logic.Services
             }
 
             return players.Where(p => p.HasValue).Select(p => p!.Value).Distinct().ToList();
+        }
+
+        /// <summary>
+        /// The phone an attempt began on is still the player's phone when the attempt moves on. Start binds
+        /// it; an organizer approving another phone part-way through replaces it, and the attempt it began —
+        /// the biometric proof, the clip — does not finish on the phone that was replaced.
+        /// </summary>
+        private async Task ThrowIfPhoneReplaced(Guid tournamentId, UserDeviceEntity device)
+        {
+            if (await this.phoneService.IsReplaced(tournamentId, device))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationPhoneReplaced"]);
         }
 
         private void ThrowIfMatchClosed(MatchEntity match)

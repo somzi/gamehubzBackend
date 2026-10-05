@@ -22,6 +22,9 @@ namespace GameHubz.DataModels.Models
         public bool IsEmpty => HubId == null && TournamentId == null && MatchId == null && TeamMatchId == null;
     }
 
+    /// <summary>One notification of a batch, for the mute read: where it is from and who it goes to.</summary>
+    public sealed record MutedRecipientsQuery(NotificationScope Scope, IReadOnlyCollection<Guid> UserIds, IReadOnlyCollection<string> PushTokens);
+
     public class MutedNotificationRecipient
     {
         public Guid UserId { get; set; }

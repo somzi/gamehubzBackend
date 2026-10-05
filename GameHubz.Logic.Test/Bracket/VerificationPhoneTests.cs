@@ -180,6 +180,43 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
+        public async Task ReplacedPhone_CannotFinishAnAttemptItStarted()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            var storage = Storage();
+            var service = harness.NewMatchVerificationServiceAsUser(home, storage.Object);
+            var first = await service.RegisterDevice(DistinctPhone("first"));
+            await BindPhone(harness, home, tid, first.DeviceId);
+
+            // On the first phone: one attempt already past its biometric proof, another only started.
+            var proven = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .Start(match, new() { DeviceId = first.DeviceId, SeriesNumber = 1, GameNumber = 1 });
+            await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .SubmitBiometricProof(proven.VerificationId, new() { Signature = VerificationProof.Sign(first.Secret, proven.Message) });
+            var started = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .Start(match, new() { DeviceId = first.DeviceId, SeriesNumber = 1, GameNumber = 1 });
+
+            // The organizer approves a second phone in the meantime: the first one is replaced.
+            var second = await service.RegisterDevice(DistinctPhone("second"));
+            await BindPhone(harness, home, tid, second.DeviceId);
+            var manager = harness.NewVerificationPhoneServiceAsUser(BracketTestHarness.OwnerUserId, "Admin");
+            var pending = (await manager.GetPending(tid)).Single();
+            await manager.Decide(tid, pending.Id, new() { UserDeviceId = pending.RequestedPhone.UserDeviceId }, true);
+
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                    .SubmitBiometricProof(started.VerificationId, new() { Signature = VerificationProof.Sign(first.Secret, started.Message) }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("replaced"));
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                    .AttachEvidence(proven.VerificationId, Clip(), SignedRecording(harness, proven.VerificationId,
+                        new() { DurationMs = 30000, RecordedOn = DateTime.UtcNow.AddSeconds(-10) })),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("replaced"));
+
+            storage.Verify(x => x.UploadVideoAsync(It.IsAny<Microsoft.AspNetCore.Http.IFormFile>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            using var read = harness.ReadContext();
+            Assert.That(read.Set<MatchResultVerificationEntity>().Count(v => v.Status == MatchVerificationStatus.Verified), Is.Zero);
+        }
+
+        [Test]
         public async Task RejectedPhone_NeedsANewPendingRequest_EvenWithNoActivePhone()
         {
             var (harness, tid, _, home) = await SetUpAsync();

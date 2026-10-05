@@ -245,4 +245,7 @@
   <data name="BusinessRule.VerificationPhoneManagerRequired" xml:space="preserve">
     <value>Tylko organizatorzy turnieju mogą zarządzać telefonami do weryfikacji.</value>
   </data>
+  <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
+    <value>Ten telefon został zastąpiony w tym turnieju. Zweryfikuj z telefonu zatwierdzonego przez organizatora.</value>
+  </data>
 </root>

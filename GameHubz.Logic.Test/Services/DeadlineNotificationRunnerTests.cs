@@ -236,6 +236,25 @@ namespace GameHubz.Logic.Test.Services
         }
 
         [Test]
+        public async Task ParticipantSwappedWhilePushIsSent_LeavesTheReminderForTheNewPair()
+        {
+            // The organizer swaps a player in while the old pair's reminder is going out; the swap re-arms
+            // the reminder, and the old send's marker must not land on the new pairing.
+            var newcomer = new UserEntity { Id = Guid.NewGuid(), Username = "newcomer" };
+            afterPush = () => SwapHomeAsync(newcomer);
+
+            await RunAsync();
+            Assert.That(await ReminderStageAsync(), Is.Zero, "the old pair's send must not consume the new pair's reminder");
+
+            afterPush = null;
+            await RunAsync();
+
+            Assert.That(pushes.Count, Is.EqualTo(2));
+            Assert.That(pushes[1].Recipients.Select(r => r.UserId), Is.EquivalentTo(new[] { newcomer.Id, away.Id }));
+            Assert.That(await ReminderStageAsync(), Is.EqualTo(2));
+        }
+
+        [Test]
         public async Task MatchCompletedDuringDiscordFanOut_SkipsRemainingDm()
         {
             discord.Setup(d => d.SendDmAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()))
@@ -275,6 +294,19 @@ namespace GameHubz.Logic.Test.Services
                     .SetProperty(m => m.ProposedHomeScore, 2).SetProperty(m => m.ProposedAwayScore, 1));
             else
                 await query.ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundDeadline, DateTime.UtcNow.AddDays(2))
+                    .SetProperty(m => m.RoundReminderStage, 0));
+        }
+
+        // What BracketService does when a participant is replaced: a new home side, the reminder re-armed.
+        private async Task SwapHomeAsync(UserEntity newcomer)
+        {
+            await using var writer = new TestApplicationContext(new DbContextOptionsBuilder<TestApplicationContext>()
+                .UseSqlite(connection).Options);
+            var participant = new TournamentParticipantEntity { Id = Guid.NewGuid(), TournamentId = match.TournamentId, User = newcomer };
+            writer.Add(participant);
+            await writer.SaveChangesAsync();
+            await writer.Set<MatchEntity>().Where(m => m.Id == match.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.HomeParticipantId, participant.Id)
                     .SetProperty(m => m.RoundReminderStage, 0));
         }
 
