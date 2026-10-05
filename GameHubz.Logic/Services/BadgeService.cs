@@ -1,4 +1,4 @@
-﻿using GameHubz.DataModels.Enums;
+using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
 
@@ -51,6 +51,7 @@ namespace GameHubz.Logic.Services
 
             var regRows = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingCountsByTournament(managedHubIds);
             var helpRows = await this.AppUnitOfWork.MatchRepository.GetAdminHelpCountsByTournament(managedHubIds);
+            var phoneRows = await this.AppUnitOfWork.TournamentPlayerDeviceRepository.GetPendingCountsByTournament(managedHubIds);
             var approvalRows = await this.AppUnitOfWork.MatchRepository.GetPendingApprovalCountsByTournament(managedHubIds);
             var hubJoinRows = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingCountsByHub(managedHubIds);
 
@@ -66,6 +67,8 @@ namespace GameHubz.Logic.Services
                 var row = GetOrAddTournament(byTournament, h.TournamentId, h.HubId, h.Status);
                 row.AdminHelp = h.Count;
             }
+            foreach (var p in phoneRows)
+                GetOrAddTournament(byTournament, p.TournamentId, p.HubId, p.Status).VerificationPhones = p.Count;
             foreach (var a in approvalRows)
             {
                 var row = GetOrAddTournament(byTournament, a.TournamentId, a.HubId, a.Status);
@@ -137,9 +140,10 @@ namespace GameHubz.Logic.Services
             // Organizer badges: only meaningful for users who manage at least one hub.
             // Resolve the managed-hub set once, then run the three cheap COUNT queries.
             var managedHubIds = await this.AppUnitOfWork.UserHubRepository.GetManagedHubIds(userId);
-            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0, pendingResultApprovals = 0;
+            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0, pendingResultApprovals = 0, pendingPhones = 0;
             if (managedHubIds.Count > 0)
             {
+                pendingPhones = (await this.AppUnitOfWork.TournamentPlayerDeviceRepository.GetPendingCountsByTournament(managedHubIds)).Sum(x => x.Count);
                 hubJoinRequests = await this.AppUnitOfWork.UserHubRequestRepository.CountPendingByHubIds(managedHubIds);
                 adminHelpRequests = await this.AppUnitOfWork.MatchRepository.CountAdminHelpForHubs(managedHubIds);
                 pendingRegistrations = await this.AppUnitOfWork.TournamentRegistrationRepository.CountPendingForHubs(managedHubIds);
@@ -157,6 +161,7 @@ namespace GameHubz.Logic.Services
                 TeamJoinRequests = teamJoinRequests,
                 HubJoinRequests = hubJoinRequests,
                 AdminHelpRequests = adminHelpRequests,
+                PendingVerificationPhones = pendingPhones,
                 PendingRegistrations = pendingRegistrations,
                 PendingResultApprovals = pendingResultApprovals,
             };

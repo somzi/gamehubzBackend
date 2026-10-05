@@ -58,6 +58,16 @@ namespace GameHubz.Data.Context
 
         private static void ResultVerificationConfigurator(ModelBuilder modelBuilder)
         {
+            var phone = modelBuilder.Entity<TournamentPlayerDeviceEntity>();
+            phone.ToTable("TournamentPlayerDevice").HasQueryFilter(x => x.IsDeleted == false);
+            phone.HasOne(x => x.Tournament).WithMany().HasForeignKey(x => x.TournamentId).OnDelete(DeleteBehavior.Cascade);
+            phone.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            phone.HasOne(x => x.UserDevice).WithMany().HasForeignKey(x => x.UserDeviceId).OnDelete(DeleteBehavior.Cascade);
+            phone.HasIndex(x => new { x.TournamentId, x.UserId }, "UX_TournamentPlayerDevice_Active")
+                .IsUnique().HasFilter("\"Status\" = 1 AND \"IsDeleted\" = false");
+            phone.HasIndex(x => new { x.TournamentId, x.UserId }, "UX_TournamentPlayerDevice_Pending")
+                .IsUnique().HasFilter("\"Status\" = 2 AND \"IsDeleted\" = false");
+
             modelBuilder.Entity<UserDeviceEntity>().ToTable("UserDevice")
                 .HasQueryFilter(x => x.IsDeleted == false);
 

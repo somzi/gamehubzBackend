@@ -21,12 +21,50 @@ namespace GameHubz.Data.Repository
         {
         }
 
-        public Task<bool> HasVerified(Guid matchId, Guid userId)
+        public Task<bool> HasVerified(Guid matchId, Guid userId, int seriesNumber, int gameNumber)
         {
+            // A whole-match proof covers every game; asked about the whole match itself, only one answers.
             return this.BaseDbSet()
                 .AnyAsync(v => v.MatchId == matchId
                     && v.UserId == userId
-                    && v.Status == MatchVerificationStatus.Verified);
+                    && v.Status == MatchVerificationStatus.Verified
+                    && (v.GameNumber == MatchResultVerificationEntity.WholeMatch
+                        || (v.SeriesNumber == seriesNumber && v.GameNumber == gameNumber)));
+        }
+
+        public async Task<bool> HasVerifiedGames(Guid matchId, Guid userId, IReadOnlyCollection<(int Series, int Game)> games)
+        {
+            if (games.Count == 0) return true;
+
+            var verified = await this.BaseDbSet()
+                .Where(v => v.MatchId == matchId && v.UserId == userId && v.Status == MatchVerificationStatus.Verified)
+                .Select(v => new { v.SeriesNumber, v.GameNumber })
+                .Distinct()
+                .ToListAsync();
+
+            return verified.Any(v => v.GameNumber == MatchResultVerificationEntity.WholeMatch)
+                || games.All(game => verified.Any(v => v.SeriesNumber == game.Series && v.GameNumber == game.Game));
+        }
+
+        public Task<bool> IsRecordingUsedForAnotherGame(
+            Guid matchId,
+            Guid userId,
+            Guid verificationId,
+            DateTime? recordedOn,
+            int? durationMs)
+        {
+            // The same clip was recorded at the same moment and runs exactly as long. Never the name —
+            // phones and apps reuse generic ones, and two games can last the same — and without both facts
+            // there is nothing safe to refuse on: a guess must not stop an honest player.
+            if (recordedOn == null || durationMs == null) return Task.FromResult(false);
+
+            return this.BaseDbSet()
+                .AnyAsync(v => v.MatchId == matchId
+                    && v.UserId == userId
+                    && v.Id != verificationId
+                    && v.Status == MatchVerificationStatus.Verified
+                    && (v.RawRecordedOn ?? v.RecordedOn) == recordedOn
+                    && v.EvidenceDurationMs == durationMs);
         }
 
         public Task<bool> AnyVerifiedForMatches(IReadOnlyCollection<Guid> matchIds)
@@ -63,14 +101,6 @@ namespace GameHubz.Data.Repository
                 .CountAsync(v => v.MatchId == matchId && v.UserId == userId && v.CreatedOn >= since);
         }
 
-        public Task<int> CountVerified(Guid matchId, Guid userId)
-        {
-            return this.BaseDbSet()
-                .CountAsync(v => v.MatchId == matchId
-                    && v.UserId == userId
-                    && v.Status == MatchVerificationStatus.Verified);
-        }
-
         public async Task<bool> TryClaimEvidenceUpload(Guid verificationId, DateTime claimedOn, DateTime staleBefore)
         {
             // One conditional UPDATE: whichever request reaches the row first takes the claim, and the
@@ -99,6 +129,7 @@ namespace GameHubz.Data.Repository
                     .SetProperty(v => v.EvidenceUploadedOn, (DateTime?)result.CompletedOn)
                     .SetProperty(v => v.VerifiedOn, (DateTime?)result.CompletedOn)
                     .SetProperty(v => v.RecordedOn, result.RecordedOn)
+                    .SetProperty(v => v.RawRecordedOn, result.RawRecordedOn)
                     .SetProperty(v => v.EvidenceDurationMs, result.DurationMs)
                     .SetProperty(v => v.EvidenceFileName, result.FileName)
                     .SetProperty(v => v.ModifiedOn, (DateTime?)result.CompletedOn)

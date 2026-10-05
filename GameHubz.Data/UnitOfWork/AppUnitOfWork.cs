@@ -71,6 +71,8 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public INotificationRepository NotificationRepository => this.GetRepository<NotificationRepository>();
 
+        public ITournamentPlayerDeviceRepository TournamentPlayerDeviceRepository => this.GetRepository<TournamentPlayerDeviceRepository>();
+
         public IUserDeviceRepository UserDeviceRepository => this.GetRepository<UserDeviceRepository>();
 
         public IMatchResultVerificationRepository MatchResultVerificationRepository => this.GetRepository<MatchResultVerificationRepository>();

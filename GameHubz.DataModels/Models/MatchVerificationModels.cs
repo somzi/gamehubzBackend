@@ -49,6 +49,14 @@ namespace GameHubz.DataModels.Models
 
     public class StartMatchVerificationRequest
     {
+        /// <summary>
+        /// The game this attempt proves. Both numbers are required for new attempts; legacy
+        /// whole-match records remain valid but can no longer be created.
+        /// </summary>
+        public int? SeriesNumber { get; set; }
+
+        public int? GameNumber { get; set; }
+
         public Guid DeviceId { get; set; }
 
         // What the phone is now. Registration only happens once per key, so these keep the device row —
@@ -87,7 +95,8 @@ namespace GameHubz.DataModels.Models
         DateTime? RecordedOn,
         int? DurationMs,
         string? FileName,
-        Guid CompletedBy);
+        Guid CompletedBy,
+        DateTime? RawRecordedOn = null);
 
     public class SubmitBiometricProofRequest
     {
@@ -98,6 +107,10 @@ namespace GameHubz.DataModels.Models
     /// <summary>Optional facts about the recording, read on the phone and sent with the file.</summary>
     public class AttachVerificationEvidenceRequest
     {
+        public string? Signature { get; set; }
+        public long? ClockOffsetMs { get; set; }
+        public int? TimeZoneOffsetMinutes { get; set; }
+
         public int? DurationMs { get; set; }
 
         /// <summary>The clip's own creation time from its MP4 metadata, when the phone could read one.</summary>
@@ -116,35 +129,80 @@ namespace GameHubz.DataModels.Models
     {
         public Guid MatchId { get; set; }
 
+        /// <summary>
+        /// Every game of the match's format, main series first, with each player's proof of it. A
+        /// whole-match proof fills every game of its player.
+        /// </summary>
+        public List<MatchVerificationGameDto> Games { get; set; } = new();
+
         /// <summary>The tournament setting.</summary>
         public bool Required { get; set; }
 
-        /// <summary>The caller plays this match and it is still open for a result.</summary>
+        /// <summary>
+        /// The caller plays this match, it is still open for a result, and an app from before per-game
+        /// verification could still need its one, whole-match verification: there is none yet, and outside
+        /// a knockout their proofs do not yet cover every game the match can still be reported with (in a
+        /// knockout a tiebreak may always follow). The current app reads <see cref="MatchVerificationGameDto.CanVerify"/>.
+        /// </summary>
         public bool CanVerify { get; set; }
 
         /// <summary>
-        /// The server would refuse the caller's report right now for want of a verification. Computed
-        /// here so the client never re-derives the rule (organizers and hub admins are exempt, which the
-        /// client cannot always tell).
+        /// The server would refuse the caller's next report for want of a verification, judged on the
+        /// games already on file — or, before any score exists, on the shortest series still to be played
+        /// (see VerificationGames). The app checks the score being typed against <see cref="Games"/>
+        /// instead; an app from before per-game verification follows this flag.
         /// </summary>
         public bool ReportBlocked { get; set; }
 
         /// <summary>The caller manages the tournament — the organizer view with device details.</summary>
         public bool IsManager { get; set; }
 
-        /// <summary>The caller's own latest verified record, if any.</summary>
+        /// <summary>
+        /// The caller plays this match. An organizer who does reports it as a player, with proofs; only
+        /// an organizer outside the match is exempt from the gate.
+        /// </summary>
+        public bool IsParticipant { get; set; }
+
+        public bool PhoneApprovalPending { get; set; }
+
+        /// <summary>
+        /// The caller's proof as an app from before per-game verification sees it: the first game's, once
+        /// that app needs nothing more (see <see cref="CanVerify"/>; a whole-match proof always settles it);
+        /// null before, so that app still offers its verification.
+        /// </summary>
+        public MatchVerificationRecordDto? Mine { get; set; }
+
+        /// <summary>The first game's <see cref="MatchVerificationGameDto.Records"/>.</summary>
+        public List<MatchVerificationRecordDto> Records { get; set; } = new();
+    }
+
+    public class MatchVerificationGameDto
+    {
+        public int SeriesNumber { get; set; } = 1;
+
+        public int GameNumber { get; set; } = 1;
+
+        /// <summary>The caller can still prove this game.</summary>
+        public bool CanVerify { get; set; }
+
+        /// <summary>The caller's proof of this game, if any.</summary>
         public MatchVerificationRecordDto? Mine { get; set; }
 
         /// <summary>
-        /// One entry per player of the match: their latest verified record, or a placeholder with
+        /// One entry per player of the match: their latest proof of this game, or a placeholder with
         /// <see cref="MatchVerificationRecordDto.Status"/> Started and no timestamps when they have not
-        /// verified. Organizers additionally get failed attempts, newest first, after the players.
+        /// verified it. Organizers additionally get the failed attempts at it, newest first, after the players.
         /// </summary>
         public List<MatchVerificationRecordDto> Records { get; set; } = new();
     }
 
     public class MatchVerificationRecordDto
     {
+        /// <summary>The proven game; 0 for both on a whole-match proof (see MatchResultVerificationEntity.WholeMatch).</summary>
+        public int SeriesNumber { get; set; } = 1;
+
+        public int GameNumber { get; set; } = 1;
+
         /// <summary>Null for a "has not verified yet" placeholder.</summary>
         public Guid? Id { get; set; }
 
@@ -157,6 +215,9 @@ namespace GameHubz.DataModels.Models
         public MatchVerificationStatus Status { get; set; }
 
         public bool BiometricVerified { get; set; }
+
+        // Only returned to the owner by the biometric endpoint, never on public panel records.
+        public string? EvidenceMessage { get; set; }
 
         /// <summary>Server time the challenge was issued.</summary>
         public DateTime? StartedOn { get; set; }

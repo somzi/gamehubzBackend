@@ -69,6 +69,8 @@ namespace GameHubz.Logic.Interfaces
 
         INotificationRepository NotificationRepository { get; }
 
+        ITournamentPlayerDeviceRepository TournamentPlayerDeviceRepository { get; }
+
         IUserDeviceRepository UserDeviceRepository { get; }
 
         IMatchResultVerificationRepository MatchResultVerificationRepository { get; }

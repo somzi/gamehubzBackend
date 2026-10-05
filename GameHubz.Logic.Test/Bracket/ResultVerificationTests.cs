@@ -25,7 +25,7 @@ namespace GameHubz.Logic.Test.Bracket
     // steps, who may verify, and the gate on the result path itself (which must also keep strangers out
     // of a verification-required tournament). SQLite harness, like the other result-path tests.
     [TestFixture]
-    internal sealed class ResultVerificationTests
+    internal sealed partial class ResultVerificationTests
     {
         // ── the proof itself ─────────────────────────────────────────────────────────────────
 
@@ -135,6 +135,27 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
+        public async Task Report_ByAnOrganizerWhoPlaysTheMatch_NeedsVerificationLikeAnyPlayer()
+        {
+            // The hub owner entered their own tournament: in their own match they are a player.
+            var (harness, tid, match, home) = await SetUpAsync();
+            await harness.AllowManageFor(home, tid);
+            var storage = Storage();
+
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.IsManager, Is.True);
+            Assert.That(panel.IsParticipant, Is.True);
+            Assert.That(panel.ReportBlocked, Is.True);
+
+            Assert.That(async () => await harness.NewServiceAsUser(home).UpdateMatchResult(Score(tid, match)),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+
+            await VerifyAsync(harness, storage, home, match);
+            await harness.NewServiceAsUser(home).UpdateMatchResult(Score(tid, match));
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
         public async Task Report_ByAStranger_IsRefused()
         {
             // Without the setting a non-approval tournament takes a report without asking who sent it;
@@ -181,7 +202,7 @@ namespace GameHubz.Logic.Test.Bracket
             var device = await service.RegisterDevice(Phone());
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, Storage().Object)
-                    .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId }),
+                    .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("doesn't use result verification"));
         }
 
@@ -193,7 +214,7 @@ namespace GameHubz.Logic.Test.Bracket
             var device = await harness.NewMatchVerificationServiceAsUser(outsider, Storage().Object).RegisterDevice(Phone());
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(outsider, Storage().Object)
-                    .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId }),
+                    .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("participant"));
         }
 
@@ -204,7 +225,7 @@ namespace GameHubz.Logic.Test.Bracket
 
             // Its own exception type: the controller answers it with 409, the phone's cue to register again.
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, Storage().Object)
-                    .Start(match, new StartMatchVerificationRequest { DeviceId = Guid.NewGuid() }),
+                    .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = Guid.NewGuid() }),
                 Throws.TypeOf<VerificationDeviceUnknownException>().With.Message.Contains("isn't registered"));
         }
 
@@ -215,7 +236,7 @@ namespace GameHubz.Logic.Test.Bracket
             var storage = Storage();
             var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId });
 
             // Signed with a key this phone was never issued.
             string forged = VerificationProof.Sign(VerificationProof.NewSecret(), start.Message);
@@ -234,7 +255,7 @@ namespace GameHubz.Logic.Test.Bracket
                     .SubmitBiometricProof(start.VerificationId, new SubmitBiometricProofRequest { Signature = genuine }),
                 Throws.TypeOf<BusinessRuleException>());
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>());
         }
 
@@ -245,7 +266,7 @@ namespace GameHubz.Logic.Test.Bracket
             var storage = Storage();
             var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId });
 
             using (var ctx = harness.ReadContext())
             {
@@ -269,10 +290,10 @@ namespace GameHubz.Logic.Test.Bracket
             var storage = Storage();
             var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId });
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Face ID"));
 
             storage.Verify(s => s.UploadVideoAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never,
@@ -287,7 +308,7 @@ namespace GameHubz.Logic.Test.Bracket
             var (start, _) = await ProveAsync(harness, storage, home, match);
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip("image/jpeg"), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip("image/jpeg"), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("video"));
         }
 
@@ -306,7 +327,7 @@ namespace GameHubz.Logic.Test.Bracket
             }
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("expired"));
         }
 
@@ -338,11 +359,11 @@ namespace GameHubz.Logic.Test.Bracket
             var (start, _) = await ProveAsync(harness, storage, home, match);
 
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
 
             // The answer was lost on the way back and the phone sends the clip again.
             var again = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
 
             Assert.That(again.Status, Is.EqualTo(MatchVerificationStatus.Verified));
             storage.Verify(s => s.UploadVideoAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
@@ -355,7 +376,7 @@ namespace GameHubz.Logic.Test.Bracket
             var storage = Storage();
             var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId });
 
             var away = harness.ParticipantUserId(harness.Match(match).AwayParticipantId!.Value);
 
@@ -382,7 +403,7 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(second.Secret, Is.Not.EqualTo(first.Secret), "but a new key");
 
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = second.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = second.DeviceId });
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
                     .SubmitBiometricProof(start.VerificationId, new SubmitBiometricProofRequest
@@ -411,9 +432,10 @@ namespace GameHubz.Logic.Test.Bracket
 
             var after = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
             Assert.That(after.ReportBlocked, Is.False);
-            Assert.That(after.Mine, Is.Not.Null);
-            Assert.That(after.Mine!.Device, Is.Not.Null, "a player sees their own device");
-            Assert.That(after.Mine.Flags, Is.Empty, "flags are an organizer's view");
+            var mine = after.Games.Single().Mine;
+            Assert.That(mine, Is.Not.Null);
+            Assert.That(mine!.Device, Is.Not.Null, "a player sees their own device");
+            Assert.That(mine.Flags, Is.Empty, "flags are an organizer's view");
         }
 
         [Test]
@@ -685,11 +707,11 @@ namespace GameHubz.Logic.Test.Bracket
 
             // First upload: holds the claim and is parked inside the storage call.
             var first = harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
             await entered.Task;
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("still uploading"));
 
             release.SetResult(new StoredAsset("https://cdn.test/clip.mp4", "clip-key", StorageProviderType.Cloudinary));
@@ -717,11 +739,11 @@ namespace GameHubz.Logic.Test.Bracket
             var (start, _) = await ProveAsync(harness, storage, home, match);
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<InvalidOperationException>());
 
             var retried = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
 
             Assert.That(retried.Status, Is.EqualTo(MatchVerificationStatus.Verified));
         }
@@ -746,7 +768,7 @@ namespace GameHubz.Logic.Test.Bracket
             }
 
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId });
             var reissued = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
                 .RegisterDevice(Phone(device.DeviceId));
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
@@ -755,7 +777,7 @@ namespace GameHubz.Logic.Test.Bracket
                     Signature = VerificationProof.Sign(reissued.Secret, start.Message),
                 });
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
 
             var panel = await harness.NewMatchVerificationServiceAsUser(BracketTestHarness.OwnerUserId, storage.Object, role: "Admin")
                 .GetPanel(match);
@@ -774,8 +796,7 @@ namespace GameHubz.Logic.Test.Bracket
 
             // Weeks later: the OS and the app have both updated, the key has not changed.
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest
-                {
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1,
                     DeviceId = device.DeviceId,
                     OsVersion = "18.2",
                     AppVersion = "2.20.0",
@@ -839,7 +860,7 @@ namespace GameHubz.Logic.Test.Bracket
             var (start, _) = await ProveAsync(harness, storage, home, match);
 
             var first = harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
             await entered.Task;
 
             // The first request has been uploading for longer than the stale window.
@@ -851,7 +872,7 @@ namespace GameHubz.Logic.Test.Bracket
             }
 
             var takeover = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, new AttachVerificationEvidenceRequest()));
             Assert.That(takeover.Status, Is.EqualTo(MatchVerificationStatus.Verified));
 
             releaseFirst.SetResult(new StoredAsset("https://cdn.test/overtaken.mp4", "overtaken-key", StorageProviderType.Cloudinary));
@@ -925,19 +946,20 @@ namespace GameHubz.Logic.Test.Bracket
             await VerifyAsync(harness, storage, home, match, device);
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId }),
+                    .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId, SeriesNumber = 1, GameNumber = 1 }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("already verified"));
 
             // Refused before the device is looked up: an unknown phone is not sent off to register a
             // key (and spend one of the day's issuances) only to hear the same answer.
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .Start(match, new StartMatchVerificationRequest { DeviceId = Guid.NewGuid() }),
+                    .Start(match, new StartMatchVerificationRequest { DeviceId = Guid.NewGuid(), SeriesNumber = 1, GameNumber = 1 }),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("already verified"));
 
             var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
-            Assert.That(panel.CanVerify, Is.False, "nothing is left for this player to do");
+            var game = panel.Games.Single();
+            Assert.That(game.CanVerify, Is.False, "nothing is left for this player to do");
             Assert.That(panel.ReportBlocked, Is.False);
-            Assert.That(panel.Mine?.Status, Is.EqualTo(MatchVerificationStatus.Verified));
+            Assert.That(game.Mine?.Status, Is.EqualTo(MatchVerificationStatus.Verified));
         }
 
         [Test]
@@ -953,10 +975,10 @@ namespace GameHubz.Logic.Test.Bracket
             var (second, _) = await ProveAsync(harness, storage, home, match, device);
 
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(first.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(first.VerificationId, Clip(), SignedRecording(harness, first.VerificationId, new AttachVerificationEvidenceRequest()));
 
             Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                    .AttachEvidence(second.VerificationId, Clip(), new AttachVerificationEvidenceRequest()),
+                    .AttachEvidence(second.VerificationId, Clip(), SignedRecording(harness, second.VerificationId, new AttachVerificationEvidenceRequest())),
                 Throws.TypeOf<BusinessRuleException>().With.Message.Contains("already verified"));
 
             storage.Verify(
@@ -967,7 +989,7 @@ namespace GameHubz.Logic.Test.Bracket
 
             // The attempt that did complete still answers a retry with its record.
             var retried = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(first.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(first.VerificationId, Clip(), SignedRecording(harness, first.VerificationId, new AttachVerificationEvidenceRequest()));
             Assert.That(retried.Status, Is.EqualTo(MatchVerificationStatus.Verified));
         }
 
@@ -987,14 +1009,14 @@ namespace GameHubz.Logic.Test.Bracket
             // The OS and the app have both updated since. Neither touches the installation id, its key
             // or the platform id, so the phone only reports a newer version — no registration, no key.
             var start = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId, OsVersion = "19.0", AppVersion = "2.20.0" });
+                .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId, OsVersion = "19.0", AppVersion = "2.20.0" });
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
                 .SubmitBiometricProof(start.VerificationId, new SubmitBiometricProofRequest
                 {
                     Signature = VerificationProof.Sign(device.Secret, start.Message),
                 });
             await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest());
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, RecordingOf(1, 1)));
 
             var panel = await harness.NewMatchVerificationServiceAsUser(BracketTestHarness.OwnerUserId, storage.Object, role: "Admin")
                 .GetPanel(match);
@@ -1039,10 +1061,10 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(record.Flags, Does.Contain("sharedDevice"));
 
             // The player's own view of the same record never names anyone.
-            var own = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
-            Assert.That(own.Mine!.Device, Is.Not.Null, "their own phone is theirs to see");
-            Assert.That(own.Mine.Device!.OtherAccounts, Is.Empty);
-            Assert.That(own.Mine.Device.OtherAccountsOnDevice, Is.EqualTo(0));
+            var own = (await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match)).Games.Single().Mine;
+            Assert.That(own!.Device, Is.Not.Null, "their own phone is theirs to see");
+            Assert.That(own.Device!.OtherAccounts, Is.Empty);
+            Assert.That(own.Device.OtherAccountsOnDevice, Is.EqualTo(0));
         }
 
         [Test]
@@ -1065,6 +1087,373 @@ namespace GameHubz.Logic.Test.Bracket
 
             Assert.That(other.UserId, Is.EqualTo(brother));
             Assert.That(other.CameFirst, Is.False);
+        }
+
+        [TestCase(2)]
+        [TestCase(3)]
+        public async Task Series_EachGameKeepsItsOwnProof_AndAllPlayedGamesGateTheReport(int bestOf)
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, bestOf, TeamWinCondition.AggregateScore);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            var first = await VerifyAsync(harness, storage, home, match, device);
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.Games.Count, Is.EqualTo(bestOf));
+            Assert.That(panel.Games[0].Mine!.Id, Is.EqualTo(first.Id));
+            Assert.That(panel.Games.Skip(1).All(g => g.Mine == null && g.CanVerify), Is.True);
+            Assert.That(panel.ReportBlocked, Is.True);
+            var request = new MatchSeriesResultDto
+            {
+                MatchId = match, TournamentId = tid,
+                Games = Enumerable.Range(1, bestOf).Select(_ => new SeriesGame { SeriesNumber = 1, HomeScore = 2, AwayScore = 0 }).ToList(),
+            };
+            Assert.That(async () => await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(request),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+            for (int number = 2; number <= bestOf; number++)
+            {
+                var record = await VerifyAsync(harness, storage, home, match, device, gameNumber: number);
+                Assert.That(record.GameNumber, Is.EqualTo(number));
+                Assert.That(record.Id, Is.Not.EqualTo(first.Id));
+            }
+            panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.Games.All(g => g.Mine != null && !g.CanVerify), Is.True);
+            Assert.That(panel.ReportBlocked, Is.False);
+            Assert.That(panel.Games[0].Mine!.Id, Is.EqualTo(first.Id), "later games must not replace the first proof");
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(request);
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
+        public async Task Bo3_TwoZero_OnlyRequiresTheTwoPlayedGames()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            await VerifyAsync(harness, storage, home, match, device);
+            await VerifyAsync(harness, storage, home, match, device, gameNumber: 2);
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.ReportBlocked, Is.False);
+            Assert.That(panel.Games.Count, Is.EqualTo(3));
+            Assert.That(panel.Games[2].Mine, Is.Null);
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = match, TournamentId = tid,
+                Games = new() { new() { SeriesNumber = 1, HomeScore = 1 }, new() { SeriesNumber = 1, HomeScore = 1 } },
+            });
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
+        public async Task Bo3_DecidingThirdGame_CannotBorrowTheFirstTwoProofs()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            await VerifyAsync(harness, storage, home, match, device);
+            await VerifyAsync(harness, storage, home, match, device, gameNumber: 2);
+            var request = new MatchSeriesResultDto
+            {
+                MatchId = match, TournamentId = tid,
+                Games = new() { new() { SeriesNumber = 1, HomeScore = 1 }, new() { SeriesNumber = 1, AwayScore = 1 }, new() { SeriesNumber = 1, HomeScore = 1 } },
+            };
+            Assert.That(async () => await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(request),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+            await VerifyAsync(harness, storage, home, match, device, gameNumber: 3);
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(request);
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [TestCase(0, 1)]
+        [TestCase(4, 1)]
+        [TestCase(1, 0)]
+        [TestCase(1, 11)]
+        public async Task Start_RejectsGameOutsideSeriesFormat(int gameNumber, int seriesNumber)
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var service = harness.NewMatchVerificationServiceAsUser(home, Storage().Object);
+            var device = await service.RegisterDevice(Phone());
+            Assert.That(async () => await service.Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId, GameNumber = gameNumber, SeriesNumber = seriesNumber }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("outside the match format"));
+        }
+
+        [Test]
+        public async Task Tiebreak_FirstGameHasIndependentProof_AndCannotReplaceMainSeries()
+        {
+            var (harness, _, match, home) = await SetUpAsync();
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            var main = await VerifyAsync(harness, storage, home, match, device);
+            var replay = await VerifyAsync(harness, storage, home, match, device, seriesNumber: 2);
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.Games.Select(g => g.Mine!.Id), Is.EqualTo(new[] { main.Id, replay.Id }));
+            Assert.That(panel.Games.Select(g => g.SeriesNumber), Is.EqualTo(new[] { 1, 2 }));
+        }
+
+        [Test]
+        public async Task ExistingWholeMatchProof_StillCoversTheWholeSeries()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var proof = await VerifyAsync(harness, Storage(), home, match);
+            // Simulate a completed record written before phone binding/per-game verification.
+            using (var ctx = harness.ReadContext())
+            {
+                var row = ctx.Set<MatchResultVerificationEntity>().Single(x => x.Id == proof.Id);
+                row.SeriesNumber = row.GameNumber = MatchResultVerificationEntity.WholeMatch;
+                await ctx.SaveChangesAsync();
+            }
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, Storage().Object).GetPanel(match);
+            Assert.That(panel.Games.All(g => g.Mine?.Id == proof.Id && !g.CanVerify), Is.True);
+            Assert.That(panel.ReportBlocked, Is.False);
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = match, TournamentId = tid,
+                Games = new() { new() { SeriesNumber = 1, HomeScore = 1 }, new() { SeriesNumber = 1, AwayScore = 1 }, new() { SeriesNumber = 1, HomeScore = 1 } },
+            });
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
+        public async Task Recording_ProvingAnotherGame_IsRefused_AndTheAttemptWaitsForTheRightOne()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            var moment = DateTime.UtcNow.AddSeconds(-5);
+
+            var (first, _) = await ProveAsync(harness, storage, home, match, device);
+            await harness.NewMatchVerificationServiceAsUser(home, storage.Object).AttachEvidence(first.VerificationId, Clip(), SignedRecording(harness, first.VerificationId, new AttachVerificationEvidenceRequest { DurationMs = 41000, RecordedOn = moment, FileName = "IMG_0001.MOV" }));
+
+            // The same clip again, renamed on the way: recorded at the same moment, exactly as long.
+            var (second, _) = await ProveAsync(harness, storage, home, match, device, gameNumber: 2);
+            var again = new AttachVerificationEvidenceRequest { DurationMs = 41000, RecordedOn = moment, FileName = "IMG_0001 (1).MOV" };
+
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                    .AttachEvidence(second.VerificationId, Clip(), SignedRecording(harness, second.VerificationId, again)),
+                Throws.TypeOf<VerificationRecordingRejectedException>().With.Message.Contains("another game"));
+
+            storage.Verify(
+                s => s.UploadVideoAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()),
+                Times.Once,
+                "the refused clip is never stored");
+            Assert.That(Verification(harness, second.VerificationId).Status, Is.EqualTo(MatchVerificationStatus.BiometricVerified));
+
+            // The attempt is still open for the recording of this game.
+            var record = await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .AttachEvidence(second.VerificationId, Clip(), SignedRecording(harness, second.VerificationId, RecordingOf(1, 2)));
+            Assert.That(record.Status, Is.EqualTo(MatchVerificationStatus.Verified));
+            Assert.That(record.GameNumber, Is.EqualTo(2));
+        }
+
+        [Test]
+        public async Task Recording_OfAnEarlierGame_IsRefusedAsReused_NotAsMistimed()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+
+            // Game 1 was verified ten minutes ago, with the clip running around that Face ID.
+            var (first, _) = await ProveAsync(harness, storage, home, match, device);
+            DateTime earlier = DateTime.UtcNow.AddMinutes(-10);
+            using (var ctx = harness.ReadContext())
+            {
+                ctx.Set<MatchResultVerificationEntity>().Single(v => v.Id == first.VerificationId).BiometricVerifiedOn = earlier;
+                await ctx.SaveChangesAsync();
+            }
+            var clip = new AttachVerificationEvidenceRequest { DurationMs = 41000, RecordedOn = earlier.AddSeconds(-5), FileName = "RPReplay_Final.MP4" };
+            await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .AttachEvidence(first.VerificationId, Clip(), SignedRecording(harness, first.VerificationId, clip));
+
+            // Game 2's Face ID is now, long after that clip stopped: it fails the time check as well, but
+            // the player has to hear that the clip is game 1's.
+            var (second, _) = await ProveAsync(harness, storage, home, match, device, gameNumber: 2);
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                    .AttachEvidence(second.VerificationId, Clip(), SignedRecording(harness, second.VerificationId, clip)),
+                Throws.TypeOf<VerificationRecordingRejectedException>().With.Message.Contains("another game"));
+        }
+
+        [TestCase(true, TestName = "Recording_WithTheSameNameAndLength_ButRecordedLater_IsAnotherClip")]
+        [TestCase(false, TestName = "Recording_WithTheSameNameAndLength_AndNoRecordingTime_IsNotRefused")]
+        public async Task Recording_ThatOnlyLooksLikeAnotherGames_IsAccepted(bool knownMoments)
+        {
+            // A generic name and a round length are no proof of one clip: phones and apps reuse names, and
+            // two games can last the same. Only the moment it was recorded tells the same clip apart.
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+
+            var (first, _) = await ProveAsync(harness, storage, home, match, device);
+            await harness.NewMatchVerificationServiceAsUser(home, storage.Object).AttachEvidence(first.VerificationId, Clip(), SignedRecording(harness, first.VerificationId, new AttachVerificationEvidenceRequest { DurationMs = 30000, RecordedOn = knownMoments ? DateTime.UtcNow.AddSeconds(-20) : null, FileName = "result.mp4" }));
+
+            var (second, _) = await ProveAsync(harness, storage, home, match, device, gameNumber: 2);
+            var record = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).AttachEvidence(second.VerificationId, Clip(), SignedRecording(harness, second.VerificationId, new AttachVerificationEvidenceRequest { DurationMs = 30000, RecordedOn = knownMoments ? DateTime.UtcNow.AddSeconds(-5) : null, FileName = "result.mp4" }));
+
+            Assert.That(record.Status, Is.EqualTo(MatchVerificationStatus.Verified));
+            Assert.That(record.GameNumber, Is.EqualTo(2));
+        }
+
+        [Test]
+        public async Task OlderApp_After1Games_NeedsAnUpdateForNewProofs()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            for (int game = 1; game <= 1; game++) await VerifyAsync(harness, storage, home, match, device, gameNumber: game);
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Update GameHubz"));
+        }
+
+        [Test]
+        public async Task OlderApp_After2Games_NeedsAnUpdateForNewProofs()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            for (int game = 1; game <= 2; game++) await VerifyAsync(harness, storage, home, match, device, gameNumber: game);
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                .Start(match, new StartMatchVerificationRequest { DeviceId = device.DeviceId }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Update GameHubz"));
+        }
+
+        [Test]
+        public async Task OlderApp_OutsideAKnockout_OnceEveryGameIsProven_HasNothingLeftToVerify()
+        {
+            // A level series is a draw there, never followed by a tiebreak: the games are all there is.
+            var (harness, tid, match, home) = await SetUpAsync();
+            await SetSeriesFormat(harness, tid, match, 3, TeamWinCondition.MatchWins);
+            await SetStageType(harness, match, StageType.League);
+            var storage = Storage();
+            var device = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).RegisterDevice(Phone());
+            for (int game = 1; game <= 3; game++)
+                await VerifyAsync(harness, storage, home, match, device, gameNumber: game);
+
+            var panel = await harness.NewMatchVerificationServiceAsUser(home, storage.Object).GetPanel(match);
+            Assert.That(panel.Mine?.Status, Is.EqualTo(MatchVerificationStatus.Verified));
+            Assert.That(panel.CanVerify, Is.False);
+
+            Assert.That(async () => await harness.NewMatchVerificationServiceAsUser(home, storage.Object)
+                    .Start(match, new StartMatchVerificationRequest { SeriesNumber = 1, GameNumber = 1, DeviceId = device.DeviceId }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("already verified"));
+        }
+
+        [Test]
+        public async Task TiebreakReport_StandsOnTheRecordedSeries_AndOnlyProvesTheTiebreak()
+        {
+            // A level knockout series is parked until its tiebreak is played. Whoever reports the tiebreak
+            // sends the level series along again, and is not asked to prove what is already on record.
+            var (harness, tid, match, home) = await SetUpAsync();
+            var away = harness.ParticipantUserId(harness.Match(match).AwayParticipantId!.Value);
+            await harness.DenyManageFor(away, tid);
+            var storage = Storage();
+
+            await VerifyAsync(harness, storage, home, match);
+            var level = new SeriesGame { SeriesNumber = 1, HomeScore = 1, AwayScore = 1 };
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = match,
+                TournamentId = tid,
+                Games = new() { level },
+            });
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.TieBreakRequired));
+
+            var panel = await harness.NewMatchVerificationServiceAsUser(away, storage.Object).GetPanel(match);
+            Assert.That(panel.Games.Select(g => (g.SeriesNumber, g.GameNumber)), Is.EqualTo(new[] { (1, 1), (2, 1) }));
+            Assert.That(panel.ReportBlocked, Is.True, "the tiebreak still needs the away player's proof");
+
+            await VerifyAsync(harness, storage, away, match, seriesNumber: 2);
+            panel = await harness.NewMatchVerificationServiceAsUser(away, storage.Object).GetPanel(match);
+            Assert.That(panel.ReportBlocked, Is.False, "the level series is on record already");
+
+            // Rewriting the recorded series is a new claim about it, and that does need a proof.
+            Assert.That(async () => await harness.NewServiceAsUser(away).UpdateMatchSeriesResult(new MatchSeriesResultDto
+                {
+                    MatchId = match,
+                    TournamentId = tid,
+                    Games = new() { new() { SeriesNumber = 1, HomeScore = 2, AwayScore = 2 }, new() { SeriesNumber = 2, AwayScore = 1 } },
+                }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+
+            await harness.NewServiceAsUser(away).UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = match,
+                TournamentId = tid,
+                Games = new() { level, new() { SeriesNumber = 2, AwayScore = 1 } },
+            });
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
+        public async Task Report_ThatDropsARecordedGame_ProvesEveryGameItKeeps()
+        {
+            // Taking a won tiebreak back off the result adds no game to prove. It is not standing on the
+            // recorded result either — it rewrites it — so the old proofs exempt nothing.
+            var (harness, tid, match, home) = await SetUpAsync();
+            var away = harness.ParticipantUserId(harness.Match(match).AwayParticipantId!.Value);
+            await harness.DenyManageFor(away, tid);
+            var storage = Storage();
+
+            await VerifyAsync(harness, storage, home, match);
+            var level = new SeriesGame { SeriesNumber = 1, HomeScore = 1, AwayScore = 1 };
+            await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(new MatchSeriesResultDto { MatchId = match, TournamentId = tid, Games = new() { level } });
+            await VerifyAsync(harness, storage, away, match, seriesNumber: 2);
+            await harness.NewServiceAsUser(away).UpdateMatchSeriesResult(new MatchSeriesResultDto
+            {
+                MatchId = match,
+                TournamentId = tid,
+                Games = new() { level, new() { SeriesNumber = 2, AwayScore = 1 } },
+            });
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+
+            // The away player never proved the main series, so cannot resend it without the tiebreak.
+            Assert.That(async () => await harness.NewServiceAsUser(away).UpdateMatchSeriesResult(new MatchSeriesResultDto
+                {
+                    MatchId = match,
+                    TournamentId = tid,
+                    Games = new() { level },
+                }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
+        public async Task Report_WithNoGames_IsRefusedForWhatItIs()
+        {
+            // Nothing to prove is not a reason to refuse for want of a proof — the rule that does apply says why.
+            var (harness, tid, match, home) = await SetUpAsync();
+
+            Assert.That(async () => await harness.NewServiceAsUser(home).UpdateMatchSeriesResult(new MatchSeriesResultDto
+                {
+                    MatchId = match,
+                    TournamentId = tid,
+                    Games = new(),
+                }),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("at least one game"));
+        }
+
+        private static async Task SetSeriesFormat(BracketTestHarness harness, Guid tournament, Guid match, int bestOf, TeamWinCondition condition)
+        {
+            using var ctx = harness.ReadContext();
+            ctx.Set<MatchEntity>().Single(m => m.Id == match).BestOf = bestOf;
+            ctx.Set<TournamentEntity>().Single(t => t.Id == tournament).SeriesWinCondition = condition;
+            await ctx.SaveChangesAsync();
+        }
+
+        private static async Task SetStageType(BracketTestHarness harness, Guid match, StageType type)
+        {
+            using var ctx = harness.ReadContext();
+            var stageId = ctx.Set<MatchEntity>().Single(m => m.Id == match).TournamentStageId;
+            ctx.Set<TournamentStageEntity>().Single(s => s.Id == stageId).Type = type;
+            await ctx.SaveChangesAsync();
         }
 
         // ── helpers ──────────────────────────────────────────────────────────────────────────
@@ -1120,12 +1509,14 @@ namespace GameHubz.Logic.Test.Bracket
             Mock<IStorageService> storage,
             Guid userId,
             Guid matchId,
-            RegisterVerificationDeviceResponse? device = null)
+            RegisterVerificationDeviceResponse? device = null,
+            int gameNumber = 1,
+            int seriesNumber = 1)
         {
             device ??= await harness.NewMatchVerificationServiceAsUser(userId, storage.Object).RegisterDevice(Phone());
 
             var start = await harness.NewMatchVerificationServiceAsUser(userId, storage.Object)
-                .Start(matchId, new StartMatchVerificationRequest { DeviceId = device.DeviceId });
+                .Start(matchId, new StartMatchVerificationRequest { DeviceId = device.DeviceId, GameNumber = gameNumber, SeriesNumber = seriesNumber });
 
             // What the phone does after Face ID releases the key: sign the exact message it was handed.
             await harness.NewMatchVerificationServiceAsUser(userId, storage.Object)
@@ -1142,18 +1533,33 @@ namespace GameHubz.Logic.Test.Bracket
             Mock<IStorageService> storage,
             Guid userId,
             Guid matchId,
-            RegisterVerificationDeviceResponse? device = null)
+            RegisterVerificationDeviceResponse? device = null,
+            int gameNumber = 1,
+            int seriesNumber = 1)
         {
-            var (start, _) = await ProveAsync(harness, storage, userId, matchId, device);
+            var (start, _) = await ProveAsync(harness, storage, userId, matchId, device, gameNumber, seriesNumber);
 
             return await harness.NewMatchVerificationServiceAsUser(userId, storage.Object)
-                .AttachEvidence(start.VerificationId, Clip(), new AttachVerificationEvidenceRequest
-                {
-                    DurationMs = 32000,
-                    RecordedOn = DateTime.UtcNow.AddMinutes(-2),
-                    FileName = "RPReplay_Final.MP4",
-                });
+                .AttachEvidence(start.VerificationId, Clip(), SignedRecording(harness, start.VerificationId, RecordingOf(seriesNumber, gameNumber)));
         }
+
+        private static AttachVerificationEvidenceRequest SignedRecording(BracketTestHarness harness, Guid verificationId, AttachVerificationEvidenceRequest meta)
+        {
+            using var ctx = harness.ReadContext();
+            var row = ctx.Set<MatchResultVerificationEntity>().Single(x => x.Id == verificationId);
+            var device = ctx.Set<UserDeviceEntity>().Single(x => x.Id == row.UserDeviceId);
+            meta.Signature = VerificationProof.Sign(device.KeySecret, VerificationProof.BuildEvidenceMessage(
+                verificationId, row.MatchId, row.UserId, row.DeviceId, row.Challenge));
+            return meta;
+        }
+
+        // A different screen recording for every game, as a player would pick them.
+        private static AttachVerificationEvidenceRequest RecordingOf(int seriesNumber, int gameNumber) => new()
+        {
+            DurationMs = 32000 + (seriesNumber * 10 + gameNumber) * 1000,
+            RecordedOn = DateTime.UtcNow.AddSeconds(-10 - gameNumber),
+            FileName = $"RPReplay_Final_{seriesNumber}_{gameNumber}.MP4",
+        };
 
         private static RegisterVerificationDeviceRequest Phone(Guid? deviceId = null) => new()
         {

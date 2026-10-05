@@ -831,6 +831,7 @@ namespace GameHubz.Data.Repository
         public async Task<MatchEntity?> GetWithParticipants(Guid matchId)
         {
             return await this.BaseDbSet()
+                .Include(x => x.TournamentStage)
                 .Include(x => x.HomeParticipant)
                     .ThenInclude(p => p!.Team)
                         .ThenInclude(t => t!.Members)

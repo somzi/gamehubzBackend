@@ -20,6 +20,9 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        public Task<List<UserDeviceEntity>> GetVerifiedForUser(Guid userId) =>
+            this.BaseDbSet().Where(d => d.UserId == userId && d.LastVerifiedOn != null).ToListAsync();
+
         public Task<UserDeviceEntity?> GetForUser(Guid userId, Guid deviceId)
         {
             return this.BaseDbSet()

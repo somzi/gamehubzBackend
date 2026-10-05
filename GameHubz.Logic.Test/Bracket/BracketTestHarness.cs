@@ -264,8 +264,24 @@ namespace GameHubz.Logic.Test.Bracket
                 localization,
                 storage,
                 new TournamentAuthorizationService(factory, userContext, localization, Cache, userHubService: null!),
-                cache ?? Cache);
+                cache ?? Cache,
+                BuildVerificationPhoneService(factory, userContext));
         }
+
+        public TournamentVerificationPhoneService NewVerificationPhoneServiceAsUser(Guid userId, string role = "User") =>
+            BuildVerificationPhoneService(new TestUnitOfWorkFactory(newContext(), localization), BuildReader(userId, role));
+
+        public BadgeService NewBadgeServiceAsUser(Guid userId) => new(
+            new TestUnitOfWorkFactory(newContext(), localization), BuildReader(userId, "User"), localization,
+            new Mock<IHubContext<UserHub>>().Object,
+            new BadgeRefreshQueue(new Mock<IServiceScopeFactory>().Object, NullLogger<BadgeRefreshQueue>.Instance));
+
+        private TournamentVerificationPhoneService BuildVerificationPhoneService(IUnitOfWorkFactory factory, IUserContextReader reader) =>
+            new(factory, reader, localization,
+                new TournamentAuthorizationService(factory, reader, localization, Cache, userHubService: null!),
+                Notifications, new BadgeService(factory, reader, localization,
+                    new Mock<IHubContext<UserHub>>().Object,
+                    new BadgeRefreshQueue(new Mock<IServiceScopeFactory>().Object, NullLogger<BadgeRefreshQueue>.Instance)), Cache);
 
         /// <summary>
         /// TournamentService over a fresh request-like context. The round scheduling path exercised
@@ -331,6 +347,10 @@ namespace GameHubz.Logic.Test.Bracket
         /// </summary>
         public Task DenyManageFor(Guid userId, Guid tournamentId)
             => Cache.SetAsync<bool?>($"tournament_authz:{userId}:{tournamentId}", false);
+
+        /// <summary>The opposite of <see cref="DenyManageFor"/>: <paramref name="userId"/> manages the tournament, like a hub owner.</summary>
+        public Task AllowManageFor(Guid userId, Guid tournamentId)
+            => Cache.SetAsync<bool?>($"tournament_authz:{userId}:{tournamentId}", true);
 
         /// <summary>Convenience single-operation service (generation / single-read tests). Built once.</summary>
         public BracketService Service => lazyService ??= NewService();

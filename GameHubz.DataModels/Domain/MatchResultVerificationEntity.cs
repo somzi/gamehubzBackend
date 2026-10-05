@@ -21,7 +21,20 @@ namespace GameHubz.DataModels.Domain
     /// </summary>
     public class MatchResultVerificationEntity : BaseEntity
     {
+        /// <summary>
+        /// <see cref="SeriesNumber"/> and <see cref="GameNumber"/> of a proof for the whole match: every
+        /// record from before per-game verification, and any from an app too old to name a game. It
+        /// stands in for each game of that player, as it did under the rule it was made by.
+        /// </summary>
+        public const int WholeMatch = 0;
+
         public Guid MatchId { get; set; }
+
+        /// <summary>The series the proven game belongs to: 1 = main series, 2 = first tiebreak, …</summary>
+        public int SeriesNumber { get; set; } = 1;
+
+        /// <summary>The proven game, counted from 1 inside its series.</summary>
+        public int GameNumber { get; set; } = 1;
 
         public MatchEntity? Match { get; set; }
 
@@ -89,6 +102,9 @@ namespace GameHubz.DataModels.Domain
         /// for the organizer, never proof: metadata is whatever the file claims.
         /// </summary>
         public DateTime? RecordedOn { get; set; }
+
+        /// <summary>Original clip timestamp for duplicate detection, independent of clock corrections.</summary>
+        public DateTime? RawRecordedOn { get; set; }
 
         public int? EvidenceDurationMs { get; set; }
 

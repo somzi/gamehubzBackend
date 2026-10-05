@@ -3,6 +3,8 @@ namespace GameHubz.Logic.Interfaces
     public interface IUserDeviceRepository : IRepository<UserDeviceEntity>
     {
         /// <summary>This account's row for one phone, tracked so a re-registration can update it in place.</summary>
+        Task<List<UserDeviceEntity>> GetVerifiedForUser(Guid userId);
+
         Task<UserDeviceEntity?> GetForUser(Guid userId, Guid deviceId);
 
         /// <summary>History keyed by device row, recognizing Android reinstalls within each account.</summary>

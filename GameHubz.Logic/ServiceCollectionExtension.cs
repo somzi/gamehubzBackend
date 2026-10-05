@@ -85,6 +85,7 @@ namespace GameHubz.Logic
 
             services.AddTransient<MatchEvidenceService>();
             services.AddTransient<MatchVerificationService>();
+            services.AddTransient<TournamentVerificationPhoneService>();
 
             services.AddTransient<HubSocialService>();
 
