@@ -25,5 +25,8 @@ namespace GameHubz.DataModels.Models
         /// same semantics as <see cref="MatchResultDto.Cascade"/>.
         /// </summary>
         public bool Cascade { get; set; }
+
+        /// <summary>Entered from the bracket as the organizer — see <see cref="MatchResultDto.AsOrganizer"/>.</summary>
+        public bool AsOrganizer { get; set; }
     }
 }

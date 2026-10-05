@@ -156,6 +156,25 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         [Test]
+        public async Task Report_FromTheBracketAsOrganizer_SkipsVerification_EvenInTheirOwnMatch()
+        {
+            var (harness, tid, match, home) = await SetUpAsync();
+            var away = harness.ParticipantUserId(harness.Match(match).AwayParticipantId!.Value);
+            await harness.DenyManageFor(away, tid);
+
+            // A player claiming the organizer's screen gets nothing from it.
+            var claimed = Score(tid, match);
+            claimed.AsOrganizer = true;
+            Assert.That(async () => await harness.NewServiceAsUser(away).UpdateMatchResult(claimed),
+                Throws.TypeOf<BusinessRuleException>().With.Message.Contains("Verify your result first"));
+
+            // The organizer who plays it enters it from the bracket as the organizer.
+            await harness.AllowManageFor(home, tid);
+            await harness.NewServiceAsUser(home).UpdateMatchResult(claimed);
+            Assert.That(harness.Match(match).Status, Is.EqualTo(MatchStatus.Completed));
+        }
+
+        [Test]
         public async Task Report_ByAStranger_IsRefused()
         {
             // Without the setting a non-approval tournament takes a report without asking who sent it;

@@ -2650,7 +2650,8 @@ namespace GameHubz.Logic.Services
                 {
                     MatchId = request.MatchId,
                     TournamentId = request.TournamentId,
-                    Cascade = request.Cascade
+                    Cascade = request.Cascade,
+                    AsOrganizer = request.AsOrganizer
                 },
                 request.Games ?? new List<SeriesGame>());
 
@@ -2726,10 +2727,12 @@ namespace GameHubz.Logic.Services
             // proof from a registered phone plus that game's recording; see MatchVerificationService).
             // Games already on the recorded result, unchanged, stand on the proofs they came with — a
             // tiebreak report repeats the level series before it. Organizers stay outside it, as with the
-            // ready check: they are the escape hatch when a phone cannot verify at all — but not in a match
-            // they play themselves, where they report as the player they are.
+            // ready check: they are the escape hatch when a phone cannot verify at all. One who plays the
+            // match is outside it only when entering it from the bracket as the organizer; from the match
+            // sheet they report as the player they are.
             bool reportsOwnMatch = IsMatchParticipant(match, currentUser.UserId);
-            if (approvalCtx.RequireResultVerification && (!isPrivileged || reportsOwnMatch))
+            bool asOrganizer = isPrivileged && (!reportsOwnMatch || request.AsOrganizer);
+            if (approvalCtx.RequireResultVerification && !asOrganizer)
             {
                 // Only a participant can ever start a verification, so with the setting on nobody else
                 // can reach the report below — refused here with the reason that actually applies.
