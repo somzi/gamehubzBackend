@@ -105,6 +105,18 @@ namespace GameHubz.Logic.Services
                 ? Normalize(knockoutBestOf)
                 : Normalize(bestOf);
 
+        /// <summary>
+        /// The Best-of a match is played over: its own override, else the default of its phase. Needs the
+        /// match's stage loaded. One resolution for every reader — the result path, forfeits, verification.
+        /// </summary>
+        public static int BestOfFor(MatchEntity match, TournamentApprovalContext tournament)
+            => Normalize(match.BestOf ?? DefaultBestOfFor(
+                tournament.Format, match.TournamentStage?.Type, tournament.BestOf, tournament.KnockoutBestOf));
+
+        /// <summary>The tiebreak replay format of a match: its own override, else the tournament's.</summary>
+        public static int? TiebreakBestOfFor(MatchEntity match, TournamentApprovalContext tournament)
+            => match.TiebreakBestOf ?? tournament.TiebreakBestOf;
+
         /// <summary>Clamps an organizer-supplied Best-of into the supported range.</summary>
         public static int Normalize(int? bestOf)
         {

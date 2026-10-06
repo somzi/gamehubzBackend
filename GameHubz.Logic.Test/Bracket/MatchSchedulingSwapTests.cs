@@ -42,7 +42,7 @@ namespace GameHubz.Logic.Test.Bracket
             try
             {
                 await AwaitLock(pending, gate);
-                await harness.NewService().SwapBracketParticipants(tid, fixture.HomeParticipantId!.Value,
+                await harness.NewServiceAsPlatformAdmin().SwapBracketParticipants(tid, fixture.HomeParticipantId!.Value,
                     (flipSides ? fixture.AwayParticipantId : other.HomeParticipantId)!.Value);
                 afterSwap = Snapshot(harness, tid);
             }
@@ -77,7 +77,7 @@ namespace GameHubz.Logic.Test.Bracket
             try
             {
                 await AwaitLock(pending, gate);
-                await harness.NewService().SwapBracketParticipants(tid,
+                await harness.NewServiceAsPlatformAdmin().SwapBracketParticipants(tid,
                     fixture.HomeParticipantId!.Value, other.HomeParticipantId!.Value);
                 afterSwap = Snapshot(harness, tid);
             }

@@ -21,5 +21,13 @@ namespace GameHubz.Logic.Interfaces
         Task<List<HubEntity>> GetWithWebhookMissingGuildId();
 
         Task<List<HubLeaderboardEntryDto>> GetHubLeaderboard(Guid hubId);
+
+        /// <summary>
+        /// Hub avatars for a page of notifications: by hub id, and by tournament id (the tournament's
+        /// hub). Only hubs that have an avatar appear.
+        /// </summary>
+        Task<(Dictionary<Guid, string> ByHub, Dictionary<Guid, string> ByTournament)> GetAvatarUrls(
+            IReadOnlyCollection<Guid> hubIds,
+            IReadOnlyCollection<Guid> tournamentIds);
     }
 }

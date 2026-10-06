@@ -12,5 +12,10 @@ namespace GameHubz.DataModels.Models
         // downstream results first is required. Old clients never send this, so the default keeps
         // the original "blocked with a lock message" behaviour byte-identical.
         public bool Cascade { get; set; }
+
+        // Sent from the bracket, the organizer's screen: an organizer who plays the match enters it
+        // there as the organizer, outside result verification. Without it (the match sheet on Home)
+        // they report as the player they are. Ignored for anyone who does not manage the tournament.
+        public bool AsOrganizer { get; set; }
     }
 }

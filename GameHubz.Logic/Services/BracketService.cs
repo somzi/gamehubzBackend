@@ -2650,7 +2650,8 @@ namespace GameHubz.Logic.Services
                 {
                     MatchId = request.MatchId,
                     TournamentId = request.TournamentId,
-                    Cascade = request.Cascade
+                    Cascade = request.Cascade,
+                    AsOrganizer = request.AsOrganizer
                 },
                 request.Games ?? new List<SeriesGame>());
 
@@ -2722,18 +2723,27 @@ namespace GameHubz.Logic.Services
             }
 
             // Result verification: a participant's report — a direct result or a proposal alike — is only
-            // taken once that participant holds a verified record for this match (biometric proof from a
-            // registered phone plus the recording of the final score; see MatchVerificationService).
-            // Organizers stay outside it, as with the ready check: they are the escape hatch when a phone
-            // cannot verify at all.
-            if (approvalCtx.RequireResultVerification && !isPrivileged)
+            // taken once that participant holds a verified record of every game they report (biometric
+            // proof from a registered phone plus that game's recording; see MatchVerificationService).
+            // Games already on the recorded result, unchanged, stand on the proofs they came with — a
+            // tiebreak report repeats the level series before it. Organizers stay outside it, as with the
+            // ready check: they are the escape hatch when a phone cannot verify at all. One who plays the
+            // match is outside it only when entering it from the bracket as the organizer; from the match
+            // sheet they report as the player they are.
+            bool reportsOwnMatch = IsMatchParticipant(match, currentUser.UserId);
+            bool asOrganizer = isPrivileged && (!reportsOwnMatch || request.AsOrganizer);
+            if (approvalCtx.RequireResultVerification && !asOrganizer)
             {
                 // Only a participant can ever start a verification, so with the setting on nobody else
                 // can reach the report below — refused here with the reason that actually applies.
-                if (!IsMatchParticipant(match, currentUser.UserId))
+                if (!reportsOwnMatch)
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.NotAMatchParticipant"]);
 
-                if (!await this.AppUnitOfWork.MatchResultVerificationRepository.HasVerified(match.Id!.Value, currentUser.UserId))
+                var gamesToProve = submittedGames == null
+                    ? new List<(int Series, int Game)> { (1, 1) }
+                    : VerificationGames.ToProve(submittedGames, match.Games);
+
+                if (!await this.AppUnitOfWork.MatchResultVerificationRepository.HasVerifiedGames(match.Id!.Value, currentUser.UserId, gamesToProve))
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationRequiredToReport"]);
             }
 
@@ -2882,9 +2892,8 @@ namespace GameHubz.Logic.Services
             // The match's own override wins; without one it inherits its PHASE default, so the
             // knockout of a groups/Swiss tournament can be played over a different length than the
             // phase that fed it.
-            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
-                approvalCtx.Format, match.TournamentStage?.Type, approvalCtx.BestOf, approvalCtx.KnockoutBestOf));
-            var tiebreakBestOf = match.TiebreakBestOf ?? approvalCtx.TiebreakBestOf;
+            var bestOf = SeriesEvaluator.BestOfFor(match, approvalCtx);
+            var tiebreakBestOf = SeriesEvaluator.TiebreakBestOfFor(match, approvalCtx);
 
             if (submittedGames == null)
             {
@@ -3896,9 +3905,8 @@ namespace GameHubz.Logic.Services
         private static SubmittedSeries BuildForfeitSeries(MatchEntity match, TournamentApprovalContext approvalCtx, bool homeWins)
         {
             var condition = approvalCtx.SeriesWinCondition;
-            var bestOf = SeriesEvaluator.Normalize(match.BestOf ?? SeriesEvaluator.DefaultBestOfFor(
-                approvalCtx.Format, match.TournamentStage?.Type, approvalCtx.BestOf, approvalCtx.KnockoutBestOf));
-            var tiebreakBestOf = match.TiebreakBestOf ?? approvalCtx.TiebreakBestOf;
+            var bestOf = SeriesEvaluator.BestOfFor(match, approvalCtx);
+            var tiebreakBestOf = SeriesEvaluator.TiebreakBestOfFor(match, approvalCtx);
 
             int gamesToWrite = bestOf <= 1 || condition == TeamWinCondition.AggregateScore
                 ? bestOf
@@ -4732,7 +4740,7 @@ namespace GameHubz.Logic.Services
             {
                 this.discordDmService.SendDmInBackground(
                     opponent.DiscordUserId,
-                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                    $"⚠️ **{proposerName}** reported a result for your match — confirm or dispute it in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)", match.TournamentId);
             }
         }
 
@@ -4799,7 +4807,7 @@ namespace GameHubz.Logic.Services
                 {
                     this.discordDmService.SendDmInBackground(
                         t.DiscordUserId,
-                        $"⚔️ **{homeName} vs {awayName}** ended level — pick your player for the tie-break in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)");
+                        $"⚔️ **{homeName} vs {awayName}** ended level — pick your player for the tie-break in the app.\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)", tournamentId);
                 }
             }
             catch { /* notifications must never break team-match aggregation */ }
@@ -4869,7 +4877,7 @@ namespace GameHubz.Logic.Services
                 string dmContent = $"🏆 Congratulations — you won **{title}**!\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{tournamentId}>)";
                 foreach (var discordUserId in discordUserIds)
                 {
-                    this.discordDmService.SendDmInBackground(discordUserId, dmContent);
+                    this.discordDmService.SendDmInBackground(discordUserId, dmContent, tournamentId);
                 }
             }
             catch { /* never let a win-notification failure break tournament completion */ }

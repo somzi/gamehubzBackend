@@ -27,6 +27,44 @@ namespace GameHubz.Data.Repository
             .ToListAsync();
         }
 
+        public async Task<(Dictionary<Guid, string> ByHub, Dictionary<Guid, string> ByTournament)> GetAvatarUrls(
+            IReadOnlyCollection<Guid> hubIds,
+            IReadOnlyCollection<Guid> tournamentIds)
+        {
+            var byHub = new Dictionary<Guid, string>();
+            var byTournament = new Dictionary<Guid, string>();
+
+            if (hubIds.Count > 0)
+            {
+                var hubs = await this.BaseDbSet()
+                    .Where(x => hubIds.Contains(x.Id!.Value) && x.AvatarUrl != null && x.AvatarUrl != "")
+                    .Select(x => new { Id = x.Id!.Value, x.AvatarUrl })
+                    .ToListAsync();
+
+                foreach (var hub in hubs)
+                {
+                    byHub[hub.Id] = hub.AvatarUrl!;
+                }
+            }
+
+            if (tournamentIds.Count > 0)
+            {
+                var tournaments = await this.BaseDbSet()
+                    .Where(x => x.AvatarUrl != null && x.AvatarUrl != "")
+                    .SelectMany(x => x.Tournaments!
+                        .Where(t => tournamentIds.Contains(t.Id!.Value))
+                        .Select(t => new { TournamentId = t.Id!.Value, x.AvatarUrl }))
+                    .ToListAsync();
+
+                foreach (var tournament in tournaments)
+                {
+                    byTournament[tournament.TournamentId] = tournament.AvatarUrl!;
+                }
+            }
+
+            return (byHub, byTournament);
+        }
+
         public Task<bool> UserOwnsAnyHub(Guid userId)
         {
             return this.BaseDbSet()

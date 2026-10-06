@@ -3,11 +3,30 @@ namespace GameHubz.Logic.Interfaces
     public interface IMatchResultVerificationRepository : IRepository<MatchResultVerificationEntity>
     {
         /// <summary>
-        /// Whether this user holds a completed verification for this match — the question the result
-        /// gate asks. A verification from before a rejected proposal still counts: it proves the same
-        /// player unlocked the same phone and recorded the final score of the same match.
+        /// Whether this user holds a completed verification of this game — or of the whole match, which
+        /// covers every game. Asked with <see cref="MatchResultVerificationEntity.WholeMatch"/>, only a
+        /// whole-match verification answers.
         /// </summary>
-        Task<bool> HasVerified(Guid matchId, Guid userId);
+        Task<bool> HasVerified(Guid matchId, Guid userId, int seriesNumber, int gameNumber);
+
+        /// <summary>
+        /// Whether this user has proven every one of these games — the question the result gate asks. A
+        /// verification from before a rejected proposal still counts: it proves the same player unlocked
+        /// the same phone and recorded that game of the same match. Nothing to prove is true.
+        /// </summary>
+        Task<bool> HasVerifiedGames(Guid matchId, Guid userId, IReadOnlyCollection<(int Series, int Game)> games);
+
+        /// <summary>
+        /// Whether this user already proved another game of this match with the same recording: one
+        /// recorded at the same moment and running exactly as long, as the phone read them from the clip.
+        /// False whenever either fact is missing.
+        /// </summary>
+        Task<bool> IsRecordingUsedForAnotherGame(
+            Guid matchId,
+            Guid userId,
+            Guid verificationId,
+            DateTime? recordedOn,
+            int? durationMs);
 
         /// <summary>Whether anyone holds a completed verification on any of these matches.</summary>
         Task<bool> AnyVerifiedForMatches(IReadOnlyCollection<Guid> matchIds);
@@ -20,8 +39,6 @@ namespace GameHubz.Logic.Interfaces
 
         /// <summary>Attempts this user started on this match since a moment — the rate limit.</summary>
         Task<int> CountStartedSince(Guid matchId, Guid userId, DateTime since);
-
-        Task<int> CountVerified(Guid matchId, Guid userId);
 
         /// <summary>
         /// Atomically claims the recording upload of an attempt that is waiting for one. False when the

@@ -32,9 +32,9 @@ namespace GameHubz.Api.Controllers
 
         /// <summary>The verification state of a match, shaped for the caller (organizer / player / spectator).</summary>
         [HttpGet("{id}/verification")]
-        public async Task<IActionResult> GetPanel(Guid id)
+        public async Task<IActionResult> GetPanel(Guid id, [FromQuery] Guid? deviceId = null)
         {
-            return Ok(await this.verificationService.GetPanel(id));
+            return Ok(await this.verificationService.GetPanel(id, deviceId));
         }
 
         /// <summary>
@@ -71,7 +71,8 @@ namespace GameHubz.Api.Controllers
 
         // One clip, already compressed on the phone: the per-file cap in the storage layer is 32MB, so
         // this envelope leaves room for the multipart framing and the metadata fields around it and no
-        // more — ordinary evidence keeps the only larger limit in the API.
+        // more — ordinary evidence keeps the only larger limit in the API. 409 when the clip already
+        // proves another game: the phone's cue to have another one picked for the same attempt.
         [RequestSizeLimit(40 * 1024 * 1024)]
         [HttpPost("verification/{verificationId}/evidence")]
         public async Task<IActionResult> AttachEvidence(
@@ -79,7 +80,14 @@ namespace GameHubz.Api.Controllers
             IFormFile? file,
             [FromForm] AttachVerificationEvidenceRequest meta)
         {
-            return Ok(await this.verificationService.AttachEvidence(verificationId, file, meta));
+            try
+            {
+                return Ok(await this.verificationService.AttachEvidence(verificationId, file, meta));
+            }
+            catch (VerificationRecordingRejectedException ex)
+            {
+                return Conflict(new { message = ex.Message });
+            }
         }
     }
 }

@@ -553,12 +553,22 @@ namespace GameHubz.Data.Repository
         // recent match for the "Last meeting" card.
         public async Task<HeadToHeadDto> GetHeadToHead(Guid userId, Guid opponentId)
         {
+            // Resolve both players' live solo participant IDs in one round trip. The
+            // membership predicate then uses Match's indexed columns on both sides.
+            var participants = await this.ContextBase.Set<TournamentParticipantEntity>()
+                .AsNoTracking()
+                .Where(p => p.UserId == userId || p.UserId == opponentId)
+                .Select(p => new { Id = p.Id!.Value, p.UserId })
+                .ToListAsync();
+            var myIds = participants.Where(p => p.UserId == userId).Select(p => p.Id).ToList();
+            var opponentIds = participants.Where(p => p.UserId == opponentId).Select(p => p.Id).ToList();
+
             var rows = await this.BaseDbSet()
                 .AsNoTracking()
                 .Where(m => m.Status == MatchStatus.Completed
                     && ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null
-                            && ((m.HomeParticipant!.UserId == userId && m.AwayParticipant!.UserId == opponentId)
-                                || (m.HomeParticipant!.UserId == opponentId && m.AwayParticipant!.UserId == userId)))
+                            && ((myIds.Contains(m.HomeParticipantId.Value) && opponentIds.Contains(m.AwayParticipantId.Value))
+                                || (opponentIds.Contains(m.HomeParticipantId.Value) && myIds.Contains(m.AwayParticipantId.Value))))
                         || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null
                             && ((m.HomeUserId == userId && m.AwayUserId == opponentId)
                                 || (m.HomeUserId == opponentId && m.AwayUserId == userId)))))
@@ -821,6 +831,7 @@ namespace GameHubz.Data.Repository
         public async Task<MatchEntity?> GetWithParticipants(Guid matchId)
         {
             return await this.BaseDbSet()
+                .Include(x => x.TournamentStage)
                 .Include(x => x.HomeParticipant)
                     .ThenInclude(p => p!.Team)
                         .ThenInclude(t => t!.Members)

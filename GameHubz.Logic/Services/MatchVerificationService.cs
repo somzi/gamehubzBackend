@@ -11,7 +11,7 @@ namespace GameHubz.Logic.Services
     /// The flow, in the order the server enforces it:
     ///   1. <see cref="RegisterDevice"/> — once per phone per account. Issues an HMAC key the phone locks
     ///      behind its biometrics (see <see cref="VerificationProof"/>).
-    ///   2. <see cref="Start"/> — a single-use challenge for one match, valid for a few minutes.
+    ///   2. <see cref="Start"/> — a single-use challenge for one game of a match, valid for a few minutes.
     ///   3. <see cref="SubmitBiometricProof"/> — the phone unlocks the key with Face ID / fingerprint and
     ///      signs the challenge; the server checks the signature against the key it issued.
     ///   4. <see cref="AttachEvidence"/> — the recording, inside a window that opens at step 3. It is
@@ -56,6 +56,7 @@ namespace GameHubz.Logic.Services
         public const string FlagSharedDevice = "sharedDevice";
         public const string FlagEmulator = "emulator";
         public const string FlagOldRecording = "oldRecording";
+        public const string FlagNoRecordingTime = "noRecordingTime";
 
         public const string FailureSignatureMismatch = "signatureMismatch";
 
@@ -64,18 +65,12 @@ namespace GameHubz.Logic.Services
         private const int MaxKeysIssuedPerDay = 10;
         private const int MaxAttemptsPerMatchPerHour = 10;
 
-        /// <summary>
-        /// One verification per player per match. A second one would stand in front of the first — the
-        /// panel shows a player's latest — so the recording an organizer sees would be whichever the
-        /// player liked better. A wrong clip is the organizer's call to settle, not the player's to replace.
-        /// </summary>
-        private const int MaxVerifiedPerMatch = 1;
-
         private static readonly TimeSpan KeyIssueWindow = TimeSpan.FromDays(1);
 
         private readonly IStorageService storageService;
         private readonly TournamentAuthorizationService tournamentAuth;
         private readonly ICacheService cacheService;
+        private readonly TournamentVerificationPhoneService phoneService;
 
         public MatchVerificationService(
             IUnitOfWorkFactory factory,
@@ -83,12 +78,14 @@ namespace GameHubz.Logic.Services
             ILocalizationService localizationService,
             IStorageService storageService,
             TournamentAuthorizationService tournamentAuth,
-            ICacheService cacheService)
+            ICacheService cacheService,
+            TournamentVerificationPhoneService phoneService)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.storageService = storageService;
             this.tournamentAuth = tournamentAuth;
             this.cacheService = cacheService;
+            this.phoneService = phoneService;
         }
 
         // Counts issuances, not device rows: re-issuing the key of one phone rewrites the same row, so a
@@ -114,7 +111,7 @@ namespace GameHubz.Logic.Services
 
             DateTime now = DateTime.UtcNow;
 
-            if (!await this.TryReserveKeyIssue(user.UserId))
+            if (!await TryReserveKeyIssue(this.cacheService, user.UserId))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationTooManyDevices"]);
 
             UserDeviceEntity? device = request.DeviceId is Guid requested && requested != Guid.Empty
@@ -180,17 +177,31 @@ namespace GameHubz.Logic.Services
 
             ThrowIfMatchClosed(match);
 
-            // Before the device is even looked up: a phone whose key the server no longer knows would
-            // otherwise re-register — spending one of the day's key issuances — only to be told this.
-            if (await this.AppUnitOfWork.MatchResultVerificationRepository.CountVerified(matchId, user.UserId) >= MaxVerifiedPerMatch)
+            if (!request.SeriesNumber.HasValue || !request.GameNumber.HasValue)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationUpdateApp"]);
+            int seriesNumber = request.SeriesNumber.Value;
+            int gameNumber = request.GameNumber.Value;
+            int bestOf = SeriesEvaluator.BestOfFor(match, settings);
+            if (seriesNumber < 1 || seriesNumber > SeriesEvaluator.MaxSeriesCount
+                || gameNumber < 1 || gameNumber > SeriesEvaluator.BestOfForSeries(
+                    seriesNumber, bestOf, SeriesEvaluator.TiebreakBestOfFor(match, settings)))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationGameOutOfRange"]);
+
+            if (await this.AppUnitOfWork.MatchResultVerificationRepository.HasVerified(matchId, user.UserId, seriesNumber, gameNumber))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationAlreadyVerified"]);
 
-            var device = await this.AppUnitOfWork.UserDeviceRepository.GetForUser(user.UserId, request.DeviceId)
-                ?? throw new VerificationDeviceUnknownException(this.LocalizationService["BusinessRule.VerificationDeviceNotRegistered"]);
+            // A row recorded at tournament registration has no key yet. 409 sends the phone to register,
+            // which issues the key on that same row.
+            var device = await this.AppUnitOfWork.UserDeviceRepository.GetForUser(user.UserId, request.DeviceId);
+            if (device == null || string.IsNullOrEmpty(device.KeySecret))
+                throw new VerificationDeviceUnknownException(this.LocalizationService["BusinessRule.VerificationDeviceNotRegistered"]);
+
+            if (await this.phoneService.BindOrCheck(match.TournamentId, device) != TournamentPlayerDeviceStatus.Active)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationPhoneNeedsApproval"]);
 
             DateTime now = DateTime.UtcNow;
 
-            if (await this.AppUnitOfWork.MatchResultVerificationRepository.CountStartedSince(matchId, user.UserId, now.AddHours(-1)) >= MaxAttemptsPerMatchPerHour)
+            if (await this.AppUnitOfWork.MatchResultVerificationRepository.CountStartedSince(matchId, user.UserId, now.AddHours(-1)) >= MaxAttemptsPerMatchPerHour * bestOf)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationTooManyAttempts"]);
 
             // The phone says what it is now, on every attempt. The row was written at registration and
@@ -204,6 +215,8 @@ namespace GameHubz.Logic.Services
             var verification = new MatchResultVerificationEntity
             {
                 MatchId = matchId,
+                SeriesNumber = seriesNumber,
+                GameNumber = gameNumber,
                 UserId = user.UserId,
                 UserDeviceId = device.Id,
                 DeviceId = device.DeviceId,
@@ -248,7 +261,7 @@ namespace GameHubz.Logic.Services
             // A retry whose first answer was lost on the way back: the proof is already in, and saying
             // so is the idempotent answer. Anything else past this point is a fresh attempt at step 3.
             if (verification.Status is MatchVerificationStatus.BiometricVerified or MatchVerificationStatus.Verified)
-                return await this.BuildOwnRecord(verification);
+                return await this.BuildBiometricResponse(verification);
 
             if (verification.Status == MatchVerificationStatus.Failed)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationAttemptFailed"]);
@@ -264,6 +277,10 @@ namespace GameHubz.Logic.Services
 
             if (device == null)
                 throw new VerificationDeviceUnknownException(this.LocalizationService["BusinessRule.VerificationDeviceNotRegistered"]);
+
+            var attemptMatch = await this.AppUnitOfWork.MatchRepository.ShallowGetById(verification.MatchId)
+                ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+            await this.ThrowIfPhoneReplaced(attemptMatch.TournamentId, device);
 
             string message = VerificationProof.BuildMessage(
                 verification.Id!.Value, verification.MatchId, verification.UserId, verification.DeviceId, verification.Challenge);
@@ -294,7 +311,7 @@ namespace GameHubz.Logic.Services
 
             await this.SaveAsync();
 
-            return await this.BuildOwnRecord(verification);
+            return await this.BuildBiometricResponse(verification);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -309,6 +326,15 @@ namespace GameHubz.Logic.Services
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
             var verification = await this.LoadOwnVerification(verificationId, user.UserId);
+
+            if (string.IsNullOrWhiteSpace(meta.Signature))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationUpdateApp"]);
+            var uploadDevice = verification.UserDeviceId.HasValue
+                ? await this.AppUnitOfWork.UserDeviceRepository.GetById(verification.UserDeviceId.Value) : null;
+            string uploadMessage = VerificationProof.BuildEvidenceMessage(verificationId, verification.MatchId,
+                verification.UserId, verification.DeviceId, verification.Challenge);
+            if (uploadDevice == null || !VerificationProof.IsValid(uploadDevice.KeySecret, uploadMessage, meta.Signature))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationUploadWrongPhone"]);
 
             // The upload landed but its answer did not: a retry must not store the clip twice.
             if (verification.Status == MatchVerificationStatus.Verified)
@@ -336,11 +362,32 @@ namespace GameHubz.Logic.Services
             // Settled while the player was picking the clip: there is no longer a report to verify.
             ThrowIfMatchClosed(match);
 
+            await this.ThrowIfPhoneReplaced(match.TournamentId, uploadDevice);
+
             // A second attempt the player kept open while another one finished. Start refuses a new
-            // attempt once the match has their verification; this is the same rule for one that was
+            // attempt once the game has their verification; this is the same rule for one that was
             // already under way. (This attempt being the verified one returned above.)
-            if (await this.AppUnitOfWork.MatchResultVerificationRepository.CountVerified(verification.MatchId, user.UserId) >= MaxVerifiedPerMatch)
+            if (await this.AppUnitOfWork.MatchResultVerificationRepository.HasVerified(verification.MatchId, user.UserId, verification.SeriesNumber, verification.GameNumber))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationAlreadyVerified"]);
+
+            int? durationMs = meta.DurationMs is > 0 and < 60 * 60 * 1000 ? meta.DurationMs : null;
+            DateTime? rawRecordedOn = meta.RecordedOn.HasValue ? DateTime.SpecifyKind(meta.RecordedOn.Value, DateTimeKind.Utc) : null;
+
+            // One clip proves one game. The same recording picked again — by mistake, or to stretch one
+            // game over the series — would leave the per-game proofs saying nothing, so it is refused
+            // before anything is stored, and the attempt stays open for the right clip. Asked before the
+            // time check: a reused clip fails that one too, but only this message says what happened.
+            if (verification.GameNumber != MatchResultVerificationEntity.WholeMatch
+                && await this.AppUnitOfWork.MatchResultVerificationRepository.IsRecordingUsedForAnotherGame(
+                    verification.MatchId, user.UserId, verificationId, rawRecordedOn, durationMs))
+                throw new VerificationRecordingRejectedException(this.LocalizationService["BusinessRule.VerificationRecordingAlreadyUsed"]);
+
+            if (VerificationRecordingTime.Overlaps(meta.RecordedOn, durationMs, meta.ClockOffsetMs,
+                    meta.TimeZoneOffsetMinutes, verification.BiometricVerifiedOn.Value) == false)
+                throw new VerificationRecordingRejectedException(this.LocalizationService["BusinessRule.VerificationRecordingNotDuringBiometric"]);
+            DateTime? recordedOn = VerificationRecordingTime.Normalize(rawRecordedOn, durationMs, meta.ClockOffsetMs,
+                meta.TimeZoneOffsetMinutes, verification.BiometricVerifiedOn.Value);
+            string? clipFileName = Truncate(meta.FileName, 256);
 
             // One upload per attempt. The Verified check above only covers a retry that arrives after the
             // first upload finished; a retry that arrives DURING it — the phone gave up waiting at its
@@ -405,10 +452,10 @@ namespace GameHubz.Logic.Services
                         new VerificationUploadResult(
                             evidence.Id!.Value,
                             completedOn,
-                            SanitizePastTimestamp(meta.RecordedOn, now),
-                            meta.DurationMs is > 0 and < 60 * 60 * 1000 ? meta.DurationMs : null,
-                            Truncate(meta.FileName, 256),
-                            user.UserId));
+                            recordedOn,
+                            durationMs,
+                            clipFileName,
+                            user.UserId, rawRecordedOn));
 
                     if (!completed) throw new UploadClaimLostException();
 
@@ -477,7 +524,7 @@ namespace GameHubz.Logic.Services
         /// <see cref="MatchVerificationPanelDto"/>. Organizers get every device detail and the flags;
         /// players get both sides' state and their own device; anyone else only the verified state.
         /// </summary>
-        public async Task<MatchVerificationPanelDto> GetPanel(Guid matchId)
+        public async Task<MatchVerificationPanelDto> GetPanel(Guid matchId, Guid? deviceId = null)
         {
             var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
@@ -493,10 +540,18 @@ namespace GameHubz.Logic.Services
 
             var shown = await this.AppUnitOfWork.MatchResultVerificationRepository.GetShownForMatch(matchId);
 
+            // Each player's latest proof of each game. A whole-match proof — every record from before
+            // per-game verification, and any from an app that names no game — stands in for every game
+            // of its player that has no proof of its own.
+            const int wholeMatch = MatchResultVerificationEntity.WholeMatch;
             var latestVerified = shown
                 .Where(v => v.Status == MatchVerificationStatus.Verified)
-                .GroupBy(v => v.UserId)
+                .GroupBy(v => (v.UserId, v.SeriesNumber, v.GameNumber))
                 .ToDictionary(g => g.Key, g => g.OrderByDescending(v => v.VerifiedOn).First());
+
+            MatchResultVerificationEntity? ProofOf(Guid playerId, int seriesNumber, int gameNumber)
+                => latestVerified.GetValueOrDefault((playerId, seriesNumber, gameNumber))
+                    ?? latestVerified.GetValueOrDefault((playerId, wholeMatch, wholeMatch));
 
             var players = PlayersOf(match);
 
@@ -505,59 +560,129 @@ namespace GameHubz.Logic.Services
                 ? await this.LoadOrganizerDeviceContext(shown, players)
                 : OrganizerDeviceContext.Empty;
 
-            var records = new List<MatchVerificationRecordDto>();
-
+            // A game nobody has proven still draws a row per player — "your opponent has not verified" is
+            // half of what the panel is for — so the names are read once, not per game.
+            var identities = new Dictionary<Guid, UserEntity?>();
             foreach (Guid playerId in players)
+                identities[playerId] = await this.AppUnitOfWork.UserRepository.GetById(playerId);
+
+            int bestOf = SeriesEvaluator.BestOfFor(match, settings);
+            int? tiebreakBestOf = SeriesEvaluator.TiebreakBestOfFor(match, settings);
+            var recorded = match.Games;
+            var played = PlayedGamesOf(match);
+
+            // Every game of the format, through the last series anything was played or proven in — and
+            // the tiebreak a parked match is still waiting for.
+            int lastSeries = Math.Max(
+                played.Select(g => g.SeriesNumber).DefaultIfEmpty(1).Max(),
+                shown.Select(v => v.SeriesNumber).DefaultIfEmpty(1).Max());
+            if (match.Status == MatchStatus.TieBreakRequired)
+                lastSeries = Math.Max(lastSeries, Math.Min(SeriesEvaluator.MaxSeriesCount, played.Select(g => g.SeriesNumber).DefaultIfEmpty(1).Max() + 1));
+
+            var games = new List<MatchVerificationGameDto>();
+
+            for (int seriesNumber = 1; seriesNumber <= lastSeries; seriesNumber++)
             {
-                if (latestVerified.TryGetValue(playerId, out var record))
+                for (int gameNumber = 1; gameNumber <= SeriesEvaluator.BestOfForSeries(seriesNumber, bestOf, tiebreakBestOf); gameNumber++)
                 {
-                    records.Add(this.MapRecord(record, user.UserId, isManager, organizer));
-                    continue;
+                    var records = players
+                        .Select(playerId => ProofOf(playerId, seriesNumber, gameNumber) is { } proof
+                            ? this.MapRecord(proof, user.UserId, isManager, organizer)
+                            : new MatchVerificationRecordDto
+                            {
+                                SeriesNumber = seriesNumber,
+                                GameNumber = gameNumber,
+                                UserId = playerId,
+                                Username = identities[playerId]?.Username ?? string.Empty,
+                                AvatarUrl = identities[playerId]?.AvatarUrl,
+                                Status = MatchVerificationStatus.Started,
+                            })
+                        .ToList();
+
+                    // Failed attempts are an organizer's business: a player sees their own through the error
+                    // they were shown at the time. One from an app that names no game is listed under the first.
+                    if (isManager)
+                    {
+                        records.AddRange(shown
+                            .Where(v => v.Status == MatchVerificationStatus.Failed
+                                && ((v.SeriesNumber == seriesNumber && v.GameNumber == gameNumber)
+                                    || (v.GameNumber == wholeMatch && seriesNumber == 1 && gameNumber == 1)))
+                            .Select(v => this.MapRecord(v, user.UserId, isManager, organizer)));
+                    }
+
+                    var mine = records.FirstOrDefault(r => r.UserId == user.UserId && r.Status == MatchVerificationStatus.Verified);
+
+                    games.Add(new MatchVerificationGameDto
+                    {
+                        SeriesNumber = seriesNumber,
+                        GameNumber = gameNumber,
+                        Mine = mine,
+                        Records = records,
+                        CanVerify = settings.RequireResultVerification && isParticipant && isOpen && mine == null,
+                    });
                 }
-
-                // Not verified (yet). The row is still drawn — "your opponent has not verified" is half
-                // of what the panel is for — so it needs a name without a record to take one from.
-                var player = await this.AppUnitOfWork.UserRepository.GetById(playerId);
-                records.Add(new MatchVerificationRecordDto
-                {
-                    UserId = playerId,
-                    Username = player?.Username ?? string.Empty,
-                    AvatarUrl = player?.AvatarUrl,
-                    Status = MatchVerificationStatus.Started,
-                });
             }
 
-            // Failed attempts are an organizer's business: a player sees their own through the error
-            // they were shown at the time.
-            if (isManager)
-            {
-                records.AddRange(shown
-                    .Where(v => v.Status == MatchVerificationStatus.Failed)
-                    .Select(v => this.MapRecord(v, user.UserId, isManager, organizer)));
-            }
+            // What the caller's next report has to carry proofs for — the gate's own rule: the games of a
+            // proposal on file, minus those already on the recorded result; with nothing on file, the
+            // shortest series still to be played.
+            var toProve = VerificationGames.ToProve(played, recorded);
+            if (toProve.Count == 0)
+                toProve = VerificationGames.ShortestNextSeries(recorded, bestOf, tiebreakBestOf, settings.SeriesWinCondition);
 
-            bool callerVerified = latestVerified.ContainsKey(user.UserId);
+            bool callerWholeMatch = latestVerified.ContainsKey((user.UserId, wholeMatch, wholeMatch));
+            bool callerVerified = callerWholeMatch
+                || toProve.All(game => latestVerified.ContainsKey((user.UserId, game.Series, game.Game)));
+
+            // An app from before per-game verification knows one proof per match. It shows the player as
+            // verified — and offers nothing more — once that is all it could ever need; until then it offers
+            // its one verification, which covers the whole match. Outside a knockout that is when their
+            // proofs cover every game the match can still be reported with. In a knockout a level series
+            // brings a tiebreak, reported in the same go and impossible to prove game by game in that app,
+            // so only its own whole-match proof closes it. Games proven in the current app on another phone
+            // so never leave it stuck.
+            bool coveredForOlderApp = callerWholeMatch
+                || (!VerificationGames.TiebreakCanFollow(match)
+                    && VerificationGames.EveryGame(played, match.Status == MatchStatus.TieBreakRequired, bestOf, tiebreakBestOf)
+                        .All(game => latestVerified.ContainsKey((user.UserId, game.Series, game.Game))));
 
             return new MatchVerificationPanelDto
             {
                 MatchId = matchId,
                 Required = settings.RequireResultVerification,
                 IsManager = isManager,
-                // One verification per player (MaxVerifiedPerMatch): once theirs is in, nothing is left to do.
-                CanVerify = settings.RequireResultVerification && isParticipant && isOpen && !callerVerified,
-                // Mirrors the gate in BracketService.UpdateMatchResultCore exactly: participants who are
-                // not organizers, on a match still open for a result, without a verified record.
-                ReportBlocked = settings.RequireResultVerification && isParticipant && !isManager && isOpen && !callerVerified,
-                Mine = callerVerified
-                    ? this.MapRecord(latestVerified[user.UserId], user.UserId, isManager, organizer)
-                    : null,
-                Records = records,
+                IsParticipant = isParticipant,
+                // Only in the player's own match: on someone else's it says nothing they can act on.
+                PhoneApprovalPending = settings.RequireResultVerification && isParticipant
+                    && await this.phoneService.IsApprovalPending(match.TournamentId, user.UserId, deviceId),
+                CanVerify = settings.RequireResultVerification && isParticipant && isOpen && !coveredForOlderApp,
+                // Mirrors the gate in BracketService.UpdateMatchResultCore: participants — organizers who
+                // play the match too — on a match still open for a result, without proofs of the games above.
+                ReportBlocked = settings.RequireResultVerification && isParticipant && isOpen && !callerVerified,
+                Mine = coveredForOlderApp ? games[0].Mine : null,
+                Records = games[0].Records,
+                Games = games,
             };
+        }
+
+        /// <summary>The games a report would stand on now: a pending proposal's, else the result on record.</summary>
+        private static List<SeriesGame> PlayedGamesOf(MatchEntity match)
+        {
+            var proposed = match.ProposedGames;
+            return proposed.Count > 0 ? proposed : match.Games;
         }
 
         // ─────────────────────────────────────────────────────────────────────
         //  Helpers
         // ─────────────────────────────────────────────────────────────────────
+
+        private async Task<MatchVerificationRecordDto> BuildBiometricResponse(MatchResultVerificationEntity verification)
+        {
+            var dto = await this.BuildOwnRecord(verification);
+            dto.EvidenceMessage = VerificationProof.BuildEvidenceMessage(verification.Id!.Value,
+                verification.MatchId, verification.UserId, verification.DeviceId, verification.Challenge);
+            return dto;
+        }
 
         private async Task<MatchResultVerificationEntity> LoadOwnVerification(Guid verificationId, Guid userId)
         {
@@ -651,6 +776,8 @@ namespace GameHubz.Logic.Services
             var dto = new MatchVerificationRecordDto
             {
                 Id = v.Id,
+                SeriesNumber = v.SeriesNumber,
+                GameNumber = v.GameNumber,
                 UserId = v.UserId,
                 Username = user?.Username ?? string.Empty,
                 AvatarUrl = user?.AvatarUrl,
@@ -665,7 +792,7 @@ namespace GameHubz.Logic.Services
                 // The id outlives the clip: retention retires the row, the record keeps pointing at it.
                 EvidenceExpired = v.MatchEvidenceId.HasValue && evidence == null,
                 EvidenceDurationMs = v.EvidenceDurationMs,
-                RecordedOn = v.RecordedOn,
+                RecordedOn = SanitizePastTimestamp(v.RecordedOn, DateTime.UtcNow),
                 FailureReason = isManager ? v.FailureReason : null,
             };
 
@@ -737,8 +864,10 @@ namespace GameHubz.Logic.Services
             if (device != null && device.OtherAccountsOnDevice > 0) flags.Add(FlagSharedDevice);
 
             if (!v.IsPhysicalDevice) flags.Add(FlagEmulator);
+            if (v.Status == MatchVerificationStatus.Verified && (!SanitizePastTimestamp(v.RecordedOn, DateTime.UtcNow).HasValue || !v.EvidenceDurationMs.HasValue))
+                flags.Add(FlagNoRecordingTime);
 
-            if (v.RecordedOn is DateTime recorded && (v.VerifiedOn ?? startedOn) - recorded > OldRecordingAge)
+            if (SanitizePastTimestamp(v.RecordedOn, DateTime.UtcNow) is DateTime recorded && (v.VerifiedOn ?? startedOn) - recorded > OldRecordingAge)
                 flags.Add(FlagOldRecording);
 
             return flags;
@@ -753,9 +882,9 @@ namespace GameHubz.Logic.Services
         /// Fail-open like the login throttle (AuthThrottleService): it guards against a runaway loop, and
         /// a cache outage must not stop players from verifying.
         /// </summary>
-        private async Task<bool> TryReserveKeyIssue(Guid userId)
+        internal static async Task<bool> TryReserveKeyIssue(ICacheService cacheService, Guid userId)
         {
-            try { return await this.cacheService.IncrementAsync(KeyIssueCounterKey(userId), KeyIssueWindow) <= MaxKeysIssuedPerDay; }
+            try { return await cacheService.IncrementAsync(KeyIssueCounterKey(userId), KeyIssueWindow) <= MaxKeysIssuedPerDay; }
             catch { return true; }
         }
 
@@ -778,6 +907,17 @@ namespace GameHubz.Logic.Services
             return players.Where(p => p.HasValue).Select(p => p!.Value).Distinct().ToList();
         }
 
+        /// <summary>
+        /// The phone an attempt began on is still the player's phone when the attempt moves on. Start binds
+        /// it; an organizer approving another phone part-way through replaces it, and the attempt it began —
+        /// the biometric proof, the clip — does not finish on the phone that was replaced.
+        /// </summary>
+        private async Task ThrowIfPhoneReplaced(Guid tournamentId, UserDeviceEntity device)
+        {
+            if (await this.phoneService.IsReplaced(tournamentId, device))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.VerificationPhoneReplaced"]);
+        }
+
         private void ThrowIfMatchClosed(MatchEntity match)
         {
             if (match.Status == MatchStatus.Completed)
@@ -787,13 +927,13 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchClosedNoShow"]);
         }
 
-        private static string? NormalizePlatform(string? platform)
+        internal static string? NormalizePlatform(string? platform)
         {
             string value = (platform ?? string.Empty).Trim().ToLowerInvariant();
             return value is "ios" or "android" ? value : null;
         }
 
-        private static string? Truncate(string? value, int max)
+        internal static string? Truncate(string? value, int max)
         {
             if (string.IsNullOrWhiteSpace(value)) return null;
             string trimmed = value.Trim();
@@ -805,7 +945,7 @@ namespace GameHubz.Logic.Services
         /// clock drift) and not before smartphones recorded video worth checking. Anything else is
         /// dropped rather than shown to an organizer as if it meant something.
         /// </summary>
-        private static DateTime? SanitizePastTimestamp(DateTime? value, DateTime now)
+        internal static DateTime? SanitizePastTimestamp(DateTime? value, DateTime now)
         {
             if (value == null) return null;
 

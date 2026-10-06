@@ -1,7 +1,6 @@
-﻿using GameHubz.DataModels.Enums;
+using GameHubz.DataModels.Enums;
 using GameHubz.Logic.SignalR;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace GameHubz.Logic.Services
 {
@@ -13,18 +12,18 @@ namespace GameHubz.Logic.Services
     public class BadgeService : AppBaseService
     {
         private readonly IHubContext<UserHub> hubContext;
-        private readonly IServiceScopeFactory serviceScopeFactory;
+        private readonly BadgeRefreshQueue refreshQueue;
 
         public BadgeService(
             IUnitOfWorkFactory factory,
             IUserContextReader userContextReader,
             ILocalizationService localizationService,
             IHubContext<UserHub> hubContext,
-            IServiceScopeFactory serviceScopeFactory)
+            BadgeRefreshQueue refreshQueue)
             : base(factory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.hubContext = hubContext;
-            this.serviceScopeFactory = serviceScopeFactory;
+            this.refreshQueue = refreshQueue;
         }
 
         public async Task<BadgeCountsDto> GetMyBadgesAsync()
@@ -52,6 +51,7 @@ namespace GameHubz.Logic.Services
 
             var regRows = await this.AppUnitOfWork.TournamentRegistrationRepository.GetPendingCountsByTournament(managedHubIds);
             var helpRows = await this.AppUnitOfWork.MatchRepository.GetAdminHelpCountsByTournament(managedHubIds);
+            var phoneRows = await this.AppUnitOfWork.TournamentPlayerDeviceRepository.GetPendingCountsByTournament(managedHubIds);
             var approvalRows = await this.AppUnitOfWork.MatchRepository.GetPendingApprovalCountsByTournament(managedHubIds);
             var hubJoinRows = await this.AppUnitOfWork.UserHubRequestRepository.GetPendingCountsByHub(managedHubIds);
 
@@ -67,6 +67,8 @@ namespace GameHubz.Logic.Services
                 var row = GetOrAddTournament(byTournament, h.TournamentId, h.HubId, h.Status);
                 row.AdminHelp = h.Count;
             }
+            foreach (var p in phoneRows)
+                GetOrAddTournament(byTournament, p.TournamentId, p.HubId, p.Status).VerificationPhones = p.Count;
             foreach (var a in approvalRows)
             {
                 var row = GetOrAddTournament(byTournament, a.TournamentId, a.HubId, a.Status);
@@ -138,9 +140,10 @@ namespace GameHubz.Logic.Services
             // Organizer badges: only meaningful for users who manage at least one hub.
             // Resolve the managed-hub set once, then run the three cheap COUNT queries.
             var managedHubIds = await this.AppUnitOfWork.UserHubRepository.GetManagedHubIds(userId);
-            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0, pendingResultApprovals = 0;
+            int hubJoinRequests = 0, adminHelpRequests = 0, pendingRegistrations = 0, pendingResultApprovals = 0, pendingPhones = 0;
             if (managedHubIds.Count > 0)
             {
+                pendingPhones = (await this.AppUnitOfWork.TournamentPlayerDeviceRepository.GetPendingCountsByTournament(managedHubIds)).Sum(x => x.Count);
                 hubJoinRequests = await this.AppUnitOfWork.UserHubRequestRepository.CountPendingByHubIds(managedHubIds);
                 adminHelpRequests = await this.AppUnitOfWork.MatchRepository.CountAdminHelpForHubs(managedHubIds);
                 pendingRegistrations = await this.AppUnitOfWork.TournamentRegistrationRepository.CountPendingForHubs(managedHubIds);
@@ -158,60 +161,37 @@ namespace GameHubz.Logic.Services
                 TeamJoinRequests = teamJoinRequests,
                 HubJoinRequests = hubJoinRequests,
                 AdminHelpRequests = adminHelpRequests,
+                PendingVerificationPhones = pendingPhones,
                 PendingRegistrations = pendingRegistrations,
                 PendingResultApprovals = pendingResultApprovals,
             };
         }
 
         /// <summary>
-        /// Recomputes badges for a user and pushes them to their UserHub group. Best-effort:
-        /// failures are swallowed so a notification problem never breaks the triggering action.
+        /// Queues a best-effort refresh after saving. Completing this task means it is queued,
+        /// not delivered: the request never waits for badge queries or SignalR delivery.
         /// </summary>
-        public async Task PushAsync(Guid userId)
+        public Task PushAsync(Guid userId)
         {
-            try
-            {
-                var dto = await ComputeAsync(userId);
-                await this.hubContext.Clients
-                    .Group(UserHub.GroupName(userId))
-                    .SendAsync("BadgesUpdated", dto);
-            }
-            catch
-            {
-                // best-effort — never let a badge push break the underlying mutation
-            }
-        }
-
-        /// <summary>
-        /// Refreshes the organizer badges (pending registrations / admin-help) for everyone who
-        /// manages the tournament's hub — the owner plus any hub admins. Best-effort; used when a
-        /// registration or admin-help state changes so the managers' counters update live.
-        /// Runs in the background on its own DI scope (same F72 pattern as NotificationService):
-        /// the recompute costs ~10 queries per manager, which must not extend the request that
-        /// triggered it. Every call site saves first, so the fresh context reads committed state.
-        /// </summary>
-        public Task PushToTournamentManagersAsync(Guid tournamentId)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    using var scope = this.serviceScopeFactory.CreateScope();
-                    var badgeService = scope.ServiceProvider.GetRequiredService<BadgeService>();
-                    await badgeService.PushToTournamentManagersCoreAsync(tournamentId);
-                }
-                catch
-                {
-                    // best-effort — never let a badge push break the underlying mutation
-                }
-            });
-
+            this.refreshQueue.EnqueueUser(userId);
             return Task.CompletedTask;
         }
 
-        // Must only run on a fresh scope's BadgeService instance (see PushToTournamentManagersAsync) —
-        // by the time this executes, the triggering request's DbContext may already be disposed.
-        private async Task PushToTournamentManagersCoreAsync(Guid tournamentId)
+        // Called only by the queue on a fresh scope, with sends serialized per user.
+        internal async Task ComputeAndPushAsync(Guid userId)
+        {
+            var dto = await ComputeAsync(userId);
+            await this.hubContext.Clients.Group(UserHub.GroupName(userId)).SendAsync("BadgesUpdated", dto);
+        }
+
+        /// <summary>Queues the hub owner and admins after the tournament mutation is saved.</summary>
+        public Task PushToTournamentManagersAsync(Guid tournamentId)
+        {
+            this.refreshQueue.EnqueueTournamentManagers(tournamentId);
+            return Task.CompletedTask;
+        }
+
+        internal async Task QueueTournamentManagersAsync(Guid tournamentId)
         {
             var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
             if (ownership == null) return;

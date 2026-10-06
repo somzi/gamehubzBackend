@@ -322,7 +322,7 @@ namespace GameHubz.Api.BackgroundTasks
                             // own language is the only thing that can decide the wording.
                             string dmContent = $"⏰ **{tournament.Name}** — {this.localizationService["Dm.RegistrationClosingSoon.Body", target.Language]}\n"
                                 + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{tournament.Id}>)";
-                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent);
+                            await discordDmService.SendDmAsync(target.DiscordUserId!, dmContent, tournament.Id);
                         }
                     }
 
@@ -347,18 +347,8 @@ namespace GameHubz.Api.BackgroundTasks
             // The early lead is the widest window we ever act in; the last-call lead is always smaller.
             DateTime windowEnd = now.AddMinutes(this.roundEarlyLeadMinutes);
 
-            var due = await context.Set<MatchEntity>()
-                .AsNoTracking()
-                .Where(m => m.RoundDeadline != null
-                    && m.RoundDeadline > now
-                    && m.RoundDeadline <= windowEnd
-                    && m.RoundReminderStage < 2
-                    && m.ProposedByUserId == null
-                    && (m.RoundOpenAt == null || m.RoundOpenAt <= now)
-                    && (m.Status == MatchStatus.Pending
-                        || m.Status == MatchStatus.Scheduled
-                        || m.Status == MatchStatus.Live)
-                    && m.Tournament!.Status == TournamentStatus.InProgress)
+            var due = await UnplayedRoundMatches(now)
+                .Where(m => m.RoundDeadline <= windowEnd && m.RoundReminderStage < 2)
                 // Bounded like the other match sweeps; nearest deadline first.
                 .OrderBy(m => m.RoundDeadline)
                 .Take(maxMatchesPerSweep)
@@ -375,11 +365,13 @@ namespace GameHubz.Api.BackgroundTasks
                     // Team sub-matches carry the player ids directly; solo matches go via participants.
                     HomeUserId = m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null),
                     AwayUserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
+                    // Who the reminder is for, as stored: the marker may only land on this same pairing.
+                    Pair = new ReminderPair(m.HomeParticipantId, m.AwayParticipantId, m.HomeUserId, m.AwayUserId),
                 })
                 .ToListAsync(ct);
 
             // Each match's wave is decided first and the tick then acts on all of them together: one user
-            // query, one inbox write and a shared run of Expo requests, and one marker update per wave —
+            // query, one inbox write and a shared run of Expo requests, and marker updates grouped by deadline —
             // where every match used to pay for its own user lookup, full send and marker update.
             var reminders = new List<RoundReminder>();
 
@@ -407,14 +399,14 @@ namespace GameHubz.Api.BackgroundTasks
                 if (match.RoundReminderStage < 1 && earlyEligible && now >= earlyAt && now < lastCallAt)
                 {
                     reminders.Add(new RoundReminder(match.Id, 1, "Push.RoundDeadline.Body", match.TournamentId,
-                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId));
+                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId, match.Deadline, match.Pair));
                 }
                 else if (now >= lastCallAt)
                 {
                     // Covers both the normal last-call and the case where we missed the early
                     // window (task was down) — we jump straight to the final reminder, never both.
                     reminders.Add(new RoundReminder(match.Id, 2, "Push.RoundDeadlineFinal.Body", match.TournamentId,
-                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId));
+                        match.TournamentName, match.TeamMatchId, match.HomeUserId, match.AwayUserId, match.Deadline, match.Pair));
                 }
 
                 // Otherwise: not inside any reminder window yet.
@@ -425,6 +417,25 @@ namespace GameHubz.Api.BackgroundTasks
             // Both players with whatever channels they have: the inbox always, a push when there is a
             // token, and a linked Discord DM on top.
             var users = await LoadSweepUsersAsync(reminders.SelectMany(r => new[] { r.HomeUserId, r.AwayUserId }), ct);
+
+            // A result or a schedule/lineup edit can land while the sweep loads its recipients.
+            // Refresh the whole batch before recording inbox rows and dispatching pushes.
+            var reminderIds = reminders.Select(r => r.MatchId).ToList();
+            var current = await UnplayedRoundMatches(DateTime.UtcNow)
+                .Where(m => reminderIds.Contains(m.Id!.Value))
+                .Select(m => new
+                {
+                    Id = m.Id!.Value,
+                    m.RoundDeadline,
+                    m.RoundReminderStage,
+                    HomeUserId = m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null),
+                    AwayUserId = m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null),
+                })
+                .ToDictionaryAsync(m => m.Id, ct);
+            reminders = reminders.Where(r => current.TryGetValue(r.MatchId, out var m)
+                && m.RoundReminderStage < r.Stage && m.RoundDeadline == r.Deadline
+                && m.HomeUserId == r.HomeUserId && m.AwayUserId == r.AwayUserId).ToList();
+            if (reminders.Count == 0 || ct.IsCancellationRequested) return;
 
             var pushes = reminders
                 .Select(r => new LocalizedPush(
@@ -457,14 +468,25 @@ namespace GameHubz.Api.BackgroundTasks
             //
             // Deliberately NOT cancellable: the pushes are already out, so a shutdown landing in this
             // window would otherwise drop the marker and make the next start resend the whole wave —
-            // the exact duplicate this ordering exists to prevent. It is one bounded UPDATE per wave.
-            foreach (var wave in reminders.GroupBy(r => r.Stage))
+            // the exact duplicate this ordering exists to prevent.
+            //
+            // One update per match, each only for the pairing that was reminded. A deadline edit re-arms the
+            // reminders, and so does swapping a participant (BracketService resets the stage) — a send still
+            // in flight from before either must not consume the new wave, or the new pair never hears of it.
+            foreach (var reminder in reminders)
             {
-                int stage = wave.Key;
-                var matchIds = wave.Select(r => r.MatchId).ToList();
+                int stage = reminder.Stage;
+                DateTime deadline = reminder.Deadline;
+                ReminderPair pair = reminder.Pair;
 
                 await context.Set<MatchEntity>()
-                    .Where(m => matchIds.Contains(m.Id!.Value))
+                    .Where(m => m.Id == reminder.MatchId
+                        && m.RoundDeadline == deadline
+                        && m.RoundReminderStage < stage
+                        && m.HomeParticipantId == pair.HomeParticipantId
+                        && m.AwayParticipantId == pair.AwayParticipantId
+                        && m.HomeUserId == pair.HomeUserId
+                        && m.AwayUserId == pair.AwayUserId)
                     .ExecuteUpdateAsync(s => s.SetProperty(m => m.RoundReminderStage, stage), CancellationToken.None);
             }
 
@@ -483,9 +505,18 @@ namespace GameHubz.Api.BackgroundTasks
 
                     try
                     {
+                        // Push delivery and earlier DMs can take time. Recheck immediately before
+                        // EACH DM, including the second player of the same match.
+                        if (ct.IsCancellationRequested) return;
+                        bool stillUnplayed = await UnplayedRoundMatches(DateTime.UtcNow)
+                            .AnyAsync(m => m.Id == reminder.MatchId && m.RoundDeadline == reminder.Deadline
+                                && (m.HomeUserId ?? (m.HomeParticipant != null ? m.HomeParticipant.UserId : null)) == reminder.HomeUserId
+                                && (m.AwayUserId ?? (m.AwayParticipant != null ? m.AwayParticipant.UserId : null)) == reminder.AwayUserId, ct);
+                        if (!stillUnplayed) break;
+
                         string dmContent = $"⏰ **{reminder.TournamentName}** — {this.localizationService[reminder.BodyKey, target.Language]}\n"
                             + $"[{this.localizationService["Dm.OpenInApp", target.Language]}](<{shareLinksConfig.BaseUrl}/tournament/{reminder.TournamentId}>)";
-                        await discordDmService.SendDmAsync(target.DiscordUserId, dmContent);
+                        await discordDmService.SendDmAsync(target.DiscordUserId, dmContent, reminder.TournamentId);
                     }
                     catch (Exception ex)
                     {
@@ -494,6 +525,18 @@ namespace GameHubz.Api.BackgroundTasks
                 }
             }
         }
+
+        // Shared by candidate selection and the checks before dispatch. A player who advanced
+        // into a bracket slot cannot play yet while the other side is still unknown.
+        private IQueryable<MatchEntity> UnplayedRoundMatches(DateTime now)
+            => context.Set<MatchEntity>().AsNoTracking()
+                .Where(m => m.RoundDeadline != null && m.RoundDeadline > now
+                    && m.ProposedByUserId == null
+                    && (m.RoundOpenAt == null || m.RoundOpenAt <= now)
+                    && (m.Status == MatchStatus.Pending || m.Status == MatchStatus.Scheduled || m.Status == MatchStatus.Live)
+                    && m.Tournament!.Status == TournamentStatus.InProgress
+                    && (m.HomeUserId != null || (m.HomeParticipant != null && m.HomeParticipant.UserId != null))
+                    && (m.AwayUserId != null || (m.AwayParticipant != null && m.AwayParticipant.UserId != null)));
 
         /// <summary>
         /// Rules the ready check on every scheduled match whose grace period has run out.
@@ -793,7 +836,10 @@ namespace GameHubz.Api.BackgroundTasks
         /// <summary>One round-deadline reminder the tick has decided to send.</summary>
         private sealed record RoundReminder(
             Guid MatchId, int Stage, string BodyKey, Guid TournamentId, string TournamentName,
-            Guid? TeamMatchId, Guid? HomeUserId, Guid? AwayUserId);
+            Guid? TeamMatchId, Guid? HomeUserId, Guid? AwayUserId, DateTime Deadline, ReminderPair Pair);
+
+        /// <summary>A match's pairing as stored: participants, and a team game's nominated players.</summary>
+        private sealed record ReminderPair(Guid? HomeParticipantId, Guid? AwayParticipantId, Guid? HomeUserId, Guid? AwayUserId);
 
         // One query for everyone a sweep may notify or name, instead of one or two per match.
         private async Task<Dictionary<Guid, SweepUser>> LoadSweepUsersAsync(IEnumerable<Guid?> userIds, CancellationToken ct)

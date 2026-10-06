@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GameHubz.Data.Repository
 {
-    public class UserRepository : BaseRepository<ApplicationContext, UserEntity>, IUserRepository
+    public partial class UserRepository : BaseRepository<ApplicationContext, UserEntity>, IUserRepository
     {
         public UserRepository(ApplicationContext context, DateTimeProvider dateTimeProvider, IFilterExpressionBuilder filterExpressionBuilder, ISortStringBuilder sortStringBuilder, ILocalizationService localizationService) : base(context, dateTimeProvider, filterExpressionBuilder, sortStringBuilder, localizationService)
         {

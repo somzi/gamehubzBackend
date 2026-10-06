@@ -1,4 +1,6 @@
 using GameHubz.Logic.Interfaces;
+using GameHubz.DataModels.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Net;
@@ -23,22 +25,34 @@ namespace GameHubz.Logic.Services
 
         private readonly IHttpClientFactory httpClientFactory;
         private readonly ILogger<DiscordDmService> logger;
+        private readonly IServiceScopeFactory serviceScopeFactory;
 
         public DiscordDmService(
             IHttpClientFactory httpClientFactory,
-            ILogger<DiscordDmService> logger)
+            ILogger<DiscordDmService> logger,
+            IServiceScopeFactory serviceScopeFactory)
         {
             this.httpClientFactory = httpClientFactory;
             this.logger = logger;
+            this.serviceScopeFactory = serviceScopeFactory;
         }
 
-        public async Task SendDmAsync(string discordUserId, string content)
+        public async Task SendDmAsync(string discordUserId, string content, Guid? tournamentId = null)
         {
             if (string.IsNullOrWhiteSpace(discordUserId) || string.IsNullOrWhiteSpace(content))
                 return;
 
             try
             {
+                if (tournamentId.HasValue)
+                {
+                    using var scope = serviceScopeFactory.CreateScope();
+                    var factory = scope.ServiceProvider.GetRequiredService<IUnitOfWorkFactory>();
+                    using var uow = factory.CreateAppUnitOfWork();
+                    var muted = await uow.UserRepository.GetMutedNotificationRecipients(
+                        new NotificationScope(TournamentId: tournamentId), new(), new(), new() { discordUserId });
+                    if (muted.Count > 0) return;
+                }
                 var client = httpClientFactory.CreateClient("DiscordBot");
 
                 // A client without the bot token configured means the integration is off.
@@ -73,7 +87,7 @@ namespace GameHubz.Logic.Services
             }
         }
 
-        public void SendDmInBackground(string? discordUserId, string content)
+        public void SendDmInBackground(string? discordUserId, string content, Guid? tournamentId = null)
         {
             if (string.IsNullOrWhiteSpace(discordUserId))
                 return;
@@ -83,7 +97,7 @@ namespace GameHubz.Logic.Services
             {
                 try
                 {
-                    await SendDmAsync(id, content);
+                    await SendDmAsync(id, content, tournamentId);
                 }
                 catch { /* fire-and-forget */ }
             });

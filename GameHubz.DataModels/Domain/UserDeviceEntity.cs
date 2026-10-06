@@ -3,7 +3,7 @@ using GameHubz.Common;
 namespace GameHubz.DataModels.Domain
 {
     /// <summary>
-    /// A phone an account has verified match results from.
+    /// A phone an account has verified match results from, or registered for a verified tournament from.
     ///
     /// Device binding, not identification: nothing here says who the person holding the phone is. The
     /// row carries the key the phone keeps behind its own biometrics (Face ID / Touch ID / Android
@@ -31,7 +31,8 @@ namespace GameHubz.DataModels.Domain
         /// <summary>
         /// HMAC-SHA256 key (hex) issued to this phone for this account. The phone stores it behind
         /// biometrics, so answering a challenge with it requires a successful unlock. Handed out exactly
-        /// once, at issue; never returned by any read.
+        /// once, at issue; never returned by any read. Empty on a row recorded at tournament registration
+        /// until the phone's first verification issues the key on it; an empty key never validates.
         /// </summary>
         public string KeySecret { get; set; } = string.Empty;
 

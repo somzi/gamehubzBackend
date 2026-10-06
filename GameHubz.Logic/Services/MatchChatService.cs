@@ -106,8 +106,8 @@ namespace GameHubz.Logic.Services
             return dto;
         }
 
-        // F109: the recipients, badge bumps and push tokens are all resolved here while the
-        // request-scoped DbContext is alive; only the push sends themselves are fired-and-forgotten.
+        // Resolve recipients and push tokens while the request's DbContext is alive. Badge
+        // refreshes carry only user IDs to the background queue and use a fresh scope there.
         //
         // Recipients are the whole conversation, not just the opponent: both sides of the match
         // PLUS anyone who has already posted in it. That second set is what keeps an organizer who
@@ -200,7 +200,7 @@ namespace GameHubz.Logic.Services
                         string body = content.Length > 120 ? content.Substring(0, 117) + "..." : content;
                         this.discordDmService.SendDmInBackground(
                             recipient.DiscordUserId,
-                            $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)");
+                            $"💬 **{user.Username}** (match chat): {body}\n[Open in GameHubz](<{shareLinksConfig.BaseUrl}/tournament/{match.TournamentId}>)", match.TournamentId);
                     }
                 }
             }

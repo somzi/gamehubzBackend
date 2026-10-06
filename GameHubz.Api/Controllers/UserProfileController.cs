@@ -64,8 +64,7 @@ namespace GameHubz.Api.Controllers
         }
 
         /// <summary>
-        /// Per-user notification switches. Today that is just the blanket opt-out for match chats
-        /// the user only moderates — see UserEntity.ModeratedChatNotifications.
+        /// Personal notification switches and excluded hubs/tournaments.
         /// </summary>
         [HttpGet("notification-settings")]
         public async Task<IActionResult> GetNotificationSettings()
@@ -77,6 +76,14 @@ namespace GameHubz.Api.Controllers
         public async Task<IActionResult> UpdateNotificationSettings([FromBody] NotificationSettingsDto settings)
         {
             return Ok(await userProfileService.UpdateMyNotificationSettings(settings));
+        }
+
+        [HttpGet("notification-sources")]
+        public async Task<IActionResult> GetNotificationSources([FromQuery] string kind = "hubs", [FromQuery] int page = 0, [FromQuery] string? search = null)
+        {
+            if ((kind != "hubs" && kind != "tournaments") || page < 0 || page > 100000 || search?.Length > 200)
+                return BadRequest();
+            return Ok(await userProfileService.GetNotificationSources(kind, page, search));
         }
 
         [HttpPost("avatar")]

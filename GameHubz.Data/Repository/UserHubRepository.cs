@@ -65,8 +65,11 @@ namespace GameHubz.Data.Repository
                 .Where(uh => uh.UserId == userId
                     && uh.HubId != null
                     && (uh.HubRole == HubRole.HubOwner || uh.HubRole == HubRole.HubAdmin))
-                .Select(uh => uh.HubId!.Value)
-                .ToListAsync();
+                  .Select(uh => uh.HubId!.Value)
+                  .Concat(this.ContextBase.Set<HubEntity>()
+                      .Where(h => h.UserId == userId).Select(h => h.Id!.Value))
+                  .Distinct()
+                  .ToListAsync();
         }
 
         // Just the owner/admin ids — the badge fan-out needs nothing else, so don't drag every

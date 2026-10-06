@@ -50,6 +50,10 @@ namespace GameHubz.Logic.Utility
                 deviceId.ToString("D"),
                 challenge.ToLowerInvariant());
 
+        public static string BuildEvidenceMessage(Guid verificationId, Guid matchId, Guid userId, Guid deviceId, string challenge)
+            => string.Join('|', "gamehubz.evidence.v1", verificationId.ToString("D"), matchId.ToString("D"),
+                userId.ToString("D"), deviceId.ToString("D"), challenge.ToLowerInvariant());
+
         public static string Sign(string secretHex, string message)
         {
             using var hmac = new HMACSHA256(Convert.FromHexString(secretHex));
@@ -62,6 +66,9 @@ namespace GameHubz.Logic.Utility
         /// </summary>
         public static bool IsValid(string secretHex, string message, string? signatureHex)
         {
+            // A phone recorded at tournament registration has no key yet. HMAC accepts an empty key, so
+            // without this anyone could compute a "valid" signature for that row.
+            if (string.IsNullOrEmpty(secretHex)) return false;
             if (string.IsNullOrWhiteSpace(signatureHex) || signatureHex.Length != 64) return false;
 
             byte[] provided;

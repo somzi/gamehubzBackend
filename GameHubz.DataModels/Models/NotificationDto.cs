@@ -21,5 +21,12 @@ namespace GameHubz.DataModels.Models
         public DateTime CreatedOn { get; set; }
 
         public DateTime? ReadOn { get; set; }
+
+        /// <summary>
+        /// Avatar of the hub the notification is about — its own hub, or the hub of the tournament it
+        /// names. Looked up when the page is read, so it is the hub's current picture and older rows get
+        /// it too. Null when the payload names neither, or the hub has no avatar.
+        /// </summary>
+        public string? HubAvatarUrl { get; set; }
     }
 }
