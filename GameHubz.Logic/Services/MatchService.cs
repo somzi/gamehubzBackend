@@ -908,8 +908,10 @@ namespace GameHubz.Logic.Services
                 throw;
             }
 
-            // 4. Obriši keš (jer se meč promenio)
-            // await _cacheService.RemoveAsync($"match:{matchId}");
+            // The tournament structure lists each match's evidence, and organizers read "no evidence"
+            // off it. Evidence lands after the result (and can be added later still), so without this
+            // the flag would outlive the screenshot that answers it by up to the cache's five minutes.
+            await InvalidateBracketCacheAsync(matchForAuth.TournamentId);
         }
 
         public async Task RequestAdminHelp(Guid matchId)
