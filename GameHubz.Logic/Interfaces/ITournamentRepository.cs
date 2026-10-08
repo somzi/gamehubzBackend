@@ -38,6 +38,8 @@ namespace GameHubz.Logic.Interfaces
 
         Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId);
 
+        Task<bool> RequiresAvailabilityForChat(Guid tournamentId);
+
         Task<bool> TryClaimBracketGeneration(Guid tournamentId);
 
         Task RestoreBracketGenerationClaim(Guid tournamentId, TournamentStatus previousStatus);

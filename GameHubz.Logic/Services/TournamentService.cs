@@ -724,6 +724,10 @@ namespace GameHubz.Logic.Services
             // off. Editable for the whole tournament — it only gates matches still waiting for a time.
             inputDto.AllowScheduleOutsideApp ??= existing.AllowScheduleOutsideApp;
 
+            // Chat shut until availability, same reasoning: an older app's edit would otherwise switch
+            // it off. Editable for the whole tournament — it only gates matches still waiting for a time.
+            inputDto.RequireAvailabilityForChat ??= existing.RequireAvailabilityForChat;
+
             // Privacy, same reasoning again — and here the cost of getting it wrong is exposure: an
             // older app's edit would otherwise quietly turn an invite-only tournament public.
             inputDto.IsPrivate ??= existing.IsPrivate;

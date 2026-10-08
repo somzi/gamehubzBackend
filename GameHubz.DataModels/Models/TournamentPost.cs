@@ -79,6 +79,13 @@ namespace GameHubz.DataModels.Models
         public bool? AllowScheduleOutsideApp { get; set; }
 
         /// <summary>
+        /// Match chat opens to a player only once their side has offered hours in the availability
+        /// calendar. Nullable for the same reason as <see cref="RequireMatchCheckIn"/> — absence
+        /// preserves the persisted value on an edit. Null on create = off.
+        /// </summary>
+        public bool? RequireAvailabilityForChat { get; set; }
+
+        /// <summary>
         /// When true, the tournament is exclusive-only: visible/joinable only to hub members whose
         /// role is Exclusive or higher (Exclusive/Admin/Owner). False/omitted = open to all members.
         /// </summary>

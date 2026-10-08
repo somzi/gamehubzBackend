@@ -73,6 +73,9 @@ namespace GameHubz.DataModels.Models
         /// <summary>"Agreed outside the app" allowed — see TournamentEntity.AllowScheduleOutsideApp.</summary>
         public bool AllowScheduleOutsideApp { get; set; } = true;
 
+        /// <summary>Chat shut until availability is set — see TournamentEntity.RequireAvailabilityForChat.</summary>
+        public bool RequireAvailabilityForChat { get; set; }
+
         /// <summary>When true, the tournament is restricted to exclusive-or-higher hub members.</summary>
         public bool IsExclusive { get; set; }
 

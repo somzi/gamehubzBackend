@@ -154,6 +154,12 @@ namespace GameHubz.DataModels.Domain
         // only gates matches still waiting for a time.
         public bool AllowScheduleOutsideApp { get; set; } = true;
 
+        // When true, a player's match chat stays shut until their side has offered hours in the
+        // availability calendar — the organizer wants times arranged there, not in the chat. Only a
+        // match still waiting for a time is affected. Organizers are exempt only when they are not
+        // playing that match. Editable for the whole life of the tournament.
+        public bool RequireAvailabilityForChat { get; set; }
+
         // When true, only hub members with an Exclusive-or-higher role (Exclusive/Admin/Owner)
         // can see this tournament in their feed and register. Default false = open to all members.
         public bool IsExclusive { get; set; }

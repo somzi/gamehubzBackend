@@ -62,6 +62,17 @@ namespace GameHubz.Api.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Whether the caller may use this match's chat yet. A tournament can keep it shut until the
+        /// player's side has offered hours in the availability calendar; the app then shows the way
+        /// to the calendar instead of the conversation.
+        /// </summary>
+        [HttpGet("{matchId}/access")]
+        public async Task<IActionResult> GetAccess(Guid matchId)
+        {
+            return Ok(await chatService.GetAccess(matchId));
+        }
+
         [HttpGet("{matchId}/mute")]
         public async Task<IActionResult> GetMuted(Guid matchId)
         {

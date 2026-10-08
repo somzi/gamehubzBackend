@@ -117,6 +117,12 @@ namespace GameHubz.DataModels.Models
         /// client hides that shortcut and the time has to come from the availability calendar.
         /// </summary>
         public bool AllowScheduleOutsideApp { get; set; } = true;
+
+        /// <summary>
+        /// Tournament setting: a player's chat stays shut until their side has set availability. The
+        /// client then asks GET api/matchchat/{id}/access whether that applies to the caller.
+        /// </summary>
+        public bool RequireAvailabilityForChat { get; set; }
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }

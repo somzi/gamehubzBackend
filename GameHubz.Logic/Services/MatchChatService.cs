@@ -64,13 +64,17 @@ namespace GameHubz.Logic.Services
             // F33: only a participant of this match — or a tournament manager moderating it (hub
             // owner / hub admin / platform admin) — may post to its chat. Managers step in via the
             // admin-help escalation to talk the players through a dispute.
-            if (!IsMatchParticipant(match, user.UserId)
+            bool isParticipant = IsMatchParticipant(match, user.UserId);
+            if (!isParticipant
                 && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
 
             // Completed matches keep their chat history visible but read-only.
             if (match.Status == MatchStatus.Completed)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatClosedCompleted"]);
+
+            if (isParticipant && await IsLockedUntilAvailabilityAsync(match, user))
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatLockedUntilAvailability"]);
 
             var entity = new MatchChatEntity
             {
@@ -240,6 +244,66 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["Exception.UnauthorizedAccessToServiceException"]);
 
             return await this.AppUnitOfWork.MatchChatRepository.GetByMatchId(matchId, take, before);
+        }
+
+        /// <summary>
+        /// Whether the chat is open to the caller yet. Same trust boundary (and the same 400) as
+        /// <see cref="GetHistory"/>; the client asks only in tournaments that keep the chat shut
+        /// until availability is set.
+        /// </summary>
+        public async Task<MatchChatAccessDto> GetAccess(Guid matchId)
+        {
+            var user = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            var match = await this.AppUnitOfWork.MatchRepository.GetWithParticipants(matchId);
+            if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            bool isParticipant = IsMatchParticipant(match, user.UserId);
+            if (!isParticipant
+                && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+                throw new BusinessRuleException(this.LocalizationService["Exception.UnauthorizedAccessToServiceException"]);
+
+            return new MatchChatAccessDto
+            {
+                LockedUntilAvailability = isParticipant && await IsLockedUntilAvailabilityAsync(match, user),
+            };
+        }
+
+        /// <summary>
+        /// The organizer can keep a player's chat shut until their side has offered hours in the
+        /// availability calendar (TournamentEntity.RequireAvailabilityForChat), so times get arranged
+        /// there rather than in conversation. Side-wide, like the slots: on a team match any member
+        /// answering for the side opens it for the whole side.
+        ///
+        /// Only a match still waiting for a time is locked — once a kick-off exists, from the calendar,
+        /// agreed outside the app or set by an organizer, there is nothing left to offer. Nor is one
+        /// whose round deadline has passed: the calendar has no hours left to pick, and the lock would
+        /// be a dead end. Organizers moderating someone else's match are outside it so they can help;
+        /// an organizer playing the match must offer hours like every other participant. Reading the
+        /// history is gated by the app only; the conversation is no secret (every message is pushed
+        /// in full), so the server enforces the lock on sending.
+        /// </summary>
+        private async Task<bool> IsLockedUntilAvailabilityAsync(MatchEntity match, TokenUserInfo user)
+        {
+            if (match.Status != MatchStatus.Pending) return false;
+            if (match.RoundDeadline.HasValue && match.RoundDeadline.Value <= DateTime.UtcNow) return false;
+
+            bool isHome = IsOnSide(match.HomeUserId, match.HomeParticipant, user.UserId);
+            bool isAway = IsOnSide(match.AwayUserId, match.AwayParticipant, user.UserId);
+            if (!isHome && !isAway) return false;
+
+            bool sideAnswered = isHome ? match.HomeSlots.Count > 0 : match.AwaySlots.Count > 0;
+            if (sideAnswered) return false;
+
+            return await this.AppUnitOfWork.TournamentRepository.RequiresAvailabilityForChat(match.TournamentId);
+        }
+
+        private static bool IsOnSide(Guid? sideUserId, TournamentParticipantEntity? participant, Guid userId)
+        {
+            return sideUserId == userId
+                || (participant != null &&
+                    (participant.UserId == userId ||
+                     participant.Team?.Members.Any(m => m.UserId == userId) == true));
         }
 
         /// <summary>

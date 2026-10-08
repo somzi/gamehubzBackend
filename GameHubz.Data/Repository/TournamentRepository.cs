@@ -328,6 +328,7 @@ namespace GameHubz.Data.Repository
                       CheckInGraceMinutes = x.CheckInGraceMinutes,
                       RequireResultVerification = x.RequireResultVerification,
                       AllowScheduleOutsideApp = x.AllowScheduleOutsideApp,
+                      RequireAvailabilityForChat = x.RequireAvailabilityForChat,
                       IsExclusive = x.IsExclusive,
                       IsPrivate = x.IsPrivate,
                       DoubleRoundRobin = x.DoubleRoundRobin,
@@ -538,6 +539,16 @@ namespace GameHubz.Data.Repository
                     KnockoutBestOf = t.KnockoutBestOf,
                     Format = t.Format
                 })
+                .FirstOrDefaultAsync();
+        }
+
+        // One column, no hub join: the chat asks this on every message of a pending match, and a
+        // tournament whose hub was soft-deleted must still answer it.
+        public async Task<bool> RequiresAvailabilityForChat(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => t.RequireAvailabilityForChat)
                 .FirstOrDefaultAsync();
         }
     }
