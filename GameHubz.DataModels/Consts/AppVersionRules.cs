@@ -12,6 +12,6 @@ namespace GameHubz.DataModels.Consts
     /// </summary>
     public static class AppVersionRules
     {
-        public const string MinSupportedAppVersion = "4.0.0";
+        public const string MinSupportedAppVersion = "4.1.0";
     }
 }
