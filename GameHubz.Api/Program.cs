@@ -129,6 +129,20 @@ namespace GameHubz.Api
             // One-shot guild-id backfill for hubs whose webhook URL predates migration 68 (opt-in).
             builder.Services.AddHostedService<DiscordGuildIdBackfillTask>();
 
+            // ─── In-app broadcast to linked Twitch / Kick channels ───
+            builder.Services.Configure<StreamingConfig>(builder.Configuration.GetSection("Streaming"));
+
+            // OAuth token endpoints + the channel-owner API calls. Bounded: a broadcast prepare waits on them.
+            builder.Services.AddHttpClient("StreamOAuth", client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(10);
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+            });
+
+            // Times out silent broadcasts and stops the ones left running after the match.
+            builder.Services.AddScoped<StreamBroadcastRunner>();
+            builder.Services.AddHostedService<StreamBroadcastTask>();
+
             // Share a single ConnectionMultiplexer between IDistributedCache (used for GET/SET)
             // and the pattern-based delete path in RedisCacheService (used for invalidating
             // every page of a paginated key family at once).

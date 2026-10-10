@@ -47,6 +47,8 @@ namespace GameHubz.Logic.Interfaces
 
         IMatchStreamRepository MatchStreamRepository { get; }
 
+        IUserStreamAccountRepository UserStreamAccountRepository { get; }
+
         ITournamentTeamRepository TournamentTeamRepository { get; }
         ITournamentTeamMemberRepository TournamentTeamMemberRepository { get; }
         ITeamJoinRequestRepository TeamJoinRequestRepository { get; }

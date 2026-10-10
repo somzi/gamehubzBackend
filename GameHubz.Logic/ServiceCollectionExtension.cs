@@ -130,6 +130,13 @@ namespace GameHubz.Logic
             services.AddTransient<IStreamPlatformClient>(sp => sp.GetRequiredService<KickStreamClient>());
             services.AddTransient<StreamVodResolver>();
 
+            // ─── In-app broadcast: linked Twitch / Kick channels (per-user OAuth) + broadcast sessions ───
+            services.AddSingleton<StreamTokenProtector>();
+            services.AddTransient<IStreamAccountProvider, TwitchAccountProvider>();
+            services.AddTransient<IStreamAccountProvider, KickAccountProvider>();
+            services.AddTransient<StreamAccountService>();
+            services.AddTransient<StreamBroadcastService>();
+
             services.AddTransient<FriendService>();
             services.AddTransient<DirectChatService>();
             services.AddTransient<BadgeService>();

@@ -1308,7 +1308,7 @@ namespace GameHubz.Logic.Services
 
             var latestPerStreamer = all
                 .GroupBy(s => s.StreamerUserId)
-                .Select(g => g.First()) // GetByMatchId is newest-first
+                .Select(g => g.First()) // GetByMatchId is current-first (live, then newest)
                 .OrderByDescending(s => s.Status == MatchStreamStatus.Live)
                 .ThenByDescending(s => s.StartedAt)
                 .ToList();

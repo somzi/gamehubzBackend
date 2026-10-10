@@ -28,5 +28,22 @@ namespace GameHubz.DataModels.Domain
 
         public DateTime? StartedAt { get; set; }
         public DateTime? EndedAt { get; set; }
+
+        // ─── Broadcast from the GameHubz app (Source = AppBroadcast) ───
+        // Manual rows leave all of these at their defaults.
+        public MatchStreamSource Source { get; set; }
+
+        // SHA-256 (hex) of the session token the phone's broadcaster authenticates with. The phone's
+        // screen-capture process has no GameHubz login of its own, so this token is its only credential.
+        public string? BroadcastTokenHash { get; set; }
+
+        public DateTime? LastHeartbeatOn { get; set; }
+
+        // The server asked the phone to stop (match over and the streamer did not stop it). The next
+        // heartbeat answers "stop".
+        public DateTime? StopRequestedOn { get; set; }
+
+        // "Your match is over — stop the stream" push, sent once.
+        public DateTime? EndReminderSentOn { get; set; }
     }
 }

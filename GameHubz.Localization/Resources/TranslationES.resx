@@ -248,4 +248,25 @@
   <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
     <value>Este teléfono fue reemplazado en este torneo. Verifica desde el teléfono que aprobó el organizador.</value>
   </data>
+  <data name="BusinessRule.StreamLinkNotConfigured" xml:space="preserve">
+    <value>Vincular esta plataforma no está disponible ahora mismo.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNotLinked" xml:space="preserve">
+    <value>Primero vincula tu canal desde tu perfil.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNeedsRelink" xml:space="preserve">
+    <value>La conexión con tu canal caducó. Vuelve a vincularlo desde tu perfil.</value>
+  </data>
+  <data name="BusinessRule.BroadcastMatchFinished" xml:space="preserve">
+    <value>Este partido ya terminó.</value>
+  </data>
+  <data name="BusinessRule.BroadcastIngestUnavailable" xml:space="preserve">
+    <value>No se pudo obtener la clave de transmisión de la plataforma. Inténtalo de nuevo.</value>
+  </data>
+  <data name="BusinessRule.BroadcastSessionExpired" xml:space="preserve">
+    <value>Esta sesión de transmisión caducó. Vuelve a iniciar la transmisión.</value>
+  </data>
+  <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
+    <value>Tu partido terminó: no olvides detener la transmisión.</value>
+  </data>
 </root>

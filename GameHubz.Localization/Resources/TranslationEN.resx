@@ -248,4 +248,25 @@
   <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
     <value>This phone was replaced for this tournament. Verify from the phone the organizer approved.</value>
   </data>
+  <data name="BusinessRule.StreamLinkNotConfigured" xml:space="preserve">
+    <value>Linking this platform isn't available right now.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNotLinked" xml:space="preserve">
+    <value>Link your channel in your profile first.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNeedsRelink" xml:space="preserve">
+    <value>The connection to your channel has expired. Link it again in your profile.</value>
+  </data>
+  <data name="BusinessRule.BroadcastMatchFinished" xml:space="preserve">
+    <value>This match is already over.</value>
+  </data>
+  <data name="BusinessRule.BroadcastIngestUnavailable" xml:space="preserve">
+    <value>Couldn't get the stream key from the platform. Try again.</value>
+  </data>
+  <data name="BusinessRule.BroadcastSessionExpired" xml:space="preserve">
+    <value>This stream session has expired. Start the stream again.</value>
+  </data>
+  <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
+    <value>Your match is over — don't forget to stop your stream.</value>
+  </data>
 </root>

@@ -168,6 +168,14 @@ namespace GameHubz.Data.Context
 
             modelBuilder.Entity<MatchStreamEntity>()
                 .HasIndex(x => x.MatchId);
+
+            var account = modelBuilder.Entity<UserStreamAccountEntity>();
+            account.ToTable("UserStreamAccount").HasQueryFilter(x => x.IsDeleted == false);
+            account.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            account.HasIndex(x => new { x.UserId, x.Platform }, "UX_UserStreamAccount_User_Platform")
+                .IsUnique().HasFilter("\"IsDeleted\" = false");
+            account.HasIndex(x => new { x.Platform, x.ExternalUserId }, "UX_UserStreamAccount_Platform_External")
+                .IsUnique().HasFilter("\"IsDeleted\" = false");
         }
 
         private static void ShareConfigurator(ModelBuilder modelBuilder)

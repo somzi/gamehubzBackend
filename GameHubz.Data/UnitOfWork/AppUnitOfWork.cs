@@ -49,6 +49,8 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public IMatchStreamRepository MatchStreamRepository => this.GetRepository<MatchStreamRepository>();
 
+        public IUserStreamAccountRepository UserStreamAccountRepository => this.GetRepository<UserStreamAccountRepository>();
+
         public ITournamentTeamRepository TournamentTeamRepository => this.GetRepository<TournamentTeamRepository>();
         public ITournamentTeamMemberRepository TournamentTeamMemberRepository => this.GetRepository<TournamentTeamMemberRepository>();
         public ITeamJoinRequestRepository TeamJoinRequestRepository => this.GetRepository<TeamJoinRequestRepository>();

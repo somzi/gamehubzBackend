@@ -248,4 +248,25 @@
   <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
     <value>Ovaj telefon je zamenjen za ovaj turnir. Verifikuj sa telefona koji je organizator odobrio.</value>
   </data>
+  <data name="BusinessRule.StreamLinkNotConfigured" xml:space="preserve">
+    <value>Povezivanje ove platforme trenutno nije dostupno.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNotLinked" xml:space="preserve">
+    <value>Prvo poveži svoj kanal na profilu.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNeedsRelink" xml:space="preserve">
+    <value>Veza sa kanalom je istekla. Poveži ga ponovo na profilu.</value>
+  </data>
+  <data name="BusinessRule.BroadcastMatchFinished" xml:space="preserve">
+    <value>Ovaj meč je već završen.</value>
+  </data>
+  <data name="BusinessRule.BroadcastIngestUnavailable" xml:space="preserve">
+    <value>Ključ za stream nije mogao da se preuzme sa platforme. Pokušaj ponovo.</value>
+  </data>
+  <data name="BusinessRule.BroadcastSessionExpired" xml:space="preserve">
+    <value>Ova sesija streama je istekla. Pokreni stream ponovo.</value>
+  </data>
+  <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
+    <value>Meč je završen — ne zaboravi da ugasiš stream.</value>
+  </data>
 </root>

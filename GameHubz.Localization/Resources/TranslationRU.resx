@@ -248,4 +248,25 @@
   <data name="BusinessRule.VerificationPhoneReplaced" xml:space="preserve">
     <value>Этот телефон заменён для этого турнира. Пройди верификацию с телефона, одобренного организатором.</value>
   </data>
+  <data name="BusinessRule.StreamLinkNotConfigured" xml:space="preserve">
+    <value>Привязка этой платформы сейчас недоступна.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNotLinked" xml:space="preserve">
+    <value>Сначала привяжи свой канал в профиле.</value>
+  </data>
+  <data name="BusinessRule.StreamAccountNeedsRelink" xml:space="preserve">
+    <value>Подключение к каналу истекло. Привяжи его заново в профиле.</value>
+  </data>
+  <data name="BusinessRule.BroadcastMatchFinished" xml:space="preserve">
+    <value>Этот матч уже завершён.</value>
+  </data>
+  <data name="BusinessRule.BroadcastIngestUnavailable" xml:space="preserve">
+    <value>Не удалось получить ключ трансляции от платформы. Попробуй ещё раз.</value>
+  </data>
+  <data name="BusinessRule.BroadcastSessionExpired" xml:space="preserve">
+    <value>Сессия трансляции истекла. Запусти трансляцию заново.</value>
+  </data>
+  <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
+    <value>Матч завершён — не забудь остановить трансляцию.</value>
+  </data>
 </root>
