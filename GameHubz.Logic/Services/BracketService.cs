@@ -1756,7 +1756,7 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Builds a double-elimination bracket: Winners Bracket (single-elim tree), Losers Bracket
-        /// (with WB losers dropping in via reverse placement to avoid early rematches), and a
+        /// (with WB losers dropping in a round-by-round order that delays rematches), and a
         /// single-match Grand Final fed by the WB champion (home) and the LB champion (away).
         /// </summary>
         /// <remarks>
@@ -1857,10 +1857,10 @@ namespace GameHubz.Logic.Services
             }
 
             // Wire WB losers → LB. WB R1 losers pair into LB R1 in the natural order
-            // (no rematch risk since they just played each other). All later WB rounds use
-            // REVERSE placement into the matching LB round — the seed-1 side of WB is sent to
-            // the seed-N side of LB so a WB-R(r) loser cannot face the player who just sent
-            // them down without first surviving the LB.
+            // (no rematch risk since they just played each other). Later WB rounds drop into
+            // their LB round in an order that changes from round to round (LoserDropIndex), so
+            // a player who beat you in the WB and loses the next WB round lands in the other
+            // half of the LB from you.
             var wbR1 = wbByRound[1];
             var lbR1 = lbByRound[1];
             for (int i = 0; i < wbR1.Count; i++)
@@ -1878,7 +1878,7 @@ namespace GameHubz.Logic.Services
 
                 for (int i = 0; i < count; i++)
                 {
-                    wbRound[i].NextMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextMatchLoserBracketId = lbRound[LoserDropIndex(r, i, count)].Id;
                     wbRound[i].NextMatchLoserBracketHomeAwaySlot = 1; // away — LB winner already holds home
                 }
             }
@@ -1989,6 +1989,37 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Which match of its LB round (2r−2) the loser of WB round <paramref name="wbRound"/> (r ≥ 2),
+        /// match <paramref name="index"/>, drops into — <paramref name="count"/> matches on each side.
+        /// </summary>
+        /// <remarks>
+        /// The order cycles through four patterns, round by round: reverse, reverse within each half,
+        /// swap the halves, natural. That is the drop order Battlefy uses — read off a live 64-player
+        /// bracket: WB R2 reversed, WB R3 reversed within halves, WB R4 halves swapped, WB R5 natural.
+        ///
+        /// What it buys: which half of the LB a drop lands in flips from one WB round to the next.
+        /// So a player who beat you in WB round r and loses WB round r+1 lands in the other half of
+        /// the LB from you, and the two of you can meet again at the LB semifinal at the earliest.
+        /// Reversing every round (the old order) undid itself across the LB's halving rounds and
+        /// sent that player straight back to your path: a guaranteed rematch in LB round 2r.
+        /// Rounds further apart can't all be kept on opposite halves (there are only two), so the
+        /// cycle also alternates the order inside the halves to push those meetings late too.
+        /// </remarks>
+        internal static int LoserDropIndex(int wbRound, int index, int count)
+        {
+            if (count <= 1) return 0;
+
+            int half = count / 2;
+            return ((wbRound - 2) % 4) switch
+            {
+                0 => count - 1 - index,                                       // reverse
+                1 => index < half ? half - 1 - index : half + (count - 1 - index), // reverse within halves
+                2 => (index + half) % count,                                  // swap halves
+                _ => index,                                                   // natural
+            };
+        }
+
+        /// <summary>
         /// Team variant of <see cref="GenerateDoubleEliminationMatches"/> — identical bracket shape
         /// and routing, expressed with <see cref="TeamMatchEntity"/> links (NextTeamMatch* + slot
         /// overrides) and the IsUpperBracket / IsGrandFinal flags. See that method's remarks for the
@@ -2079,8 +2110,8 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            // Wire WB losers → LB. WB R1 losers pair naturally into LB R1; later WB rounds use
-            // REVERSE placement into the away slot (LB winner already holds home).
+            // Wire WB losers → LB. WB R1 losers pair naturally into LB R1; later WB rounds drop
+            // into the away slot (LB winner already holds home) in the order LoserDropIndex gives.
             var wbR1 = wbByRound[1];
             var lbR1 = lbByRound[1];
             for (int i = 0; i < wbR1.Count; i++)
@@ -2098,7 +2129,7 @@ namespace GameHubz.Logic.Services
 
                 for (int i = 0; i < count; i++)
                 {
-                    wbRound[i].NextTeamMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextTeamMatchLoserBracketId = lbRound[LoserDropIndex(r, i, count)].Id;
                     wbRound[i].NextTeamMatchLoserBracketHomeAwaySlot = 1; // away — LB winner holds home
                 }
             }
