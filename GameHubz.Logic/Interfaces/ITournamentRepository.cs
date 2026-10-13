@@ -34,6 +34,9 @@ namespace GameHubz.Logic.Interfaces
 
         Task<Guid?> GetHubOwnerUserId(Guid tournamentId);
 
+        /// <summary>The tournament's HubId, also when that hub has been soft-deleted.</summary>
+        Task<Guid?> GetHubId(Guid tournamentId);
+
         Task<HubOwnershipInfo?> GetHubOwnership(Guid tournamentId);
 
         Task<TournamentApprovalContext?> GetApprovalContext(Guid tournamentId);

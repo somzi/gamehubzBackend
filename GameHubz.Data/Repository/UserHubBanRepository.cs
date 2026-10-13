@@ -32,6 +32,21 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(b => b.UserId == userId && b.HubId == hubId);
         }
 
+        public async Task<List<Guid>> GetBannedUserIds(Guid hubId, IReadOnlyCollection<Guid> userIds)
+        {
+            if (userIds.Count == 0) return new List<Guid>();
+
+            // A plain List for the SQL parameter: callers pass collection expressions, whose
+            // compiler-made types the provider can't bind.
+            var ids = userIds.ToList();
+
+            return await this.BaseDbSet()
+                .Where(b => b.HubId == hubId && b.UserId != null && ids.Contains(b.UserId.Value))
+                .Select(b => b.UserId!.Value)
+                .Distinct()
+                .ToListAsync();
+        }
+
         public async Task<List<HubBanOverview>> GetBansByHub(Guid hubId)
         {
             return await this.BaseDbSet()

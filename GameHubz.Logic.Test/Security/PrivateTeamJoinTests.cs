@@ -21,6 +21,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NUnit.Framework;
 
@@ -140,6 +141,9 @@ public sealed class PrivateTeamJoinTests
         var cache = new FakeCacheService();
         cache.SetAsync<bool?>($"tournament_authz:{applicantId}:{tournamentId}", false).GetAwaiter().GetResult();
         var auth = new TournamentAuthorizationService(factory, reader.Object, localization, cache, null!);
-        return new TournamentTeamService(factory, reader.Object, localization, cache, null!, null!, auth);
+        // The seeded tournament has no hub, so following it after a join resolves to nothing.
+        var hubFollow = new UserHubRequestService(factory, null!, localization, null!, null!, null!, reader.Object,
+            cache, null!, null!, null!, NullLogger<UserHubRequestService>.Instance);
+        return new TournamentTeamService(factory, reader.Object, localization, cache, null!, null!, auth, hubFollow);
     }
 }

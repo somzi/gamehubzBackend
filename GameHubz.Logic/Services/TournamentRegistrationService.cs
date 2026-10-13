@@ -10,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly ICacheService cacheService;
         private readonly BadgeService badgeService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly UserHubRequestService userHubRequestService;
 
         public TournamentRegistrationService(
             IUnitOfWorkFactory factory,
@@ -22,7 +23,8 @@ namespace GameHubz.Logic.Services
             TournamentParticipantService tournamentParticipantService,
             ICacheService cacheService,
             BadgeService badgeService,
-            TournamentAuthorizationService tournamentAuth) : base(
+            TournamentAuthorizationService tournamentAuth,
+            UserHubRequestService userHubRequestService) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -35,6 +37,7 @@ namespace GameHubz.Logic.Services
             this.cacheService = cacheService;
             this.badgeService = badgeService;
             this.tournamentAuth = tournamentAuth;
+            this.userHubRequestService = userHubRequestService;
         }
 
         /// <summary>
@@ -61,6 +64,11 @@ namespace GameHubz.Logic.Services
             // bumping on a Pending row is the only case the managers' queue cares about.
             if (doSave && inputDto.TournamentId.HasValue && inputDto.Status == TournamentRegistrationStatus.Pending)
                 await this.badgeService.PushToTournamentManagersAsync(inputDto.TournamentId.Value);
+
+            // Signing up follows the hub (solo: the player; team: the captain — both the caller).
+            // Last, after the registration is saved: following never fails the sign-up.
+            if (doSave && inputDto.TournamentId.HasValue)
+                await this.userHubRequestService.FollowHubOfTournament(inputDto.TournamentId.Value);
 
             return dto;
         }
@@ -144,6 +152,16 @@ namespace GameHubz.Logic.Services
                 {
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.AlreadyRegistered"]);
                 }
+
+                // Nobody banned from the hub plays in its tournaments (HubBans): the one signing up —
+                // the player, or the captain registering a team — and every member of that team. Ahead
+                // of the private-code check below, which spends one of the caller's attempts.
+                var signingUp = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                await HubBans.EnsureCallerNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, tournamentForStatus.HubId, signingUp.UserId);
+                if (entity.TeamId.HasValue)
+                {
+                    await HubBans.EnsureTeamNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, tournamentForStatus.HubId, entity.TeamId.Value);
+                }
             }
 
             if (isNew && entity.UserId.HasValue && entity.TournamentId.HasValue)
@@ -219,6 +237,17 @@ namespace GameHubz.Logic.Services
                 isTeamRegistration
                     ? p.TeamId == tournamentRegistration.TeamId
                     : p.UserId == tournamentRegistration.UserId) ?? false;
+
+            // A ban placed after the sign-up still keeps the player — or any member of the team — out
+            // (HubBans). Someone already in the tournament stays: approving only flips a stale row then.
+            if (!alreadyParticipant)
+            {
+                var hubId = await this.AppUnitOfWork.TournamentRepository.GetHubId(tournamentRegistration.TournamentId!.Value);
+                if (isTeamRegistration)
+                    await HubBans.EnsureTeamNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, hubId, tournamentRegistration.TeamId!.Value);
+                else if (tournamentRegistration.UserId.HasValue)
+                    await HubBans.EnsureNoneBannedAsync(this.AppUnitOfWork, this.LocalizationService, hubId, [tournamentRegistration.UserId.Value]);
+            }
 
             if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
             {
@@ -332,6 +361,22 @@ namespace GameHubz.Logic.Services
                     // fall back to the original behavior and still create a participant for it.
                     registrationsToMaterialize.Add(registration);
                 }
+            }
+
+            // Same ban rule as a single approval, for everyone this batch would let in. One banned
+            // entrant refuses the batch and is named, so the organizer can reject that row.
+            var batchHubId = await this.AppUnitOfWork.TournamentRepository.GetHubId(tournamentIds[0]!.Value);
+            await HubBans.EnsureNoneBannedAsync(
+                this.AppUnitOfWork,
+                this.LocalizationService,
+                batchHubId,
+                registrationsToMaterialize
+                    .Where(r => !r.TeamId.HasValue && r.UserId.HasValue)
+                    .Select(r => r.UserId!.Value)
+                    .ToList());
+            foreach (var registration in registrationsToMaterialize.Where(r => r.TeamId.HasValue))
+            {
+                await HubBans.EnsureTeamNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, batchHubId, registration.TeamId!.Value);
             }
 
             if (IsAlreadyFullTournament(tournamentRegistration.First(), registrationsToMaterialize.Count))

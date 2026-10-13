@@ -59,6 +59,12 @@ namespace GameHubz.Data.Repository
                 .AnyAsync(r => r.HubId == hubId && r.UserId == userId && r.Status == JoinRequestStatus.Pending);
         }
 
+        public async Task<bool> HasAnyRequest(Guid hubId, Guid userId)
+        {
+            return await this.BaseDbSet()
+                .AnyAsync(r => r.HubId == hubId && r.UserId == userId);
+        }
+
         public async Task<int> CountPendingByHubId(Guid hubId)
         {
             return await this.BaseDbSet()

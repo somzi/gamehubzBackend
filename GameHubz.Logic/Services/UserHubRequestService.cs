@@ -1,5 +1,6 @@
 using FluentValidation;
 using GameHubz.DataModels.Enums;
+using Microsoft.Extensions.Logging;
 
 namespace GameHubz.Logic.Services
 {
@@ -9,6 +10,7 @@ namespace GameHubz.Logic.Services
         private readonly UserHubService userHubService;
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
+        private readonly ILogger<UserHubRequestService> logger;
 
         public UserHubRequestService(
             IUnitOfWorkFactory factory,
@@ -21,7 +23,8 @@ namespace GameHubz.Logic.Services
             ICacheService cacheService,
             UserHubService userHubService,
             INotificationService notificationService,
-            BadgeService badgeService) : base(
+            BadgeService badgeService,
+            ILogger<UserHubRequestService> logger) : base(
                 factory.CreateAppUnitOfWork(),
                 userContextReader,
                 localizationService,
@@ -34,6 +37,49 @@ namespace GameHubz.Logic.Services
             this.userHubService = userHubService;
             this.notificationService = notificationService;
             this.badgeService = badgeService;
+            this.logger = logger;
+        }
+
+        /// <summary>
+        /// Taking part in a tournament follows the hub that runs it. Every entry route (solo sign-up,
+        /// team registration, creating, joining or asking to join a team) is the player's own action, so
+        /// this is exactly the Follow button on the hub page (<see cref="RequestJoin"/>): a public hub
+        /// makes them a member, a private one files a join request for its managers.
+        ///
+        /// Only a first contact with the hub is followed. A player with any history there keeps its
+        /// outcome: one who unfollowed (a soft delete, so the row stays), was removed or banned, or
+        /// already sent the hub a join request (still waiting, approved, or turned down). Unfollows
+        /// from before unfollowing was a soft delete left no trace in a public hub, so those players
+        /// are followed again.
+        ///
+        /// Called only after the entry is saved, and never fails it. RequestJoin's refusals (owner,
+        /// already a member, banned) all mean "nothing to do", a tournament with no hub or a deleted
+        /// one has nothing to follow, and anything unexpected is logged and dropped.
+        /// </summary>
+        public async Task FollowHubOfTournament(Guid tournamentId)
+        {
+            try
+            {
+                var ownership = await this.AppUnitOfWork.TournamentRepository.GetHubOwnership(tournamentId);
+                if (ownership == null) return;
+
+                var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+                if (await this.AppUnitOfWork.UserHubRepository.HasMembershipHistory(caller.UserId, ownership.HubId)
+                    || await this.AppUnitOfWork.UserHubRequestRepository.HasAnyRequest(ownership.HubId, caller.UserId))
+                {
+                    return;
+                }
+
+                await RequestJoin(ownership.HubId);
+            }
+            catch (BusinessRuleException)
+            {
+                // Already in, already asked, the owner, or banned.
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Following the hub of tournament {TournamentId} after an entry failed.", tournamentId);
+            }
         }
 
         public async Task RequestJoin(Guid hubId)
@@ -249,6 +295,13 @@ namespace GameHubz.Logic.Services
             await cacheService.RemoveAsync($"user_hubs_list:{userId}");
             await cacheService.RemoveAsync($"hub_overview:{hubId}");
             await cacheService.RemoveAsync($"hubs:{hubId}:members:v2");
+
+            // Same set as UserHubService.InvalidateHubCaches: without these the joined/discovery
+            // lists (every page) kept the old membership for a minute and the role for ten, so a
+            // refresh right after following still showed the hub as not followed.
+            await cacheService.RemoveByPatternAsync($"user_joined_hubs:{userId}:*");
+            await cacheService.RemoveByPatternAsync($"user_discovery_hubs:{userId}:*");
+            await cacheService.RemoveAsync($"user_hub_role:{userId}:{hubId}");
         }
     }
 }

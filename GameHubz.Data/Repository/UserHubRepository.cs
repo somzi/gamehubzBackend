@@ -33,6 +33,14 @@ namespace GameHubz.Data.Repository
                 .FirstOrDefaultAsync(uh => uh.UserId == userId && uh.HubId == hubId);
         }
 
+        // Soft-deleted rows included on purpose: they are the record of someone who left or was removed.
+        public Task<bool> HasMembershipHistory(Guid userId, Guid hubId)
+        {
+            return this.ContextBase.Set<UserHubEntity>()
+                .IgnoreQueryFilters()
+                .AnyAsync(uh => uh.UserId == userId && uh.HubId == hubId);
+        }
+
         public Task<HubRole?> GetRole(Guid userId, Guid hubId)
         {
             return this.BaseDbSet()
@@ -157,6 +165,12 @@ namespace GameHubz.Data.Repository
                     && uh.UserId != null
                     && uh.User != null
                     && !excludeUserIds.Contains(uh.UserId!.Value));
+
+            // A banned player can still hold a membership (AddMember doesn't lift the ban), and the
+            // swap itself refuses them (HubBans) — so they're never offered. In SQL for the same
+            // paging reason as the exclusions above; the ban set's query filter keeps lifted bans out.
+            var bans = this.ContextBase.Set<UserHubBanEntity>();
+            query = query.Where(uh => !bans.Any(b => b.HubId == hubId && b.UserId == uh.UserId));
 
             // An exclusive tournament is invisible to plain members, so they can't be swapped into
             // it either — mirrors UserHubRepository.GetHubIdsWithExclusiveAccess.

@@ -479,6 +479,11 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UserNotHubMember"], incomingUser.Username));
             }
 
+            // Membership alone doesn't prove the player isn't banned: a manager can add a banned user
+            // back as a member (AddMember doesn't lift the ban). A ban keeps them out of the hub's
+            // tournaments either way (HubBans).
+            await HubBans.EnsureNoneBannedAsync(this.AppUnitOfWork, this.LocalizationService, tournament.HubId, [incomingUser.Id!.Value]);
+
             // The tournament's own scope. A manager may hand the spot to any hub member, but not to
             // someone the sign-up path would have turned away: a country-scoped tournament must not
             // end up with a player from outside its country list.
