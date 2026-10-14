@@ -32,10 +32,14 @@ namespace GameHubz.Data.Repository
         // its bracket — a concurrent or repeated CreateBracket sees 0 rows updated and bails.
         public async Task<bool> TryClaimBracketGeneration(Guid tournamentId)
         {
+            // Cancelled and Deleted are endings too: a delete committing between CreateBracket's read
+            // and this claim must not be brought back to life as a running tournament.
             int affected = await this.BaseDbSet()
                 .Where(t => t.Id == tournamentId
                     && t.Status != TournamentStatus.InProgress
-                    && t.Status != TournamentStatus.Completed)
+                    && t.Status != TournamentStatus.Completed
+                    && t.Status != TournamentStatus.Cancelled
+                    && t.Status != TournamentStatus.Deleted)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, TournamentStatus.InProgress));
 
             return affected > 0;
@@ -89,6 +93,46 @@ namespace GameHubz.Data.Repository
             {
                 // Balances the OpenConnection in Acquire — EF reopens on demand afterwards.
                 await this.ContextBase.Database.CloseConnectionAsync();
+            }
+        }
+
+        public async Task<bool> TryChangeStatus(Guid tournamentId, TournamentStatus expected, TournamentStatus newStatus, bool markEnded, DateTime now, Guid? modifiedBy)
+        {
+            var query = this.BaseDbSet().Where(t => t.Id == tournamentId && t.Status == expected);
+
+            int affected = markEnded
+                ? await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, newStatus)
+                    .SetProperty(t => t.EndedOn, t => t.EndedOn ?? now)
+                    .SetProperty(t => t.ModifiedOn, now)
+                    .SetProperty(t => t.ModifiedBy, modifiedBy))
+                : await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, newStatus)
+                    .SetProperty(t => t.ModifiedOn, now)
+                    .SetProperty(t => t.ModifiedBy, modifiedBy));
+
+            return affected == 1;
+        }
+
+        public void KeepLifecycleColumns(TournamentEntity entity)
+        {
+            var entry = this.ContextBase.Entry(entity);
+            if (entry.State != EntityState.Modified) return;
+
+            entry.Property(t => t.Status).IsModified = false;
+            entry.Property(t => t.EndedOn).IsModified = false;
+            entry.Property(t => t.WinnerUserId).IsModified = false;
+            entry.Property(t => t.WinnerTeamId).IsModified = false;
+        }
+
+        public async Task LockEntry(Guid tournamentId)
+        {
+            // Its own key space (not the advancement lock's), so a sign-up never waits on bracket work.
+            if (this.ContextBase.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                string key = $"tournament-entry:{tournamentId:D}";
+                await this.ContextBase.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))");
             }
         }
 
@@ -146,6 +190,7 @@ namespace GameHubz.Data.Repository
                      IsTeamTournament = x.IsTeamTournament,
                      IsExclusive = x.IsExclusive,
                      IsPrivate = x.IsPrivate,
+                     IsInviteOnly = x.IsInviteOnly,
                      // Draft rows are listed on the hub page alongside open ones, so the card needs
                      // this to say "opens …" instead of looking like a tournament nobody can join.
                      RegistrationOpensAt = x.RegistrationOpensAt
@@ -191,6 +236,7 @@ namespace GameHubz.Data.Repository
                     TeamWinCondition = x.TeamWinCondition,
                     IsExclusive = x.IsExclusive,
                     IsPrivate = x.IsPrivate,
+                    IsInviteOnly = x.IsInviteOnly,
                     // Additive for v1 (which never returns a scheduled row); v2 needs it to render
                     // "opens …" instead of a join-ready card.
                     RegistrationOpensAt = x.RegistrationOpensAt
@@ -331,6 +377,7 @@ namespace GameHubz.Data.Repository
                       RequireAvailabilityForChat = x.RequireAvailabilityForChat,
                       IsExclusive = x.IsExclusive,
                       IsPrivate = x.IsPrivate,
+                      IsInviteOnly = x.IsInviteOnly,
                       DoubleRoundRobin = x.DoubleRoundRobin,
                       GroupsCount = x.GroupsCount,
                       QualifiersPerGroup = x.QualifiersPerGroup,

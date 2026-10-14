@@ -9,6 +9,13 @@
         Task<MatchEntity?> GetWithStage(Guid userId);
 
         /// <summary>
+        /// Writes the two players who played a solo match onto its row, only when it carries none yet.
+        /// Done for a spot's played matches right before the spot changes hands (participant swap),
+        /// so those results stay with the players who played them. Returns whether the row was written.
+        /// </summary>
+        Task<bool> TryStampPlayedBy(Guid matchId, Guid homeUserId, Guid awayUserId);
+
+        /// <summary>
         /// Stamps CheckInResolvedOn on a still-scheduled, still-unruled match and reports whether
         /// this caller is the one that got it. The ready-check sweep's claim. Only succeeds while
         /// both check-in stamps still match the ones the ruling was decided on.
@@ -82,7 +89,8 @@
         /// Result writes compare this with the row they loaded, so a report never lands on a fixture
         /// whose players changed underneath it.
         /// </summary>
-        Task<(Guid? HomeParticipantId, Guid? AwayParticipantId)?> GetParticipantIds(Guid matchId);
+        /// <summary>Who is on the match as committed — see <see cref="MatchSidesRow"/>. Null when the match is gone.</summary>
+        Task<MatchSidesRow?> GetSides(Guid matchId);
 
         // Every match in a tournament. Spans all stages — needed for double elimination, where a
         // Losers-Bracket match's loser-edge feeder lives in the Winners stage. Used by the

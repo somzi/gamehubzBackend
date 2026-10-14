@@ -54,6 +54,18 @@ namespace GameHubz.Data.Context
             MatchChatReadConfigurator(modelBuilder);
             NotificationConfigurator(modelBuilder);
             ResultVerificationConfigurator(modelBuilder);
+            TournamentInviteConfigurator(modelBuilder);
+        }
+
+        private static void TournamentInviteConfigurator(ModelBuilder modelBuilder)
+        {
+            var invite = modelBuilder.Entity<TournamentInviteEntity>();
+            invite.ToTable("TournamentInvite").HasQueryFilter(x => x.IsDeleted == false);
+            invite.HasOne(x => x.Tournament).WithMany().HasForeignKey(x => x.TournamentId).OnDelete(DeleteBehavior.Cascade);
+            invite.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            invite.HasIndex(x => new { x.TournamentId, x.UserId }, "UX_TournamentInvite_Pending")
+                .IsUnique().HasFilter("\"Status\" = 1 AND \"IsDeleted\" = false");
+            invite.HasIndex(x => new { x.UserId, x.Status }, "IX_TournamentInvite_User_Status");
         }
 
         private static void ResultVerificationConfigurator(ModelBuilder modelBuilder)

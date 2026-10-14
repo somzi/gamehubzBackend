@@ -1,4 +1,5 @@
 using FluentValidation;
+using GameHubz.DataModels.Consts;
 using GameHubz.DataModels.Enums;
 using Microsoft.Extensions.Configuration;
 
@@ -228,26 +229,272 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Hands one participant's slot to another hub member. The participant row changes owner
-        /// rather than being deleted and re-created, so the incoming player inherits the seed, group,
-        /// standings and every match already played — the bracket itself is never touched, because
-        /// matches reference participant ids, not user ids. Mirrors swap_tournament_participant.sql.
+        /// rather than being deleted and re-created, so the incoming player inherits the seed, group
+        /// and standings — the bracket itself is never touched, because matches reference participant
+        /// ids, not user ids. Matches the spot already played stay with the player who played them
+        /// (see <see cref="StampPlayedMatches"/>). Mirrors swap_tournament_participant.sql.
+        ///
+        /// The original, immediate swap — kept for the shipped app. Newer clients send a swap invite
+        /// instead (<see cref="SendSwapInvite"/>), and the spot changes hands only when the incoming
+        /// player accepts it.
         /// </summary>
         public async Task<ParticipantSwapResultDto> SwapParticipant(Guid tournamentId, ParticipantSwapRequest request)
         {
             await this.EnsureCanManageTournament(tournamentId);
 
-            if (request.OutgoingUserId == Guid.Empty || request.IncomingUserId == Guid.Empty)
+            // Checked once up front so a refusal comes back without waiting on any lock; the swap
+            // itself checks again on fresh data (RunSwapLocked).
+            await this.PrepareSwap(tournamentId, request.OutgoingUserId, request.IncomingUserId);
+            var outgoingUser = await this.AppUnitOfWork.UserRepository.GetById(request.OutgoingUserId);
+
+            var plan = await this.RunSwapLocked(
+                tournamentId,
+                request.OutgoingUserId,
+                request.IncomingUserId,
+                p => this.ExecuteSwap(p, request.OutgoingUserId, request.IncomingUserId));
+
+            await this.InvalidateAfterSwap(tournamentId, request.OutgoingUserId, request.IncomingUserId);
+            this.NotifyAfterSwap(plan.Tournament, outgoingUser, plan.IncomingUser, plan.Eligibility.PlayedMatches);
+
+            return ToSwapResult(plan, outgoingUser, request.OutgoingUserId, request.IncomingUserId);
+        }
+
+        /// <summary>
+        /// Offers a participant's spot to another hub member. Every rule of the swap is checked now
+        /// (so the organizer hears "no" straight away) and again when the player accepts — the
+        /// tournament may have moved on in between. Nothing changes until they accept.
+        /// </summary>
+        public async Task<TournamentInviteDto> SendSwapInvite(Guid tournamentId, ParticipantSwapRequest request)
+        {
+            await this.EnsureCanManageTournament(tournamentId);
+
+            var plan = await this.PrepareSwap(tournamentId, request.OutgoingUserId, request.IncomingUserId);
+            var incomingUser = plan.IncomingUser;
+
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
+
+            // One open invite per player per tournament, and no second invite after a decline —
+            // the same rules as an entry invite (TournamentInviteService.SendInvites). An entry invite
+            // left from registration reads Expired once the tournament started, but its row is still
+            // Pending: written down as Expired here, or it would block this invite (and the index).
+            var pending = await this.AppUnitOfWork.TournamentInviteRepository.GetPending(tournamentId, request.IncomingUserId);
+            if (pending != null && !TournamentInviteRules.IsAnswerable(pending.Kind, plan.Tournament.Status))
+            {
+                await this.AppUnitOfWork.TournamentInviteRepository.TryTransition(
+                    pending.Id!.Value, TournamentInviteStatus.Pending, TournamentInviteStatus.Expired, DateTime.UtcNow, caller.UserId);
+                pending = null;
+            }
+
+            if (pending != null)
+            {
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.PlayerAlreadyInvited"], incomingUser.Username));
+            }
+
+            if (await this.AppUnitOfWork.TournamentInviteRepository.HasDeclined(tournamentId, request.IncomingUserId))
+            {
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.PlayerDeclinedInvite"], incomingUser.Username));
+            }
+
+            var outgoingUser = await this.AppUnitOfWork.UserRepository.GetById(request.OutgoingUserId);
+
+            var invite = new TournamentInviteEntity
+            {
+                TournamentId = tournamentId,
+                UserId = request.IncomingUserId,
+                InvitedByUserId = caller.UserId,
+                Kind = TournamentInviteKind.Swap,
+                Status = TournamentInviteStatus.Pending,
+                SwapOutgoingUserId = request.OutgoingUserId,
+            };
+
+            await this.AppUnitOfWork.TournamentInviteRepository.AddEntity(invite, this.UserContextReader);
+
+            try
+            {
+                await this.SaveAsync();
+            }
+            catch (Exception ex) when (TournamentInviteService.IsUniqueViolation(ex))
+            {
+                // A second manager invited the same player a moment earlier (UX_TournamentInvite_Pending).
+                throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.PlayerAlreadyInvited"], incomingUser.Username));
+            }
+
+            string outgoingName = outgoingUser?.Username ?? this.LocalizationService["BusinessRule.ThatPlayerFallback"];
+            int played = plan.Eligibility.PlayedMatches;
+
+            // The played matches are named so the player knows what they take over: the spot's place
+            // in the table, while those matches stay on the outgoing player's profile.
+            PushText body = played > 0
+                ? PushText.FromKey("Push.SwapInvite.Body", outgoingName, PlayedMatchesKey(played, incomingUser.Language))
+                : PushText.FromKey("Push.SwapInvite.BodyFresh", outgoingName);
+
+            this.SendPush(
+                incomingUser,
+                PushText.FromLiteral(plan.Tournament.Name),
+                body,
+                new { tournamentId = tournamentId.ToString(), inviteId = invite.Id!.Value.ToString(), type = "swapInvite" });
+
+            return new TournamentInviteDto
+            {
+                Id = invite.Id!.Value,
+                TournamentId = tournamentId,
+                UserId = request.IncomingUserId,
+                Username = incomingUser.Username,
+                AvatarUrl = incomingUser.AvatarUrl,
+                Kind = TournamentInviteKind.Swap,
+                Status = TournamentInviteStatus.Pending,
+                SwapOutgoingUserId = request.OutgoingUserId,
+                SwapOutgoingUsername = outgoingUser?.Username,
+                CreatedOn = invite.CreatedOn ?? DateTime.UtcNow,
+            };
+        }
+
+        /// <summary>
+        /// The invited player takes the spot. Every swap rule is checked again under the locks
+        /// (RunSwapLocked) — two swap invites for the same spot can't both win, and a spot that played
+        /// past the limit (or a player who joined, was banned, or left the hub meanwhile) refuses. A
+        /// refused invite can't come good later, so it is expired on the way out.
+        /// </summary>
+        internal async Task<ParticipantSwapResultDto> AcceptSwapInvite(TournamentInviteEntity invite, Guid callerUserId)
+        {
+            Guid tournamentId = invite.TournamentId;
+            Guid outgoingUserId = invite.SwapOutgoingUserId ?? Guid.Empty;
+            DateTime now = DateTime.UtcNow;
+
+            BusinessRuleException? refused = null;
+            SwapPlan plan;
+
+            try
+            {
+                // Up front first, so a refusal doesn't wait on the locks.
+                try
+                {
+                    await this.PrepareSwap(tournamentId, outgoingUserId, callerUserId);
+                }
+                catch (BusinessRuleException ex)
+                {
+                    refused = ex;
+                    throw;
+                }
+
+                plan = await this.RunSwapLocked(
+                    tournamentId,
+                    outgoingUserId,
+                    callerUserId,
+                    async p =>
+                    {
+                        if (!await this.AppUnitOfWork.TournamentInviteRepository.TryTransition(
+                            invite.Id!.Value, TournamentInviteStatus.Pending, TournamentInviteStatus.Accepted, now, callerUserId))
+                        {
+                            throw new BusinessRuleException(this.LocalizationService["BusinessRule.InviteNoLongerOpen"]);
+                        }
+
+                        await this.ExecuteSwap(p, outgoingUserId, callerUserId);
+                        await this.AppUnitOfWork.TournamentInviteRepository.ExpireOpenSwapInvites(tournamentId, outgoingUserId, invite.Id!.Value, now);
+                    },
+                    onRefused: ex => refused = ex);
+            }
+            catch (BusinessRuleException) when (refused != null)
+            {
+                await this.AppUnitOfWork.TournamentInviteRepository.TryTransition(
+                    invite.Id!.Value, TournamentInviteStatus.Pending, TournamentInviteStatus.Expired, now, callerUserId);
+                throw refused;
+            }
+
+            var outgoingUser = await this.AppUnitOfWork.UserRepository.GetById(outgoingUserId);
+
+            await this.InvalidateAfterSwap(tournamentId, outgoingUserId, callerUserId);
+
+            // The incoming player just said yes themselves — only the one leaving needs telling.
+            this.NotifyAfterSwap(plan.Tournament, outgoingUser, plan.IncomingUser, plan.Eligibility.PlayedMatches, notifyIncoming: false);
+
+            return ToSwapResult(plan, outgoingUser, outgoingUserId, callerUserId);
+        }
+
+        /// <summary>
+        /// Runs a swap under both locks the tournament has, with the plan read again inside them:
+        /// the advancement lock every result write takes, so no match of the spot can finish between
+        /// reading the matches and writing down who played them; and, inside the transaction, the entry
+        /// lock, so two swaps of one spot can't both win. Always advancement first, entry second; the
+        /// other holders of the entry lock (sign-up approval, invite acceptance, closing registration,
+        /// the bracket claim) never take the advancement lock while holding it, so the two can't
+        /// deadlock. A swap rule failing on the fresh data goes to <paramref name="onRefused"/> before
+        /// it is thrown.
+        /// </summary>
+        private async Task<SwapPlan> RunSwapLocked(
+            Guid tournamentId,
+            Guid outgoingUserId,
+            Guid incomingUserId,
+            Func<SwapPlan, Task> work,
+            Action<BusinessRuleException>? onRefused = null)
+        {
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
+            try
+            {
+                return await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    await this.AppUnitOfWork.TournamentRepository.LockEntry(tournamentId);
+
+                    SwapPlan plan;
+                    try
+                    {
+                        plan = await this.PrepareSwap(tournamentId, outgoingUserId, incomingUserId);
+                    }
+                    catch (BusinessRuleException ex)
+                    {
+                        onRefused?.Invoke(ex);
+                        throw;
+                    }
+
+                    await work(plan);
+                    return plan;
+                });
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(tournamentId);
+            }
+        }
+
+        /// <summary>Played matches of the spot, for the invite banner: they stay on the outgoing player's profile.</summary>
+        internal async Task<int> CountPlayedMatchesOfSpot(Guid tournamentId, Guid outgoingUserId)
+        {
+            var participants = await this.AppUnitOfWork.TournamentParticipantRepository.GetAllByTournamentAndUser(tournamentId, outgoingUserId);
+            if (participants.Count != 1 || participants[0].Id == null) return 0;
+
+            Guid participantId = participants[0].Id!.Value;
+            var matches = await this.AppUnitOfWork.MatchRepository.GetAllByTournamentId(tournamentId);
+
+            return matches.Count(m => m.TeamMatchId == null
+                && (m.HomeParticipantId == participantId || m.AwayParticipantId == participantId)
+                && IsPlayed(m));
+        }
+
+        private sealed record SwapPlan(
+            TournamentEntity Tournament,
+            TournamentParticipantEntity Participant,
+            List<MatchEntity> Matches,
+            ParticipantSwapEligibilityDto Eligibility,
+            UserEntity IncomingUser);
+
+        /// <summary>
+        /// Every rule a swap has to pass, in one place for the immediate swap, the invite and its
+        /// acceptance. Throws the first one that fails.
+        /// </summary>
+        private async Task<SwapPlan> PrepareSwap(Guid tournamentId, Guid outgoingUserId, Guid incomingUserId)
+        {
+            if (outgoingUserId == Guid.Empty || incomingUserId == Guid.Empty)
             {
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.SwapNeedsBothPlayers"]);
             }
 
-            if (request.OutgoingUserId == request.IncomingUserId)
+            if (outgoingUserId == incomingUserId)
             {
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickDifferentPlayer"]);
             }
 
             var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(tournamentId);
-            var participant = await this.ResolveSwappableParticipant(tournament, request.OutgoingUserId);
+            var participant = await this.ResolveSwappableParticipant(tournament, outgoingUserId);
             var matches = await this.AppUnitOfWork.MatchRepository.GetAllByTournamentId(tournamentId);
 
             var eligibility = this.AssessSwap(tournament, participant, matches);
@@ -256,54 +503,66 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(eligibility.BlockReason ?? this.LocalizationService["BusinessRule.SwapNoLongerPossible"]);
             }
 
-            var incomingUser = await this.AppUnitOfWork.UserRepository.GetById(request.IncomingUserId)
+            var incomingUser = await this.AppUnitOfWork.UserRepository.GetById(incomingUserId)
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.PickedPlayerGone"]);
 
             // UX_TournamentParticipant_Tournament_User (migration 60) is the DB backstop; checking
             // here turns the race-free case into a readable 400 instead of a unique-violation 500.
-            if (await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForUser(tournamentId, request.IncomingUserId))
+            if (await this.AppUnitOfWork.TournamentParticipantRepository.ExistsForUser(tournamentId, incomingUserId))
             {
                 throw new BusinessRuleException(string.Format(this.LocalizationService["BusinessRule.UserAlreadyInTournament"], incomingUser.Username));
             }
 
             await this.EnsureIncomingUserCanJoin(tournament, incomingUser);
 
-            var outgoingUser = await this.AppUnitOfWork.UserRepository.GetById(request.OutgoingUserId);
+            return new SwapPlan(tournament, participant, matches, eligibility, incomingUser);
+        }
 
-            // ── the swap itself ────────────────────────────────────────────────────────────────
-            participant.UserId = request.IncomingUserId;
+        /// <summary>The swap itself. Runs inside RunSwapLocked, on a plan read under its locks.</summary>
+        private async Task ExecuteSwap(SwapPlan plan, Guid outgoingUserId, Guid incomingUserId)
+        {
+            var tournament = plan.Tournament;
+            var participant = plan.Participant;
+            Guid tournamentId = tournament.Id!.Value;
+
+            // Before the spot changes hands: its played matches keep the players who played them.
+            await this.StampPlayedMatches(tournamentId, participant.Id ?? Guid.Empty, plan.Matches);
+
+            participant.UserId = incomingUserId;
             await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(participant, this.UserContextReader);
 
-            await this.MoveRegistration(tournamentId, request.OutgoingUserId, request.IncomingUserId);
+            await this.MoveRegistration(tournamentId, outgoingUserId, incomingUserId);
 
-            // The only per-user ids a match carries. HomeUserId/AwayUserId are set on team
-            // sub-matches only (null throughout a solo tournament), but a stale ProposedByUserId or
-            // AdminHelpRequestedByUserId would leave the departed player's name on a live match.
-            foreach (var match in matches)
+            // The only per-user ids a match carries. HomeUserId/AwayUserId are a team sub-match's
+            // lineup, or — on a solo match already played — who played it (stamped above), which a
+            // swap must never rewrite. A stale ProposedByUserId or AdminHelpRequestedByUserId would
+            // leave the departed player's name on a live match.
+            foreach (var match in plan.Matches)
             {
                 bool touched = false;
+                bool played = IsPlayed(match);
 
-                if (match.HomeUserId == request.OutgoingUserId)
+                if (!played && match.HomeUserId == outgoingUserId)
                 {
-                    match.HomeUserId = request.IncomingUserId;
+                    match.HomeUserId = incomingUserId;
                     touched = true;
                 }
 
-                if (match.AwayUserId == request.OutgoingUserId)
+                if (!played && match.AwayUserId == outgoingUserId)
                 {
-                    match.AwayUserId = request.IncomingUserId;
+                    match.AwayUserId = incomingUserId;
                     touched = true;
                 }
 
-                if (match.ProposedByUserId == request.OutgoingUserId)
+                if (match.ProposedByUserId == outgoingUserId)
                 {
-                    match.ProposedByUserId = request.IncomingUserId;
+                    match.ProposedByUserId = incomingUserId;
                     touched = true;
                 }
 
-                if (match.AdminHelpRequestedByUserId == request.OutgoingUserId)
+                if (match.AdminHelpRequestedByUserId == outgoingUserId)
                 {
-                    match.AdminHelpRequestedByUserId = request.IncomingUserId;
+                    match.AdminHelpRequestedByUserId = incomingUserId;
                     touched = true;
                 }
 
@@ -316,31 +575,75 @@ namespace GameHubz.Logic.Services
             // Unreachable through the UI (a finished tournament can't be swapped), but a
             // hand-corrected tournament can carry a winner while still InProgress and a winner id
             // pointing at someone no longer in the tournament is worse than rewriting the row.
-            if (tournament.WinnerUserId == request.OutgoingUserId)
+            if (tournament.WinnerUserId == outgoingUserId)
             {
-                tournament.WinnerUserId = request.IncomingUserId;
+                tournament.WinnerUserId = incomingUserId;
                 await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
             }
 
             // MatchChat rows keep their original author on purpose: the outgoing player really did
             // write those messages, and rewriting them would forge the match's chat history.
             await this.SaveAsync();
-
-            await this.InvalidateAfterSwap(tournamentId, request.OutgoingUserId, request.IncomingUserId);
-            this.NotifyAfterSwap(tournament, outgoingUser, incomingUser, eligibility.PlayedMatches);
-
-            return new ParticipantSwapResultDto
-            {
-                TournamentId = tournamentId,
-                ParticipantId = participant.Id!.Value,
-                OutgoingUserId = request.OutgoingUserId,
-                OutgoingUsername = outgoingUser?.Username ?? string.Empty,
-                IncomingUserId = request.IncomingUserId,
-                IncomingUsername = incomingUser.Username,
-                IncomingAvatarUrl = incomingUser.AvatarUrl,
-                InheritedPlayedMatches = eligibility.PlayedMatches,
-            };
         }
+
+        /// <summary>
+        /// Writes both players onto every played solo match of the spot that doesn't carry them yet.
+        /// Profiles, head-to-head and the hub leaderboard read "the players on the row first, then the
+        /// spot's holder", so after the swap those results stay with the players who played them —
+        /// the incoming player starts from their own next match. The tournament itself (standings,
+        /// bracket) keeps reading the spot. A wiped result removes the record again
+        /// (BracketService.ClearSoloPlayedBy).
+        /// </summary>
+        private async Task StampPlayedMatches(Guid tournamentId, Guid participantId, List<MatchEntity> matches)
+        {
+            var played = matches
+                .Where(m => m.TeamMatchId == null
+                    && IsPlayed(m)
+                    && m.HomeParticipantId.HasValue
+                    && m.AwayParticipantId.HasValue
+                    && (m.HomeParticipantId == participantId || m.AwayParticipantId == participantId)
+                    && m.HomeUserId == null
+                    && m.AwayUserId == null)
+                .ToList();
+
+            if (played.Count == 0) return;
+
+            var holders = await this.AppUnitOfWork.TournamentParticipantRepository.GetSoloUserIdsByParticipant(tournamentId);
+
+            foreach (var match in played)
+            {
+                if (!holders.TryGetValue(match.HomeParticipantId!.Value, out Guid homeUserId)
+                    || !holders.TryGetValue(match.AwayParticipantId!.Value, out Guid awayUserId))
+                {
+                    continue;
+                }
+
+                if (await this.AppUnitOfWork.MatchRepository.TryStampPlayedBy(match.Id!.Value, homeUserId, awayUserId))
+                {
+                    // Keep the loaded copy in step: if the loop in ExecuteSwap writes this row back,
+                    // its snapshot must carry the players too.
+                    match.HomeUserId = homeUserId;
+                    match.AwayUserId = awayUserId;
+                }
+            }
+        }
+
+        // "Played" for the swap: a recorded outcome, including a double no-show.
+        private static bool IsPlayed(MatchEntity match)
+            => match.Status == MatchStatus.Completed || match.Status == MatchStatus.NoShow;
+
+        private static ParticipantSwapResultDto ToSwapResult(SwapPlan plan, UserEntity? outgoingUser, Guid outgoingUserId, Guid incomingUserId)
+            => new()
+            {
+                TournamentId = plan.Tournament.Id!.Value,
+                ParticipantId = plan.Participant.Id!.Value,
+                OutgoingUserId = outgoingUserId,
+                OutgoingUsername = outgoingUser?.Username ?? string.Empty,
+                IncomingUserId = incomingUserId,
+                IncomingUsername = plan.IncomingUser.Username,
+                IncomingAvatarUrl = plan.IncomingUser.AvatarUrl,
+                InheritedPlayedMatches = plan.Eligibility.PlayedMatches,
+            };
 
         /// <summary>
         /// The single source of truth for the swap rule, shared by the read-only check and the write
@@ -395,6 +698,16 @@ namespace GameHubz.Logic.Services
             {
                 result.CanSwap = false;
                 result.BlockReason = this.LocalizationService["BusinessRule.SwapTournamentClosed"];
+                return result;
+            }
+
+            // A result reported but not settled — a proposal waiting for the opponent, or a level
+            // knockout series waiting for its tiebreak — was played by the player leaving. After a swap
+            // it would be confirmed for the one coming in, so it has to be settled first.
+            if (own.Any(m => m.ProposedByUserId != null || m.Status == MatchStatus.TieBreakRequired))
+            {
+                result.CanSwap = false;
+                result.BlockReason = this.LocalizationService["BusinessRule.SwapResultPending"];
                 return result;
             }
 
@@ -591,7 +904,8 @@ namespace GameHubz.Logic.Services
             TournamentEntity tournament,
             UserEntity? outgoingUser,
             UserEntity incomingUser,
-            int inheritedPlayedMatches)
+            int inheritedPlayedMatches,
+            bool notifyIncoming = true)
         {
             string tournamentId = tournament.Id!.Value.ToString();
 
@@ -601,11 +915,14 @@ namespace GameHubz.Logic.Services
                 ? PushText.FromKey("Push.SwappedIn.Body", PlayedMatchesKey(inheritedPlayedMatches, incomingUser?.Language))
                 : PushText.FromKey("Push.SwappedIn.BodyFirstMatch");
 
-            this.SendPush(
-                incomingUser,
-                PushText.FromLiteral(tournament.Name),
-                inheritedNote,
-                new { tournamentId, type = "participantSwappedIn" });
+            if (notifyIncoming)
+            {
+                this.SendPush(
+                    incomingUser,
+                    PushText.FromLiteral(tournament.Name),
+                    inheritedNote,
+                    new { tournamentId, type = "participantSwappedIn" });
+            }
 
             this.SendPush(
                 outgoingUser,

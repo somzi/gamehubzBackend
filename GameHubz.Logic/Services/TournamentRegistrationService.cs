@@ -169,6 +169,14 @@ namespace GameHubz.Logic.Services
                 var tournament = await this.AppUnitOfWork.TournamentRepository.GetByIdOrThrowIfNull(entity.TournamentId.Value);
                 var user = await this.AppUnitOfWork.UserRepository.ShallowGetByIdOrThrowIfNull(entity.UserId.Value);
 
+                // Invite-only: a player gets in by accepting an invite (TournamentInviteService), never
+                // by signing up. Managers are exempt, as with the code: they run it and may play in it.
+                if (tournament.IsInviteOnly
+                    && !await this.tournamentAuth.CanManageTournamentAsync(entity.TournamentId.Value))
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentInviteOnly"]);
+                }
+
                 if (!IsEligibleToJoin(tournament, user))
                 {
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentRegionRestricted"]);
@@ -249,19 +257,27 @@ namespace GameHubz.Logic.Services
                     await HubBans.EnsureNoneBannedAsync(this.AppUnitOfWork, this.LocalizationService, hubId, [tournamentRegistration.UserId.Value]);
             }
 
-            if (!alreadyParticipant && IsAlreadyFullTournament(tournamentRegistration, 1))
+            // Under the entry lock with a fresh count: the roster loaded above can already be stale
+            // when a player accepts an invite (or a second manager approves) at the same moment.
+            await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentFull"]);
-            }
+                await this.AppUnitOfWork.TournamentRepository.LockEntry(tournamentRegistration.TournamentId!.Value);
 
-            await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
+                if (!alreadyParticipant)
+                {
+                    await this.EnsureRoomFor(tournamentRegistration.TournamentId!.Value, tournamentRegistration.Tournament?.MaxPlayers, 1);
+                }
 
-            if (!alreadyParticipant)
-            {
-                await CreateTournamentParticipant(tournamentRegistration);
-            }
+                await SetRegistrationStatus(tournamentRegistration, TournamentRegistrationStatus.Approved);
 
-            await this.SaveAsync();
+                if (!alreadyParticipant)
+                {
+                    await CreateTournamentParticipant(tournamentRegistration);
+                }
+
+                await this.SaveAsync();
+                return true;
+            });
 
             if (tournamentRegistration.UserId.HasValue)
             {
@@ -379,22 +395,25 @@ namespace GameHubz.Logic.Services
                 await HubBans.EnsureTeamNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, batchHubId, registration.TeamId!.Value);
             }
 
-            if (IsAlreadyFullTournament(tournamentRegistration.First(), registrationsToMaterialize.Count))
+            // Same entry lock and fresh count as a single approval (see ApproveRegistration).
+            await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentFull"]);
-            }
+                await this.AppUnitOfWork.TournamentRepository.LockEntry(tournamentIds[0]!.Value);
+                await this.EnsureRoomFor(tournamentIds[0]!.Value, tournament?.MaxPlayers, registrationsToMaterialize.Count);
 
-            foreach (var registration in tournamentRegistration)
-            {
-                await SetRegistrationStatus(registration, TournamentRegistrationStatus.Approved);
-            }
+                foreach (var registration in tournamentRegistration)
+                {
+                    await SetRegistrationStatus(registration, TournamentRegistrationStatus.Approved);
+                }
 
-            foreach (var registration in registrationsToMaterialize)
-            {
-                await CreateTournamentParticipant(registration);
-            }
+                foreach (var registration in registrationsToMaterialize)
+                {
+                    await CreateTournamentParticipant(registration);
+                }
 
-            await this.SaveAsync();
+                await this.SaveAsync();
+                return true;
+            });
 
             foreach (var registration in tournamentRegistration)
             {
@@ -549,11 +568,75 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRegistrationRepository.UpdateEntity(tournamentRegistration, this.UserContextReader);
         }
 
-        private static bool IsAlreadyFullTournament(TournamentRegistrationEntity tournamentRegistration, int numberOfNewParticipient)
+        /// <summary>
+        /// Refuses when the tournament has no room for <paramref name="incoming"/> more entrants. Counts
+        /// fresh from the database: call it under ITournamentRepository.LockEntry, so the count can't
+        /// change between this check and the insert.
+        /// </summary>
+        internal async Task EnsureRoomFor(Guid tournamentId, int? maxPlayers, int incoming, string fullMessageKey = "BusinessRule.TournamentFull")
         {
-            return tournamentRegistration.Tournament != null
-                && tournamentRegistration.Tournament.TournamentParticipants != null
-                && tournamentRegistration.Tournament!.MaxPlayers < (tournamentRegistration.Tournament.TournamentParticipants.Count + numberOfNewParticipient);
+            if (!maxPlayers.HasValue || incoming <= 0)
+            {
+                return;
+            }
+
+            int current = await this.AppUnitOfWork.TournamentParticipantRepository.CountByTournament(tournamentId);
+            if (maxPlayers.Value < current + incoming)
+            {
+                throw new BusinessRuleException(this.LocalizationService[fullMessageKey]);
+            }
+        }
+
+        /// <summary>
+        /// Makes an invited player a participant: their registration row is approved (their own earlier
+        /// sign-up is reused when there is one, so the registrations list never shows them twice) and the
+        /// participant is created. The caller (TournamentInviteService) holds the entry lock and its
+        /// transaction, and has already checked the room, the ban and the invite itself.
+        /// </summary>
+        internal async Task AdmitInvitedPlayer(Guid tournamentId, Guid userId)
+        {
+            var existing = await this.AppUnitOfWork.TournamentRegistrationRepository.GetAllByTournamentAndUser(tournamentId, userId);
+
+            TournamentRegistrationEntity registration;
+            if (existing.Count > 0)
+            {
+                registration = existing[0];
+                await SetRegistrationStatus(registration, TournamentRegistrationStatus.Approved);
+
+                foreach (var extra in existing.Skip(1))
+                {
+                    await this.AppUnitOfWork.TournamentRegistrationRepository.HardDeleteEntity(extra);
+                }
+            }
+            else
+            {
+                registration = new TournamentRegistrationEntity
+                {
+                    TournamentId = tournamentId,
+                    UserId = userId,
+                    Status = TournamentRegistrationStatus.Approved,
+                };
+                await this.AppUnitOfWork.TournamentRegistrationRepository.AddEntity(registration, this.UserContextReader);
+            }
+
+            await CreateTournamentParticipant(registration);
+            await this.SaveAsync();
+        }
+
+        /// <summary>The caches an approval flushes (see ApproveRegistration), for a player admitted by invite.</summary>
+        internal async Task InvalidateAfterAdmission(Guid tournamentId, Guid userId)
+        {
+            await cacheService.RemoveAsync($"player_stats:{userId}");
+            await cacheService.RemoveByPatternAsync($"user_feed:{userId}:*");
+            await cacheService.RemoveAsync($"tournament:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"bracket:{tournamentId}:*");
+            await cacheService.RemoveByPatternAsync($"bracket:v3:{tournamentId}:*");
+            await cacheService.RemoveAsync($"league_standings:{tournamentId}");
+            await cacheService.RemoveByPatternAsync($"pdf:bracket:{tournamentId}:*");
+            await cacheService.RemoveAsync($"tournament_participants:{tournamentId}");
+
+            // A pending sign-up of theirs may just have been approved: refresh the managers' badge.
+            await this.badgeService.PushToTournamentManagersAsync(tournamentId);
         }
 
         protected override IRepository<TournamentRegistrationEntity> GetRepository()

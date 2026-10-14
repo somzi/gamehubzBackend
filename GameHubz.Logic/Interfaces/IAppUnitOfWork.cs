@@ -77,6 +77,8 @@ namespace GameHubz.Logic.Interfaces
 
         IMatchResultVerificationRepository MatchResultVerificationRepository { get; }
 
+        ITournamentInviteRepository TournamentInviteRepository { get; }
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

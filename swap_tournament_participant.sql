@@ -1,7 +1,13 @@
 -- swap_tournament_participant.sql
 --
--- Zamenjuje jednog igrača drugim NA JEDNOM TURNIRU, tako da novi igrač NASLEDI sve
--- odigrane rezultate (mečeve, skorove, poene u grupi, poziciju u bracket-u).
+-- Zamenjuje jednog igrača drugim NA JEDNOM TURNIRU. Novi igrač nasleđuje MESTO u turniru
+-- (poene u grupi, poziciju na tabeli i u bracket-u), ali već odigrani mečevi OSTAJU na
+-- profilu igrača koji ih je odigrao (sekcija 2.0) — isto kao swap iz aplikacije
+-- (TournamentParticipantService.StampPlayedMatches).
+--
+-- NAPOMENA (od verzije 4.2.0): odeljak ispod opisuje stari model. Solo meč sada MOŽE da
+-- ima "HomeUserId"/"AwayUserId": upisuju se na odigrane mečeve pri swap-u i znače "ovaj
+-- meč su odigrali ovi igrači". Profil/h2h/leaderboard čitaju prvo njih, pa tek učesnika.
 --
 -- ZAŠTO JE OVO DOVOLJNO (i zašto je nasleđivanje najlakša varijanta):
 --   Solo mečevi NE pamte UserId na Match-u — Match."HomeUserId"/"AwayUserId" su NULL za
@@ -120,6 +126,21 @@ SELECT COUNT(*) AS timski_podmecevi_starog
    AND m."TeamMatchId" IS NOT NULL
    AND (SELECT old_user FROM _swap) IN (m."HomeUserId", m."AwayUserId");
 
+-- 1.7b !!! BLOKER !!! Nerešen rezultat na mestu starog igrača: predlog koji čeka potvrdu
+--      ("ProposedByUserId") ili serija koja čeka majstoricu (Status 6 = TieBreakRequired).
+--      Očekivano: 0 redova. Taj rezultat je odigrao stari igrač — posle swap-a bi bio potvrđen
+--      novom. Prvo ga reši (potvrdi/odbij/odigraj majstoricu), pa tek onda swap. Isto pravilo
+--      važi u aplikaciji (TournamentParticipantService.AssessSwap).
+SELECT 'BLOKER: nerešen rezultat' AS problem, m."Id" AS match_id, m."Status", m."ProposedByUserId"
+  FROM "Match" m
+  JOIN "TournamentParticipant" p
+    ON p."Id" IN (m."HomeParticipantId", m."AwayParticipantId")
+ WHERE m."TournamentId" = (SELECT tid FROM _swap)
+   AND m."TeamMatchId" IS NULL
+   AND p."UserId"       = (SELECT old_user FROM _swap)
+   AND p."IsDeleted"    = false
+   AND (m."ProposedByUserId" IS NOT NULL OR m."Status" = 6);
+
 -- 1.8 Članstvo u hub-u. HubRole: 1=Owner, 2=Admin, 3=Member, 4=Exclusive
 --     (provere su equality-based, vrednosti NISU poređane po privilegiji).
 --     Ako je turnir "IsExclusive" = true iz 1.1, novi igrač mora imati UserHub red sa
@@ -136,6 +157,28 @@ SELECT uh."UserId", uh."HubRole", uh."IsDeleted",
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 2) SWAP
 -- ═══════════════════════════════════════════════════════════════════════════
+
+-- 2.0 Odigrani solo mečevi (Completed 4 / NoShow 5) ostaju igračima koji su ih odigrali:
+--     PRE promene vlasnika na meč se upisuju oba igrača. Mečevi koji već imaju upisane
+--     igrače (raniji swap) se ne diraju. MORA pre 2.1.
+UPDATE "Match" m
+   SET "HomeUserId" = hp."UserId",
+       "AwayUserId" = ap."UserId",
+       "ModifiedOn" = now() AT TIME ZONE 'utc'
+  FROM "TournamentParticipant" hp, "TournamentParticipant" ap
+ WHERE m."TournamentId" = (SELECT tid FROM _swap)
+   AND m."TeamMatchId" IS NULL
+   AND m."Status" IN (4, 5)
+   AND m."HomeUserId" IS NULL
+   AND m."AwayUserId" IS NULL
+   AND hp."Id" = m."HomeParticipantId"
+   AND ap."Id" = m."AwayParticipantId"
+   AND hp."UserId" IS NOT NULL
+   AND ap."UserId" IS NOT NULL
+   AND (SELECT p."Id" FROM "TournamentParticipant" p
+         WHERE p."TournamentId" = (SELECT tid FROM _swap)
+           AND p."UserId"       = (SELECT old_user FROM _swap)
+           AND p."IsDeleted"    = false) IN (m."HomeParticipantId", m."AwayParticipantId");
 
 -- 2.1 SRŽ SWAP-A: participant red menja vlasnika. Sve statistike, grupa, seed,
 --     pozicija i svi mečevi (koji gledaju "HomeParticipantId"/"AwayParticipantId")
@@ -156,19 +199,21 @@ UPDATE "TournamentRegistration"
    AND "UserId"       = (SELECT old_user FROM _swap)
    AND "IsDeleted"    = false;
 
--- 2.3 Timski pod-mečevi — jedino mesto gde Match direktno pamti igrača.
---     Za solo turnir ovo pogodi 0 redova (HomeUserId/AwayUserId su NULL), pa je
---     bezbedno pustiti u svakom slučaju.
+-- 2.3 Timski pod-mečevi — tu Match direktno pamti igrača iz postave. Samo pod-mečevi
+--     ("TeamMatchId" IS NOT NULL): upis na solo mečeve iz 2.0 je istorija i NE SME da se
+--     prepiše na novog igrača.
 UPDATE "Match"
    SET "HomeUserId" = (SELECT new_user FROM _swap),
        "ModifiedOn" = now() AT TIME ZONE 'utc'
  WHERE "TournamentId" = (SELECT tid FROM _swap)
+   AND "TeamMatchId" IS NOT NULL
    AND "HomeUserId"   = (SELECT old_user FROM _swap);
 
 UPDATE "Match"
    SET "AwayUserId" = (SELECT new_user FROM _swap),
        "ModifiedOn" = now() AT TIME ZONE 'utc'
  WHERE "TournamentId" = (SELECT tid FROM _swap)
+   AND "TeamMatchId" IS NOT NULL
    AND "AwayUserId"   = (SELECT old_user FROM _swap);
 
 -- 2.4 Članstvo u timu (samo timski turniri; 0 redova za solo).

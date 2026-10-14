@@ -269,4 +269,64 @@
   <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
     <value>Mecz się zakończył — pamiętaj, aby zatrzymać transmisję.</value>
   </data>
+  <data name="BusinessRule.InviteOnlySoloOnly" xml:space="preserve">
+    <value>Tryb „tylko na zaproszenie” działa wyłącznie w turniejach solo.</value>
+  </data>
+  <data name="BusinessRule.TournamentInviteOnly" xml:space="preserve">
+    <value>Ten turniej jest tylko na zaproszenie. Dołączysz tylko wtedy, gdy organizator cię zaprosi.</value>
+  </data>
+  <data name="BusinessRule.PlayerAlreadyInvited" xml:space="preserve">
+    <value>{0} ma już otwarte zaproszenie do tego turnieju.</value>
+  </data>
+  <data name="BusinessRule.PlayerDeclinedInvite" xml:space="preserve">
+    <value>{0}: zaproszenie do tego turnieju zostało już odrzucone, więc nie można wysłać kolejnego.</value>
+  </data>
+  <data name="BusinessRule.InviteNoLongerOpen" xml:space="preserve">
+    <value>To zaproszenie nie jest już aktywne.</value>
+  </data>
+  <data name="BusinessRule.TooManyInvitesAtOnce" xml:space="preserve">
+    <value>Naraz możesz wysłać maksymalnie {0} zaproszeń. Resztę wyślij w kolejnej turze.</value>
+  </data>
+  <data name="BusinessRule.InviteTournamentGone" xml:space="preserve">
+    <value>Ten turniej już nie istnieje.</value>
+  </data>
+  <data name="BusinessRule.InvitesSoloOnly" xml:space="preserve">
+    <value>Zaproszenia są dostępne tylko w turniejach solo.</value>
+  </data>
+  <data name="BusinessRule.InvitesRegistrationClosed" xml:space="preserve">
+    <value>Zaproszenia można wysyłać tylko wtedy, gdy zapisy są otwarte.</value>
+  </data>
+  <data name="BusinessRule.InviteNotFound" xml:space="preserve">
+    <value>Nie znaleziono zaproszenia.</value>
+  </data>
+  <data name="BusinessRule.InviteExpired" xml:space="preserve">
+    <value>To zaproszenie wygasło.</value>
+  </data>
+  <data name="BusinessRule.TournamentFullForInvite" xml:space="preserve">
+    <value>W tej chwili wszystkie miejsca są zajęte. Zaproszenie pozostaje otwarte — możesz je przyjąć, gdy zwolni się miejsce.</value>
+  </data>
+  <data name="Push.TournamentInvite.Body" xml:space="preserve">
+    <value>{0} zaprasza cię do gry w tym turnieju. Dotknij, aby przyjąć lub odrzucić.</value>
+  </data>
+  <data name="Push.SwapInvite.Body" xml:space="preserve">
+    <value>Dostajesz propozycję miejsca gracza {0} razem z pozycją w tabeli (rozegrano już: {1}). Te wyniki zostają na profilu gracza {0}.</value>
+  </data>
+  <data name="Push.SwapInvite.BodyFresh" xml:space="preserve">
+    <value>Dostajesz propozycję miejsca gracza {0} w tym turnieju. Dotknij, aby przyjąć lub odrzucić.</value>
+  </data>
+  <data name="Push.TournamentInvite.Accepted" xml:space="preserve">
+    <value>{0}: zaproszenie przyjęte.</value>
+  </data>
+  <data name="Push.TournamentInvite.Declined" xml:space="preserve">
+    <value>{0}: zaproszenie odrzucone.</value>
+  </data>
+  <data name="BusinessRule.RosterChangedWhileStarting" xml:space="preserve">
+    <value>Lista graczy zmieniła się podczas uruchamiania turnieju. Sprawdź graczy i uruchom go ponownie.</value>
+  </data>
+  <data name="BusinessRule.SwapResultPending" xml:space="preserve">
+    <value>Ten gracz ma wynik, który wciąż czeka — na potwierdzenie albo dogrywkę. Najpierw to rozstrzygnij, potem dokonaj zamiany.</value>
+  </data>
+  <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
+    <value>Ten turniej został anulowany lub usunięty — jego wyników nie można już zmieniać.</value>
+  </data>
 </root>

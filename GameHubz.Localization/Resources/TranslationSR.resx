@@ -269,4 +269,64 @@
   <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
     <value>Meč je završen — ne zaboravi da ugasiš stream.</value>
   </data>
+  <data name="BusinessRule.InviteOnlySoloOnly" xml:space="preserve">
+    <value>Režim „samo na poziv“ postoji samo za solo turnire.</value>
+  </data>
+  <data name="BusinessRule.TournamentInviteOnly" xml:space="preserve">
+    <value>Na ovaj turnir se ulazi samo na poziv. Možeš da uđeš samo ako te organizator pozove.</value>
+  </data>
+  <data name="BusinessRule.PlayerAlreadyInvited" xml:space="preserve">
+    <value>{0} već ima otvoren poziv za ovaj turnir.</value>
+  </data>
+  <data name="BusinessRule.PlayerDeclinedInvite" xml:space="preserve">
+    <value>{0}: poziv za ovaj turnir je već odbijen, pa ne može ponovo da se pošalje.</value>
+  </data>
+  <data name="BusinessRule.InviteNoLongerOpen" xml:space="preserve">
+    <value>Ovaj poziv više nije aktivan.</value>
+  </data>
+  <data name="BusinessRule.TooManyInvitesAtOnce" xml:space="preserve">
+    <value>Odjednom možeš da pošalješ najviše {0} poziva. Ostale pošalji u sledećem krugu.</value>
+  </data>
+  <data name="BusinessRule.InviteTournamentGone" xml:space="preserve">
+    <value>Ovaj turnir više ne postoji.</value>
+  </data>
+  <data name="BusinessRule.InvitesSoloOnly" xml:space="preserve">
+    <value>Pozivi postoje samo za solo turnire.</value>
+  </data>
+  <data name="BusinessRule.InvitesRegistrationClosed" xml:space="preserve">
+    <value>Pozivi mogu da se šalju samo dok su prijave otvorene.</value>
+  </data>
+  <data name="BusinessRule.InviteNotFound" xml:space="preserve">
+    <value>Poziv nije pronađen.</value>
+  </data>
+  <data name="BusinessRule.InviteExpired" xml:space="preserve">
+    <value>Ovaj poziv je istekao.</value>
+  </data>
+  <data name="BusinessRule.TournamentFullForInvite" xml:space="preserve">
+    <value>Trenutno su sva mesta popunjena. Poziv ostaje otvoren — možeš da ga prihvatiš ako se mesto oslobodi.</value>
+  </data>
+  <data name="Push.TournamentInvite.Body" xml:space="preserve">
+    <value>{0} te poziva da igraš na ovom turniru. Dodirni da prihvatiš ili odbiješ.</value>
+  </data>
+  <data name="Push.SwapInvite.Body" xml:space="preserve">
+    <value>Nudi ti se mesto igrača {0} sa pozicijom na tabeli (do sada odigrano: {1}). Ti rezultati ostaju na profilu igrača {0}.</value>
+  </data>
+  <data name="Push.SwapInvite.BodyFresh" xml:space="preserve">
+    <value>Nudi ti se mesto igrača {0} na ovom turniru. Dodirni da prihvatiš ili odbiješ.</value>
+  </data>
+  <data name="Push.TournamentInvite.Accepted" xml:space="preserve">
+    <value>{0}: poziv je prihvaćen.</value>
+  </data>
+  <data name="Push.TournamentInvite.Declined" xml:space="preserve">
+    <value>{0}: poziv je odbijen.</value>
+  </data>
+  <data name="BusinessRule.RosterChangedWhileStarting" xml:space="preserve">
+    <value>Spisak igrača se promenio dok se turnir pokretao. Proveri igrače i pokreni ga ponovo.</value>
+  </data>
+  <data name="BusinessRule.SwapResultPending" xml:space="preserve">
+    <value>Ovaj igrač ima rezultat koji još čeka — potvrdu ili majstoricu. Prvo to reši, pa onda zameni igrača.</value>
+  </data>
+  <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
+    <value>Ovaj turnir je otkazan ili obrisan — rezultati više ne mogu da se menjaju.</value>
+  </data>
 </root>

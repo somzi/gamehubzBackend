@@ -80,6 +80,7 @@ namespace GameHubz.Logic
             services.AddTransient<TournamentStageService>();
             services.AddTransient<TournamentGroupService>();
             services.AddTransient<TournamentParticipantService>();
+            services.AddTransient<TournamentInviteService>();
 
             services.AddTransient<HubActivityService>();
 

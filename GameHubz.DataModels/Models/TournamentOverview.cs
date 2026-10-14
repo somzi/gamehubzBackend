@@ -149,6 +149,14 @@ namespace GameHubz.DataModels.Models
         public bool IsPrivate { get; set; }
 
         /// <summary>
+        /// Players get in only by accepting an invite: the card shows an "Invite only" badge and the
+        /// details screen hides Join. Static, so safe in shared caches; omitted when false like
+        /// <see cref="IsPrivate"/>.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool IsInviteOnly { get; set; }
+
+        /// <summary>
         /// True when the requesting user may perform owner-level actions (hub owner, hub admin or
         /// platform admin). Only populated by the v2 overview endpoint; omitted from the v1 payload
         /// so the legacy client keeps receiving an unchanged response.

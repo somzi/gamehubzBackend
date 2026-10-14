@@ -110,14 +110,21 @@ namespace GameHubz.Data.Repository
                 .ToListAsync();
         }
 
-        public async Task<(Guid? HomeParticipantId, Guid? AwayParticipantId)?> GetParticipantIds(Guid matchId)
+        public Task<MatchSidesRow?> GetSides(Guid matchId)
         {
-            var row = await this.BaseDbSet()
+            return this.BaseDbSet()
                 .Where(m => m.Id == matchId)
-                .Select(m => new { m.HomeParticipantId, m.AwayParticipantId })
+                .Select(m => new MatchSidesRow
+                {
+                    HomeParticipantId = m.HomeParticipantId,
+                    AwayParticipantId = m.AwayParticipantId,
+                    HomeUserId = m.HomeUserId,
+                    AwayUserId = m.AwayUserId,
+                    HomeParticipantUserId = m.HomeParticipant != null ? m.HomeParticipant.UserId : null,
+                    AwayParticipantUserId = m.AwayParticipant != null ? m.AwayParticipant.UserId : null,
+                    TournamentStatus = m.Tournament != null ? m.Tournament.Status : null,
+                })
                 .FirstOrDefaultAsync();
-
-            return row == null ? null : (row.HomeParticipantId, row.AwayParticipantId);
         }
 
         // All matches in a tournament (BaseDbSet is no-tracking). The settle pass reloads this between
@@ -435,12 +442,18 @@ namespace GameHubz.Data.Repository
             // and user indexes instead of filtering all completed matches after two joins.
             var myParticipantIds = await GetMyParticipantIds(userId);
 
+            // Who played a match: the two players on the row when it carries both, otherwise whoever
+            // holds the spots. A team sub-match always carries its lineup; a solo match carries its
+            // players only once its spot changed hands after it was played (participant swap), and
+            // then the played match stays with the player who played it — not the spot's new holder.
+            // Every "am I home" below follows the same rule, so a player who later takes over the
+            // opponent's spot can't turn their own old loss into a win.
             return this.BaseDbSet()
                 .Where(m => m.Status == MatchStatus.Completed &&
-                    ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null &&
+                    ((m.TeamMatchId == null && (m.HomeUserId == null || m.AwayUserId == null) && m.HomeParticipantId != null && m.AwayParticipantId != null &&
                         (myParticipantIds.Contains(m.HomeParticipantId.Value)
                             || myParticipantIds.Contains(m.AwayParticipantId.Value)))
-                    || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null &&
+                    || (m.HomeUserId != null && m.AwayUserId != null &&
                         (m.HomeUserId == userId || m.AwayUserId == userId))));
         }
 
@@ -457,34 +470,34 @@ namespace GameHubz.Data.Repository
                     HubName = m.Tournament!.Hub!.Name,
                     TournamentName = m.Tournament!.Name,
                     ScheduledTime = m.ScheduledStartTime,
-                    OpponentName = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    OpponentName = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? (m.AwayUser != null ? m.AwayUser.Username
                             : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Username : "Unknown"))
                         : (m.HomeUser != null ? m.HomeUser.Username
                             : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Username : "Unknown")),
-                    OpponentAvatarUrl = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    OpponentAvatarUrl = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? (m.AwayUser != null ? m.AwayUser.AvatarUrl
                             : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.AvatarUrl : null))
                         : (m.HomeUser != null ? m.HomeUser.AvatarUrl
                             : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.AvatarUrl : null)),
-                    OpponentScore = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    OpponentScore = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? m.AwayUserScore
                         : m.HomeUserScore,
-                    UserScore = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    UserScore = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? m.HomeUserScore
                         : m.AwayUserScore,
-                    UserAvatarUrl = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    UserAvatarUrl = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? (m.HomeUser != null ? m.HomeUser.AvatarUrl
                             : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.AvatarUrl : null))
                         : (m.AwayUser != null ? m.AwayUser.AvatarUrl
                             : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.AvatarUrl : null)),
-                    Username = (m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    Username = (m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? (m.HomeUser != null ? m.HomeUser.Username
                             : (m.HomeParticipant != null && m.HomeParticipant.User != null ? m.HomeParticipant.User.Username : "Unknown"))
                         : (m.AwayUser != null ? m.AwayUser.Username
                             : (m.AwayParticipant != null && m.AwayParticipant.User != null ? m.AwayParticipant.User.Username : "Unknown")),
                     IsWin = m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                        ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                             ? m.WinnerParticipantId == m.HomeParticipantId
                             : m.WinnerParticipantId == m.AwayParticipantId),
                 })
@@ -500,7 +513,7 @@ namespace GameHubz.Data.Repository
                 .Select(m => new PerformanceDto
                 {
                     IsWin = m.WinnerParticipantId != null &&
-                        ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                        ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                             ? m.WinnerParticipantId == m.HomeParticipantId
                             : m.WinnerParticipantId == m.AwayParticipantId),
                 })
@@ -518,7 +531,7 @@ namespace GameHubz.Data.Repository
                 {
                     Outcome = m.WinnerParticipantId == null
                         ? "D"
-                        : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                        : ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                             ? m.HomeParticipantId
                             : m.AwayParticipantId) == m.WinnerParticipantId
                             ? "W"
@@ -539,7 +552,7 @@ namespace GameHubz.Data.Repository
                 .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
                 .Select(m => m.WinnerParticipantId == null
                     ? "D"
-                    : ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    : ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? m.HomeParticipantId
                         : m.AwayParticipantId) == m.WinnerParticipantId
                         ? "W"
@@ -563,13 +576,14 @@ namespace GameHubz.Data.Repository
             var myIds = participants.Where(p => p.UserId == userId).Select(p => p.Id).ToList();
             var opponentIds = participants.Where(p => p.UserId == opponentId).Select(p => p.Id).ToList();
 
+            // Same "players on the row first, then the spots" rule as GetCompletedMatchesByUserId.
             var rows = await this.BaseDbSet()
                 .AsNoTracking()
                 .Where(m => m.Status == MatchStatus.Completed
-                    && ((m.TeamMatchId == null && m.HomeParticipantId != null && m.AwayParticipantId != null
+                    && ((m.TeamMatchId == null && (m.HomeUserId == null || m.AwayUserId == null) && m.HomeParticipantId != null && m.AwayParticipantId != null
                             && ((myIds.Contains(m.HomeParticipantId.Value) && opponentIds.Contains(m.AwayParticipantId.Value))
                                 || (opponentIds.Contains(m.HomeParticipantId.Value) && myIds.Contains(m.AwayParticipantId.Value))))
-                        || (m.TeamMatchId != null && m.HomeUserId != null && m.AwayUserId != null
+                        || (m.HomeUserId != null && m.AwayUserId != null
                             && ((m.HomeUserId == userId && m.AwayUserId == opponentId)
                                 || (m.HomeUserId == opponentId && m.AwayUserId == userId)))))
                 .OrderByDescending(m => m.ScheduledStartTime ?? m.ModifiedOn)
@@ -632,11 +646,11 @@ namespace GameHubz.Data.Repository
             {
                 TotalMatches = g.Count(),
                 Wins = g.Count(m => m.WinnerParticipantId != null &&
-                    ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? m.WinnerParticipantId == m.HomeParticipantId
                         : m.WinnerParticipantId == m.AwayParticipantId)),
                 Losses = g.Count(m => m.WinnerParticipantId != null &&
-                    ((m.HomeUserId == userId || (m.TeamMatchId == null && m.HomeParticipant!.UserId == userId))
+                    ((m.HomeUserId != null && m.AwayUserId != null ? m.HomeUserId == userId : m.HomeParticipant!.UserId == userId)
                         ? m.WinnerParticipantId != m.HomeParticipantId
                         : m.WinnerParticipantId != m.AwayParticipantId))
             })
@@ -1028,6 +1042,19 @@ namespace GameHubz.Data.Repository
                     .SetProperty(m => m.ModifiedBy, modifiedByUserId));
 
             return affected > 0;
+        }
+
+        public async Task<bool> TryStampPlayedBy(Guid matchId, Guid homeUserId, Guid awayUserId)
+        {
+            // Solo, and never overwriting: a match already stamped by an earlier swap keeps the
+            // players who really played it.
+            int updated = await this.BaseDbSet()
+                .Where(m => m.Id == matchId && m.TeamMatchId == null && m.HomeUserId == null && m.AwayUserId == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.HomeUserId, homeUserId)
+                    .SetProperty(m => m.AwayUserId, awayUserId));
+
+            return updated == 1;
         }
 
         public async Task<MatchEntity?> GetWithStage(Guid id)

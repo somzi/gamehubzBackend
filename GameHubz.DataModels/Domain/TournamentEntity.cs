@@ -181,6 +181,12 @@ namespace GameHubz.DataModels.Domain
         // (partial unique index, migration 89). Null on tournaments that were never private.
         public string? JoinCode { get; set; }
 
+        // Invite-only tournament (solo only): nobody signs up on their own — a player gets in by
+        // accepting an invite a manager sent them (TournamentInviteEntity). Listed like any other
+        // tournament and announced like a private one, i.e. not at all. One of the three
+        // registration modes with IsPrivate: open / code / invite-only — never both flags at once.
+        public bool IsInviteOnly { get; set; }
+
         public List<TournamentRegistrationEntity>? TournamentRegistrations { get; set; } = new();
         public List<TournamentStageEntity>? TournamentStages { get; set; } = new();
         public List<TournamentParticipantEntity>? TournamentParticipants { get; set; } = new();

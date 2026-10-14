@@ -269,4 +269,64 @@
   <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
     <value>Your match is over — don't forget to stop your stream.</value>
   </data>
+  <data name="BusinessRule.InviteOnlySoloOnly" xml:space="preserve">
+    <value>Invite-only works for solo tournaments only.</value>
+  </data>
+  <data name="BusinessRule.TournamentInviteOnly" xml:space="preserve">
+    <value>This tournament is invite-only. You can join only if the organizer invites you.</value>
+  </data>
+  <data name="BusinessRule.PlayerAlreadyInvited" xml:space="preserve">
+    <value>{0} already has an open invite to this tournament.</value>
+  </data>
+  <data name="BusinessRule.PlayerDeclinedInvite" xml:space="preserve">
+    <value>{0} already declined an invite to this tournament, so it can't be sent again.</value>
+  </data>
+  <data name="BusinessRule.InviteNoLongerOpen" xml:space="preserve">
+    <value>This invite is no longer open.</value>
+  </data>
+  <data name="BusinessRule.TooManyInvitesAtOnce" xml:space="preserve">
+    <value>You can send up to {0} invites at once. Send the rest in another batch.</value>
+  </data>
+  <data name="BusinessRule.InviteTournamentGone" xml:space="preserve">
+    <value>This tournament no longer exists.</value>
+  </data>
+  <data name="BusinessRule.InvitesSoloOnly" xml:space="preserve">
+    <value>Invites are available for solo tournaments only.</value>
+  </data>
+  <data name="BusinessRule.InvitesRegistrationClosed" xml:space="preserve">
+    <value>Invites can only be sent while registration is open.</value>
+  </data>
+  <data name="BusinessRule.InviteNotFound" xml:space="preserve">
+    <value>Invite not found.</value>
+  </data>
+  <data name="BusinessRule.InviteExpired" xml:space="preserve">
+    <value>This invite has expired.</value>
+  </data>
+  <data name="BusinessRule.TournamentFullForInvite" xml:space="preserve">
+    <value>Every place is taken right now. Your invite stays open — you can accept it if a place frees up.</value>
+  </data>
+  <data name="Push.TournamentInvite.Body" xml:space="preserve">
+    <value>{0} invites you to play in this tournament. Tap to accept or decline.</value>
+  </data>
+  <data name="Push.SwapInvite.Body" xml:space="preserve">
+    <value>You're offered {0}'s spot with its place in the table ({1} already played). Those results stay on {0}'s profile.</value>
+  </data>
+  <data name="Push.SwapInvite.BodyFresh" xml:space="preserve">
+    <value>You're offered {0}'s spot in this tournament. Tap to accept or decline.</value>
+  </data>
+  <data name="Push.TournamentInvite.Accepted" xml:space="preserve">
+    <value>{0} accepted your invite.</value>
+  </data>
+  <data name="Push.TournamentInvite.Declined" xml:space="preserve">
+    <value>{0} declined your invite.</value>
+  </data>
+  <data name="BusinessRule.RosterChangedWhileStarting" xml:space="preserve">
+    <value>The roster changed while the tournament was starting. Check the players and start it again.</value>
+  </data>
+  <data name="BusinessRule.SwapResultPending" xml:space="preserve">
+    <value>This player has a result still waiting — a confirmation or a tiebreak. Settle it first, then swap.</value>
+  </data>
+  <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
+    <value>This tournament was cancelled or deleted — its results can no longer change.</value>
+  </data>
 </root>

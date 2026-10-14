@@ -269,4 +269,64 @@
   <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
     <value>Матч завершено — не забудь зупинити трансляцію.</value>
   </data>
+  <data name="BusinessRule.InviteOnlySoloOnly" xml:space="preserve">
+    <value>Режим «лише за запрошенням» доступний лише для одиночних турнірів.</value>
+  </data>
+  <data name="BusinessRule.TournamentInviteOnly" xml:space="preserve">
+    <value>Цей турнір лише за запрошенням. Потрапити в нього можна, лише якщо організатор тебе запросить.</value>
+  </data>
+  <data name="BusinessRule.PlayerAlreadyInvited" xml:space="preserve">
+    <value>У {0} уже є відкрите запрошення до цього турніру.</value>
+  </data>
+  <data name="BusinessRule.PlayerDeclinedInvite" xml:space="preserve">
+    <value>{0}: запрошення до цього турніру вже відхилено — повторно запросити не можна.</value>
+  </data>
+  <data name="BusinessRule.InviteNoLongerOpen" xml:space="preserve">
+    <value>Це запрошення більше не дійсне.</value>
+  </data>
+  <data name="BusinessRule.TooManyInvitesAtOnce" xml:space="preserve">
+    <value>За раз можна надіслати не більше {0} запрошень. Решту надішли наступною партією.</value>
+  </data>
+  <data name="BusinessRule.InviteTournamentGone" xml:space="preserve">
+    <value>Цього турніру більше не існує.</value>
+  </data>
+  <data name="BusinessRule.InvitesSoloOnly" xml:space="preserve">
+    <value>Запрошення доступні лише для одиночних турнірів.</value>
+  </data>
+  <data name="BusinessRule.InvitesRegistrationClosed" xml:space="preserve">
+    <value>Запрошення можна надсилати, лише поки відкрита реєстрація.</value>
+  </data>
+  <data name="BusinessRule.InviteNotFound" xml:space="preserve">
+    <value>Запрошення не знайдено.</value>
+  </data>
+  <data name="BusinessRule.InviteExpired" xml:space="preserve">
+    <value>Термін цього запрошення минув.</value>
+  </data>
+  <data name="BusinessRule.TournamentFullForInvite" xml:space="preserve">
+    <value>Зараз усі місця зайняті. Запрошення залишається чинним — його можна прийняти, якщо місце звільниться.</value>
+  </data>
+  <data name="Push.TournamentInvite.Body" xml:space="preserve">
+    <value>{0} запрошує тебе зіграти в цьому турнірі. Натисни, щоб прийняти або відхилити.</value>
+  </data>
+  <data name="Push.SwapInvite.Body" xml:space="preserve">
+    <value>Тобі пропонують місце гравця {0} разом із позицією в таблиці (уже зіграно: {1}). Ці результати залишаться в профілі {0}.</value>
+  </data>
+  <data name="Push.SwapInvite.BodyFresh" xml:space="preserve">
+    <value>Тобі пропонують місце гравця {0} у цьому турнірі. Натисни, щоб прийняти або відхилити.</value>
+  </data>
+  <data name="Push.TournamentInvite.Accepted" xml:space="preserve">
+    <value>{0}: запрошення прийнято.</value>
+  </data>
+  <data name="Push.TournamentInvite.Declined" xml:space="preserve">
+    <value>{0}: запрошення відхилено.</value>
+  </data>
+  <data name="BusinessRule.RosterChangedWhileStarting" xml:space="preserve">
+    <value>Склад гравців змінився, поки турнір запускався. Перевір гравців і запусти турнір знову.</value>
+  </data>
+  <data name="BusinessRule.SwapResultPending" xml:space="preserve">
+    <value>У цього гравця є результат, що ще чекає — підтвердження або тай-брейку. Спершу розберися з ним, потім роби заміну.</value>
+  </data>
+  <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
+    <value>Цей турнір скасовано або видалено — його результати більше не можна змінити.</value>
+  </data>
 </root>

@@ -33,5 +33,11 @@ namespace GameHubz.Logic.Interfaces
         Task<TournamentParticipantEntity?> GetByTeamId(Guid teamId);
 
         Task<List<Guid>> GetAllUserIdsByTournamentId(Guid tournamentId);
+
+        /// <summary>How many entrants the tournament holds right now — read fresh, for the capacity check under LockEntry.</summary>
+        Task<int> CountByTournament(Guid tournamentId);
+
+        /// <summary>Participant id → the user currently holding that spot, for every solo entrant of the tournament.</summary>
+        Task<Dictionary<Guid, Guid>> GetSoloUserIdsByParticipant(Guid tournamentId);
     }
 }

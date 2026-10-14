@@ -79,6 +79,8 @@ public IMatchChatRepository MatchChatRepository => this.GetRepository<MatchChatR
 
         public IMatchResultVerificationRepository MatchResultVerificationRepository => this.GetRepository<MatchResultVerificationRepository>();
 
+        public ITournamentInviteRepository TournamentInviteRepository => this.GetRepository<TournamentInviteRepository>();
+
         // DO NOT DELETE - Generated Repository Tag
     }
 }

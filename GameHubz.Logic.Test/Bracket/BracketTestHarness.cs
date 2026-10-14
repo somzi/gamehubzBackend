@@ -311,6 +311,43 @@ namespace GameHubz.Logic.Test.Bracket
         }
 
         /// <summary>
+        /// TournamentService able to run lifecycle transitions (open / cancel / delete): hub activity,
+        /// the tournament notifier and the evidence purge are real (with inert outer edges). Runs on
+        /// <paramref name="context"/> when given, so a test can put interceptors on it.
+        /// </summary>
+        public TournamentService NewLifecycleTournamentService(ApplicationContext? context = null)
+        {
+            var factory = new TestUnitOfWorkFactory(context ?? newContext(), localization);
+            var tournamentAuth = new TournamentAuthorizationService(
+                factory, UserContext, localization, Cache, userHubService: null!);
+            var hubActivityService = new HubActivityService(
+                factory, mapper, localization, new Mock<IValidator<HubActivityEntity>>().Object,
+                searchService, serviceFunctions, UserContext, Cache);
+            var notifier = new TournamentNotifier(factory, Notifications, new Mock<IDiscordNotificationService>().Object);
+            var evidenceRetention = new EvidenceRetentionService(
+                factory,
+                new Mock<IStorageService>().Object,
+                UserContext,
+                NullLogger<EvidenceRetentionService>.Instance,
+                new ConfigurationBuilder().Build());
+
+            return new TournamentService(
+                factory,
+                mapper,
+                localization,
+                new Mock<IValidator<TournamentEntity>>().Object,
+                searchService,
+                serviceFunctions,
+                UserContext,
+                hubActivityService,
+                Cache,
+                notifier,
+                tournamentAuth,
+                userHubService: null!,
+                evidenceRetention);
+        }
+
+        /// <summary>
         /// Leaves a match in the state SetAvailability produces once both sides overlap: a confirmed
         /// kick-off, Scheduled, and both slot columns filled.
         /// </summary>

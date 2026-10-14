@@ -269,4 +269,64 @@
   <data name="Push.BroadcastMatchEnded.Body" xml:space="preserve">
     <value>Tu partido terminó: no olvides detener la transmisión.</value>
   </data>
+  <data name="BusinessRule.InviteOnlySoloOnly" xml:space="preserve">
+    <value>El modo solo por invitación es solo para torneos individuales.</value>
+  </data>
+  <data name="BusinessRule.TournamentInviteOnly" xml:space="preserve">
+    <value>Este torneo es solo por invitación. Solo puedes entrar si el organizador te invita.</value>
+  </data>
+  <data name="BusinessRule.PlayerAlreadyInvited" xml:space="preserve">
+    <value>{0} ya tiene una invitación abierta a este torneo.</value>
+  </data>
+  <data name="BusinessRule.PlayerDeclinedInvite" xml:space="preserve">
+    <value>{0} ya rechazó una invitación a este torneo y no se puede volver a enviar.</value>
+  </data>
+  <data name="BusinessRule.InviteNoLongerOpen" xml:space="preserve">
+    <value>Esta invitación ya no está activa.</value>
+  </data>
+  <data name="BusinessRule.TooManyInvitesAtOnce" xml:space="preserve">
+    <value>Puedes enviar hasta {0} invitaciones a la vez. Envía el resto en otra tanda.</value>
+  </data>
+  <data name="BusinessRule.InviteTournamentGone" xml:space="preserve">
+    <value>Este torneo ya no existe.</value>
+  </data>
+  <data name="BusinessRule.InvitesSoloOnly" xml:space="preserve">
+    <value>Las invitaciones son solo para torneos individuales.</value>
+  </data>
+  <data name="BusinessRule.InvitesRegistrationClosed" xml:space="preserve">
+    <value>Solo puedes enviar invitaciones mientras las inscripciones estén abiertas.</value>
+  </data>
+  <data name="BusinessRule.InviteNotFound" xml:space="preserve">
+    <value>No se encontró la invitación.</value>
+  </data>
+  <data name="BusinessRule.InviteExpired" xml:space="preserve">
+    <value>Esta invitación expiró.</value>
+  </data>
+  <data name="BusinessRule.TournamentFullForInvite" xml:space="preserve">
+    <value>Ahora mismo no quedan plazas. Tu invitación sigue abierta: puedes aceptarla si se libera una plaza.</value>
+  </data>
+  <data name="Push.TournamentInvite.Body" xml:space="preserve">
+    <value>{0} te invita a jugar este torneo. Toca para aceptar o rechazar.</value>
+  </data>
+  <data name="Push.SwapInvite.Body" xml:space="preserve">
+    <value>Te ofrecen el lugar de {0} con su posición en la tabla ({1} en su historial). Esos resultados quedan en el perfil de {0}.</value>
+  </data>
+  <data name="Push.SwapInvite.BodyFresh" xml:space="preserve">
+    <value>Te ofrecen el lugar de {0} en este torneo. Toca para aceptar o rechazar.</value>
+  </data>
+  <data name="Push.TournamentInvite.Accepted" xml:space="preserve">
+    <value>{0} aceptó tu invitación.</value>
+  </data>
+  <data name="Push.TournamentInvite.Declined" xml:space="preserve">
+    <value>{0} rechazó tu invitación.</value>
+  </data>
+  <data name="BusinessRule.RosterChangedWhileStarting" xml:space="preserve">
+    <value>La lista de jugadores cambió mientras el torneo arrancaba. Revisa los jugadores y vuelve a iniciarlo.</value>
+  </data>
+  <data name="BusinessRule.SwapResultPending" xml:space="preserve">
+    <value>Este jugador tiene un resultado pendiente: una confirmación o un desempate. Resuélvelo primero y luego haz el cambio.</value>
+  </data>
+  <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
+    <value>Este torneo fue cancelado o eliminado: sus resultados ya no pueden cambiar.</value>
+  </data>
 </root>

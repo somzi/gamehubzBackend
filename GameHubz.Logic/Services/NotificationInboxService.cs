@@ -45,6 +45,8 @@ namespace GameHubz.Logic.Services
             "scheduleCleared",
             "matchAvailability",
             "lineupMissing",
+            "tournamentInvite",
+            "swapInvite",
         };
 
         private readonly IHubContext<UserHub> hubContext;

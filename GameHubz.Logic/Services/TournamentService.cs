@@ -136,20 +136,38 @@ namespace GameHubz.Logic.Services
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyStaffManageTournament"]);
             }
 
-            var tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
-
-            if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
+            // Everything under the entry lock, the read included: an invite being accepted right now
+            // either commits before the close (and is in) or reads the closed status after it (and is
+            // refused). The bracket claim takes the same lock, so a start that won the race is seen
+            // here — and the row written back is the one read now, never a pre-start copy that would
+            // turn a running tournament back into "registration closed".
+            TournamentEntity tournament = null!;
+            await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNeedsTwo"]);
-            }
+                await this.AppUnitOfWork.TournamentRepository.LockEntry(id);
 
-            tournament.Status = TournamentStatus.RegistrationClosed;
+                tournament = await this.AppUnitOfWork.TournamentRepository.GetWithPendingRegistration(id);
 
-            await RejectPendings(tournament);
+                if (tournament.Status is TournamentStatus.InProgress or TournamentStatus.Completed
+                    or TournamentStatus.Cancelled or TournamentStatus.Deleted)
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.RegistrationNotOpen"]);
+                }
 
-            await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+                if (tournament.TournamentParticipants != null && tournament.TournamentParticipants.Count < 2)
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNeedsTwo"]);
+                }
 
-            await SaveAsync();
+                tournament.Status = TournamentStatus.RegistrationClosed;
+
+                await RejectPendings(tournament);
+
+                await this.AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, this.UserContextReader);
+
+                await SaveAsync();
+                return true;
+            });
 
             await cacheService.RemoveAsync($"tournament:{id}");
             await InvalidateTournamentProjectionCaches(id);
@@ -524,21 +542,53 @@ namespace GameHubz.Logic.Services
         {
             var tournament = await GetHubOwnedTournamentOrThrow(id);
 
+            // Checked once up front so a refusal comes back without waiting on any lock.
             if (!validator(tournament))
                 throw new BusinessRuleException(errorMessage);
-
-            tournament.Status = newStatus;
 
             // Cancel and delete are both endings, so they start the same retention clock a natural
             // finish does. Only set if unset, matching the completion path: a tournament that is
             // cancelled after having been completed keeps the earlier, truer date.
-            if (newStatus is TournamentStatus.Cancelled or TournamentStatus.Deleted or TournamentStatus.Completed)
-            {
-                tournament.EndedOn ??= DateTime.UtcNow;
-            }
+            bool markEnded = newStatus is TournamentStatus.Cancelled or TournamentStatus.Deleted or TournamentStatus.Completed;
+            var caller = await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull();
 
-            await AppUnitOfWork.TournamentRepository.UpdateEntity(tournament, UserContextReader);
-            await SaveAsync();
+            // The decision and the write happen together, on what is in the database at that moment,
+            // under both of the tournament's locks in the order every other path takes them: the
+            // advancement lock (result writes and the tournament's completion hold it) and, inside the
+            // transaction, the entry lock (start, close, sign-up approval and invite acceptance hold
+            // it). Whatever won the race is seen by the read below, and the conditional update writes
+            // only the status columns — never a stale copy of the rest of the row. The scheduled
+            // opening sweep holds no lock; the condition on the read status covers it.
+            await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(id);
+            try
+            {
+                tournament = await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    await this.AppUnitOfWork.TournamentRepository.LockEntry(id);
+
+                    var current = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(id)
+                        ?? throw new BusinessRuleException(errorMessage);
+
+                    if (!validator(current))
+                        throw new BusinessRuleException(errorMessage);
+
+                    DateTime now = DateTime.UtcNow;
+                    if (!await this.AppUnitOfWork.TournamentRepository.TryChangeStatus(id, current.Status, newStatus, markEnded, now, caller.UserId))
+                        throw new BusinessRuleException(errorMessage);
+
+                    current.Status = newStatus;
+                    if (markEnded)
+                    {
+                        current.EndedOn ??= now;
+                    }
+
+                    return current;
+                });
+            }
+            finally
+            {
+                await this.AppUnitOfWork.TournamentRepository.ReleaseAdvancementLock(id);
+            }
 
             // A cancelled or deleted tournament has no result left to dispute, so its clips skip
             // the grace window entirely. After the save and never fatal: a storage failure must
@@ -630,7 +680,8 @@ namespace GameHubz.Logic.Services
             // A private tournament is created silently: no hub activity, no push, no Discord card —
             // it is listed like any other, but only the people its organiser hands the code (or the
             // invite link) to can register, so telling the whole hub would only frustrate them.
-            if (inputDto.Id is null && !model.IsPrivate)
+            // An invite-only one likewise: only the players the organiser invites can get in.
+            if (inputDto.Id is null && !model.IsPrivate && !model.IsInviteOnly)
             {
                 if (model.RegistrationOpensAt is null)
                 {
@@ -732,6 +783,10 @@ namespace GameHubz.Logic.Services
             // older app's edit would otherwise quietly turn an invite-only tournament public.
             inputDto.IsPrivate ??= existing.IsPrivate;
 
+            // Invite-only, same reasoning: an older app's edit would otherwise open the tournament to
+            // everyone the organiser did not invite.
+            inputDto.IsInviteOnly ??= existing.IsInviteOnly;
+
             // The scheduled opening travels under its own opt-in flag rather than
             // AllowStructuralEdits: the currently shipped client already sets that flag and knows
             // nothing about this field, so folding the two together would let its edits null the
@@ -777,6 +832,17 @@ namespace GameHubz.Logic.Services
         /// </summary>
         protected override async Task BeforeSave(TournamentEntity entity, TournamentPost inputDto, bool isNew)
         {
+            // An edit never moves the tournament through its lifecycle: status, end and winner change
+            // only through their own transitions (open / close / start / cancel / delete / complete).
+            // The edit form sends the status it was opened with, and writing it back would undo a
+            // transition made while the form was open — a started tournament back to "registration
+            // open". Left out of the UPDATE entirely, so it can't be rewritten even by a copy that is
+            // only milliseconds old.
+            if (!isNew)
+            {
+                this.AppUnitOfWork.TournamentRepository.KeepLifecycleColumns(entity);
+            }
+
             // F104: the generic POST /api/Tournament had no authorization, so any user could create a
             // tournament under any hub or edit any existing tournament. Creating one requires managing
             // the target hub; editing requires managing the existing tournament.
@@ -830,6 +896,19 @@ namespace GameHubz.Logic.Services
                     // already open, which is the one state this feature exists to prevent.
                     entity.Status = TournamentStatus.Draft;
                 }
+            }
+
+            // Open / code / invite-only are one choice. Invite-only wins when a client sends both
+            // (an older app can still flip IsPrivate on an invite-only tournament), and it is solo
+            // only: a team gets in through its captain's registration, which no invite covers.
+            if (entity.IsInviteOnly)
+            {
+                if (entity.IsTeamTournament)
+                {
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.InviteOnlySoloOnly"]);
+                }
+
+                entity.IsPrivate = false;
             }
 
             // The code is issued the first time a tournament becomes private — at creation or on a
