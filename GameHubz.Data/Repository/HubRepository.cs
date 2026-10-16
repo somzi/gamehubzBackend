@@ -129,14 +129,21 @@ namespace GameHubz.Data.Repository
         public async Task<IEnumerable<HubDto>> GetHubsByUserId(Guid userId, int pageNumber, bool joined, string? search = null)
         {
             string? s = search?.ToLower();
-            return await this.BaseDbSet()
+            var query = this.BaseDbSet()
                 .Where(x => joined
                     ? x.UserHubs!.Any(uh => uh.UserId == userId) || x.UserId == userId
                     : !x.UserHubs!.Any(uh => uh.UserId == userId) && x.UserId != userId)
-                .Where(x => s == null || x.Name.ToLower().StartsWith(s))
-                // Postgres gives no ordering guarantee without ORDER BY, so Skip/Take alone can
-                // repeat or drop hubs between pages. Name first (what the list shows), Id tiebreak.
-                .OrderBy(x => x.Name)
+                .Where(x => s == null || x.Name.ToLower().StartsWith(s));
+
+            // Postgres gives no ordering guarantee without ORDER BY, so Skip/Take alone can
+            // repeat or drop hubs between pages. Joined: Name first (the user looks for their own
+            // hubs by name). Discovery: most-followed first so browsing and searching land on the
+            // popular hubs, then Name. Id tiebreak on both.
+            var ordered = joined
+                ? query.OrderBy(x => x.Name)
+                : query.OrderByDescending(x => x.UserHubs!.Count()).ThenBy(x => x.Name);
+
+            return await ordered
                 .ThenBy(x => x.Id)
                 .Skip(pageNumber * 10)
                 .Take(10)
