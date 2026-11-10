@@ -329,4 +329,7 @@
   <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
     <value>Ovaj turnir je otkazan ili obrisan — rezultati više ne mogu da se menjaju.</value>
   </data>
+  <data name="BusinessRule.OpponentAlreadyReported" xml:space="preserve">
+    <value>Protivnik je već prijavio rezultat. Prvo ga odobri ili odbij.</value>
+  </data>
 </root>

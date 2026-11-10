@@ -20,6 +20,9 @@ namespace GameHubz.DataModels.Models
 
         public Guid? AwayParticipantUserId { get; set; }
 
+        /// <summary>Who filed the result now waiting to be confirmed; null when none is pending.</summary>
+        public Guid? ProposedByUserId { get; set; }
+
         /// <summary>The tournament's status right now; null when the tournament row is gone.</summary>
         public GameHubz.DataModels.Enums.TournamentStatus? TournamentStatus { get; set; }
     }

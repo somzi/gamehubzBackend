@@ -329,4 +329,7 @@
   <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
     <value>Este torneo fue cancelado o eliminado: sus resultados ya no pueden cambiar.</value>
   </data>
+  <data name="BusinessRule.OpponentAlreadyReported" xml:space="preserve">
+    <value>Tu rival ya informó un resultado. Apruébalo o recházalo primero.</value>
+  </data>
 </root>

@@ -122,6 +122,7 @@ namespace GameHubz.Data.Repository
                     AwayUserId = m.AwayUserId,
                     HomeParticipantUserId = m.HomeParticipant != null ? m.HomeParticipant.UserId : null,
                     AwayParticipantUserId = m.AwayParticipant != null ? m.AwayParticipant.UserId : null,
+                    ProposedByUserId = m.ProposedByUserId,
                     TournamentStatus = m.Tournament != null ? m.Tournament.Status : null,
                 })
                 .FirstOrDefaultAsync();

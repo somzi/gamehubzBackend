@@ -329,4 +329,7 @@
   <data name="BusinessRule.TournamentNoLongerRunning" xml:space="preserve">
     <value>Цей турнір скасовано або видалено — його результати більше не можна змінити.</value>
   </data>
+  <data name="BusinessRule.OpponentAlreadyReported" xml:space="preserve">
+    <value>Суперник уже надіслав результат. Спочатку схвали або відхили його.</value>
+  </data>
 </root>

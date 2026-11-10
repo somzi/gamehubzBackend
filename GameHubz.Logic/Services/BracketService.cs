@@ -3099,8 +3099,9 @@ namespace GameHubz.Logic.Services
         /// swap) holds for its whole transaction: without the re-check, a report that waited on the lock
         /// would write the pre-swap pairing back over the row and advance a player who was swapped out
         /// of the fixture. A team game the swap rebuilt no longer exists at all.
+        /// Returns the row as committed, for a caller with more to check under the same lock.
         /// </summary>
-        private async Task EnsureParticipantsUnchangedAsync(MatchEntity match)
+        private async Task<MatchSidesRow> EnsureParticipantsUnchangedAsync(MatchEntity match)
         {
             var current = await this.AppUnitOfWork.MatchRepository.GetSides(match.Id!.Value)
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
@@ -3130,6 +3131,8 @@ namespace GameHubz.Logic.Services
                     || (match.AwayParticipant != null && current.AwayParticipantUserId != match.AwayParticipant.UserId))
                     throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
             }
+
+            return current;
         }
 
         /// <summary>
@@ -4724,13 +4727,6 @@ namespace GameHubz.Logic.Services
             TokenUserInfo currentUser,
             bool requireMatchCheckIn)
         {
-            match.ProposedHomeScore = series.HomeScore;
-            match.ProposedAwayScore = series.AwayScore;
-            // The whole series travels with the proposal, so approving replays exactly what the
-            // participant reported instead of re-deriving a headline score into a single game.
-            match.ProposedGames = series.Games;
-            match.ProposedByUserId = currentUser.UserId;
-
             // A proposal in approval mode is two-sided once the opponent confirms it, so the ready
             // check must no longer auto-rule the fixture while that confirmation is pending. Store
             // the proposal and marker atomically against the sweep: whichever update reaches the row
@@ -4752,7 +4748,23 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
             try
             {
-                await EnsureParticipantsUnchangedAsync(match);
+                var committed = await EnsureParticipantsUnchangedAsync(match);
+
+                // A report that is already waiting belongs to whoever filed it: they may amend it, the
+                // other side confirms or rejects it. Without this the opponent's own report — sent from
+                // a screen opened before the first one landed, or in the same second — silently replaced
+                // it and swapped the roles: the first reporter kept seeing "waiting for the opponent",
+                // the second now saw the same, and neither had anything left to confirm. Read under the
+                // lock, so two reports racing for an open match cannot both get through.
+                if (committed.ProposedByUserId.HasValue && committed.ProposedByUserId.Value != currentUser.UserId)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.OpponentAlreadyReported"]);
+
+                match.ProposedHomeScore = series.HomeScore;
+                match.ProposedAwayScore = series.AwayScore;
+                // The whole series travels with the proposal, so approving replays exactly what the
+                // participant reported instead of re-deriving a headline score into a single game.
+                match.ProposedGames = series.Games;
+                match.ProposedByUserId = currentUser.UserId;
 
                 if (requireMatchCheckIn
                     && match.Status == MatchStatus.Scheduled
