@@ -2,6 +2,9 @@
 {
     public interface IMatchRepository : IRepository<MatchEntity>
     {
+        /// <summary>Stages just the help-request fields for the next unit-of-work save.</summary>
+        void UpdateAdminHelp(MatchEntity match, Guid modifiedBy);
+
         Task<PlayerStatsDto> GetStatsByUserId(Guid userId);
 
         Task<List<MatchListItemDto>> GetLastMatchesByUserId(Guid userId, int pageSize, int pageNumber);

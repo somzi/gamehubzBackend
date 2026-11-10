@@ -114,6 +114,32 @@ namespace GameHubz.Logic.Test.Security
             await service.SendMessage(MatchId, "We agreed on the time");
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task CompletedMatch_WithOpenHelp_AllowsParticipantAndManagerMessages(bool manager)
+        {
+            var (service, _, _) = BuildService(manager ? Guid.NewGuid() : null, MatchStatus.Completed,
+                canManageTournament: manager, adminHelpRequested: true, tournamentCompleted: true);
+            var message = await service.SendMessage(MatchId, "The issue is still unresolved");
+            Assert.That(message.Content, Is.EqualTo("The issue is still unresolved"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CompletedMatch_WithoutOpenHelp_RejectsNewMessages(bool manager)
+        {
+            var (service, _, _) = BuildService(manager ? Guid.NewGuid() : null, MatchStatus.Completed,
+                canManageTournament: manager);
+            Assert.ThrowsAsync<BusinessRuleException>(() => service.SendMessage(MatchId, "Closed"));
+        }
+
+        [Test]
+        public void OpenHelp_DoesNotGrantChatAccessToAnOutsider()
+        {
+            var (service, _, _) = BuildService(Guid.NewGuid(), MatchStatus.Completed, adminHelpRequested: true);
+            Assert.ThrowsAsync<UnauthorizedAccessToServiceException>(() => service.SendMessage(MatchId, "Hello"));
+        }
+
         private static readonly Guid MatchId = Guid.Parse("10ed9e3f-5aee-4eeb-8172-1f66ddd8014d");
 
         private static (MatchChatService Service, Guid HomeUserId, Guid TournamentId) BuildService(
@@ -122,7 +148,9 @@ namespace GameHubz.Logic.Test.Security
             bool requireAvailability = false,
             bool platformAdmin = false,
             bool canManageTournament = false,
-            bool availabilitySet = false)
+            bool availabilitySet = false,
+            bool adminHelpRequested = false,
+            bool tournamentCompleted = false)
         {
             var tournamentId = Guid.NewGuid();
             var homeParticipantId = Guid.NewGuid();
@@ -141,7 +169,7 @@ namespace GameHubz.Logic.Test.Security
             {
                 Id = tournamentId,
                 Name = "Chat tournament",
-                Status = TournamentStatus.InProgress,
+                Status = tournamentCompleted ? TournamentStatus.Completed : TournamentStatus.InProgress,
                 RequireAvailabilityForChat = requireAvailability,
                 IsDeleted = false,
             });
@@ -167,6 +195,7 @@ namespace GameHubz.Logic.Test.Security
                 HomeParticipantId = homeParticipantId,
                 AwayParticipantId = awayParticipantId,
                 Status = status,
+                AdminHelpRequested = adminHelpRequested,
                 HomeSlots = availabilitySet ? new List<DateTime> { DateTime.UtcNow.AddDays(1) } : new(),
                 ScheduledStartTime = status == MatchStatus.Scheduled ? DateTime.UtcNow : null,
                 ScheduledOutsideAppByUserId = status == MatchStatus.Scheduled ? effectiveCallerId : null,

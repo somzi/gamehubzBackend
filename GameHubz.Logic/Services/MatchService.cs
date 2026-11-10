@@ -936,7 +936,7 @@ namespace GameHubz.Logic.Services
             match.AdminHelpRequestedByUserId = user.UserId;
             match.AdminHelpRequestedOn = DateTime.UtcNow;
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            this.AppUnitOfWork.MatchRepository.UpdateAdminHelp(match, user.UserId);
             await this.SaveAsync();
 
             // Managers' "admin help" badge just went up — refresh it live (before the push
@@ -974,7 +974,10 @@ namespace GameHubz.Logic.Services
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
             if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
-            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+            // A player may withdraw only the request they raised. Playing in the same match
+            // is not enough: the opponent must never be able to dismiss someone else's issue.
+            if (match.AdminHelpRequestedByUserId != user.UserId
+                && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsResolveHelp"]);
 
             if (!match.AdminHelpRequested) return;
@@ -984,13 +987,22 @@ namespace GameHubz.Logic.Services
             match.AdminHelpRequestedByUserId = null;
             match.AdminHelpRequestedOn = null;
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            // Keep who closed the request and when in the conversation, independently of the
+            // result. This is saved in the same unit of work as the request's state change.
+            await this.AppUnitOfWork.MatchChatRepository.AddEntity(new MatchChatEntity
+            {
+                MatchId = matchId,
+                UserId = user.UserId,
+                Content = this.LocalizationService["Chat.AdminHelpResolved"],
+            }, this.UserContextReader);
+            this.AppUnitOfWork.MatchRepository.UpdateAdminHelp(match, user.UserId);
             await this.SaveAsync();
 
             // Managers' "admin help" badge just dropped — refresh it live.
             await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
 
-            if (requesterUserId == null) return;
+            // Self-resolution needs no notification claiming that an admin reviewed the issue.
+            if (requesterUserId == null || requesterUserId == user.UserId) return;
 
             // Resolve the requester now, while the scope is alive. No push token still means an inbox row.
             var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);

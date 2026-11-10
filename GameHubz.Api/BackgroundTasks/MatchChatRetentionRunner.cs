@@ -111,6 +111,8 @@ namespace GameHubz.Api.BackgroundTasks
                 List<Guid> matchIds = await context.Set<MatchChatEntity>()
                     .IgnoreQueryFilters()
                     .Where(c => c.MatchId != null && c.Match!.Tournament != null)
+                    // Open support conversations survive both expiry rules, even after the final.
+                    .Where(c => !c.Match!.AdminHelpRequested)
                     .Where(c => c.CreatedOn < endedBefore)
                     .Where(c =>
                         // Normal path: the tournament is over and the grace window has passed —
@@ -134,6 +136,8 @@ namespace GameHubz.Api.BackgroundTasks
                 int messages = await context.Set<MatchChatEntity>()
                     .IgnoreQueryFilters()
                     .Where(c => c.MatchId != null && matchIds.Contains(c.MatchId.Value) && c.CreatedOn < endedBefore)
+                    // Recheck at deletion: a request may have opened after candidate selection.
+                    .Where(c => !c.Match!.AdminHelpRequested)
                     .ExecuteDeleteAsync(cancellationToken);
 
                 // The read cursors go with the messages they pointed at — but only once the thread

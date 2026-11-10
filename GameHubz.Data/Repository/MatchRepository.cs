@@ -23,6 +23,23 @@ namespace GameHubz.Data.Repository
         {
         }
 
+        /// <summary>
+        /// Stages only help-request fields. A concurrent result or check-in must not be overwritten
+        /// by the older match snapshot used to authorize this request. Saved with its chat note.
+        /// </summary>
+        public void UpdateAdminHelp(MatchEntity match, Guid modifiedBy)
+        {
+            var entry = this.ContextBase.Entry(match);
+            entry.State = EntityState.Unchanged;
+            entry.Property(m => m.AdminHelpRequested).IsModified = true;
+            entry.Property(m => m.AdminHelpRequestedByUserId).IsModified = true;
+            entry.Property(m => m.AdminHelpRequestedOn).IsModified = true;
+            entry.Property(m => m.ModifiedBy).CurrentValue = modifiedBy;
+            entry.Property(m => m.ModifiedBy).IsModified = true;
+            entry.Property(m => m.ModifiedOn).CurrentValue = DateTime.UtcNow;
+            entry.Property(m => m.ModifiedOn).IsModified = true;
+        }
+
         public async Task<bool> AreAllMatchesFinishedInTournament(Guid tournamentId)
         {
             // NoShow (a double forfeit an admin closed) is terminal — it must not keep a league

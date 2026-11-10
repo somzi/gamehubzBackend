@@ -69,8 +69,9 @@ namespace GameHubz.Logic.Services
                 && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
                 throw new UnauthorizedAccessToServiceException(this.LocalizationService);
 
-            // Completed matches keep their chat history visible but read-only.
-            if (match.Status == MatchStatus.Completed)
+            // An unresolved help request keeps the conversation writable after the result.
+            // Participant/manager authorization above still applies to every message.
+            if (match.Status == MatchStatus.Completed && !match.AdminHelpRequested)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.ChatClosedCompleted"]);
 
             if (isParticipant && await IsLockedUntilAvailabilityAsync(match, user))
