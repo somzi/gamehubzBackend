@@ -8,20 +8,29 @@ namespace GameHubz.Logic.Services
     /// <summary>
     /// Retires match evidence once it has stopped being evidence.
     ///
-    /// Only video is on a clock. A screenshot costs a rounding error to keep and is the audit
-    /// trail for a disputed result, so images stay; a clip is two to three orders of magnitude
-    /// larger and is what actually accrues storage and bandwidth, so it goes soon after the
-    /// tournament it belonged to is settled.
+    /// Clips and screenshots are on separate clocks, because they cost differently. A clip is two
+    /// to three orders of magnitude larger and is what actually accrues storage and bandwidth, so
+    /// it goes as soon as the result it proves has stood for a while. A screenshot is small, so it
+    /// is kept for the whole tournament — but not forever: storage is billed on everything ever
+    /// uploaded, and a screenshot of a result nobody can dispute any more is only that bill.
     ///
-    /// Two rules, because one is not enough:
-    ///   • the normal one, keyed off when the tournament ended;
-    ///   • an age backstop, because a tournament that is abandoned rather than finished never
-    ///     satisfies the first rule and would keep its clips forever.
+    /// Clips, three rules:
+    ///   • the normal one, keyed off the clip's own match: settled and left alone for the window,
+    ///     with no open admin-help request. A league runs for weeks, and keyed off the tournament
+    ///     alone every clip of it sat in storage until the final;
+    ///   • the tournament ended;
+    ///   • an age backstop, because a match that is never settled in a tournament that is
+    ///     abandoned rather than finished satisfies neither rule and would keep its clips forever.
     ///
-    /// The backstop is a deliberate 30 days even though a tournament can run longer than that: a
-    /// long event will lose its early clips while it is still going. That was chosen over letting
-    /// an abandoned tournament sit on storage for a quarter. Both windows are configuration, so
-    /// the trade can be re-made without a deploy.
+    /// Screenshots, two rules: the tournament ended, or the same kind of age backstop.
+    ///
+    /// The backstops are a deliberate 30 days even though a tournament can run longer than that: a
+    /// long event will lose its early evidence while it is still going. That was chosen over
+    /// letting an abandoned tournament sit on storage for a quarter. Every window is configuration,
+    /// so the trade can be re-made without a deploy.
+    ///
+    /// Retiring is a soft delete on purpose: the row that stays behind is how a reader tells
+    /// "expired" from "never attached" (see IMatchEvidenceRepository.GetMatchIdsWithExpiredEvidence).
     /// </summary>
     public class EvidenceRetentionService
     {
@@ -51,30 +60,72 @@ namespace GameHubz.Logic.Services
         private int MaxAgeDays =>
             Math.Max(1, configuration.GetValue("Evidence:VideoMaxAgeDays", 30));
 
+        /// <summary>
+        /// How long a clip outlives its own match being settled. Zero or less switches the
+        /// per-match rule off and leaves clips to the tournament-end rule and the age backstop.
+        /// </summary>
+        private int VideoDaysAfterMatchSettled =>
+            configuration.GetValue("Evidence:VideoRetentionDaysAfterMatchEnd", 7);
+
+        /// <summary>Master switch for the screenshot clock; off keeps every screenshot forever.</summary>
+        private bool ImageRetentionEnabled =>
+            configuration.GetValue("Evidence:ImageRetentionEnabled", true);
+
+        private int ImageGraceDaysAfterTournamentEnd =>
+            Math.Max(0, configuration.GetValue("Evidence:ImageRetentionDaysAfterTournamentEnd", 7));
+
+        private int ImageMaxAgeDays =>
+            Math.Max(1, configuration.GetValue("Evidence:ImageMaxAgeDays", 30));
+
         private int SweepBatchSize =>
             Math.Clamp(configuration.GetValue("Evidence:SweepBatchSize", 200), 1, 1000);
 
         /// <summary>
         /// One pass of the retention rules. Batched: a sweep that finds a large backlog chews
-        /// through it a slice per tick instead of holding one enormous transaction open.
+        /// through it a slice per tick instead of holding one enormous transaction open. Clips and
+        /// screenshots each get their own slice, so a backlog of one never starves the other.
         /// </summary>
         public async Task<int> RunRetentionSweepAsync(CancellationToken cancellationToken = default)
         {
             DateTime now = DateTime.UtcNow;
+            int perMatchDays = VideoDaysAfterMatchSettled;
+            int purged = 0;
 
-            var expired = await unitOfWork.MatchEvidenceRepository.GetExpiredVideos(
+            var expiredVideos = await unitOfWork.MatchEvidenceRepository.GetExpiredVideos(
+                // Older than every row there is: the rule can never match, which is "off".
+                matchSettledBefore: perMatchDays > 0 ? now.AddDays(-perMatchDays) : DateTime.UnixEpoch,
                 endedBefore: now.AddDays(-GraceDaysAfterTournamentEnd),
                 createdBefore: now.AddDays(-MaxAgeDays),
                 take: SweepBatchSize,
                 cancellationToken: cancellationToken);
 
-            if (expired.Count == 0) return 0;
+            if (expiredVideos.Count > 0)
+            {
+                int purgedVideos = await PurgeAsync(expiredVideos, cancellationToken);
+                purged += purgedVideos;
 
-            int purged = await PurgeAsync(expired, cancellationToken);
+                logger.LogInformation(
+                    "Evidence retention sweep purged {Purged} of {Found} expired videos.",
+                    purgedVideos, expiredVideos.Count);
+            }
 
-            logger.LogInformation(
-                "Evidence retention sweep purged {Purged} of {Found} expired videos.",
-                purged, expired.Count);
+            if (!ImageRetentionEnabled || cancellationToken.IsCancellationRequested) return purged;
+
+            var expiredImages = await unitOfWork.MatchEvidenceRepository.GetExpiredImages(
+                endedBefore: now.AddDays(-ImageGraceDaysAfterTournamentEnd),
+                createdBefore: now.AddDays(-ImageMaxAgeDays),
+                take: SweepBatchSize,
+                cancellationToken: cancellationToken);
+
+            if (expiredImages.Count > 0)
+            {
+                int purgedImages = await PurgeAsync(expiredImages, cancellationToken);
+                purged += purgedImages;
+
+                logger.LogInformation(
+                    "Evidence retention sweep purged {Purged} of {Found} expired screenshots.",
+                    purgedImages, expiredImages.Count);
+            }
 
             return purged;
         }

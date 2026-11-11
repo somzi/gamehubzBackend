@@ -740,6 +740,11 @@ namespace GameHubz.Logic.Services
                 logger.LogWarning("Discord text followup returned {StatusCode}.", response.StatusCode);
         }
 
+        // Widest an avatar is ever asked for by a card. The cards draw it as a circle of 100–200px,
+        // so this is twice the largest one: enough to stay sharp after the downscale, and a fraction
+        // of the stored original that used to be pulled in full for every avatar on every command.
+        private const int CardAvatarWidth = 400;
+
         private async Task<byte[]?> TryDownloadAsync(string? url)
         {
             if (string.IsNullOrWhiteSpace(url))
@@ -749,7 +754,8 @@ namespace GameHubz.Logic.Services
             {
                 var client = httpClientFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(8);
-                return await client.GetByteArrayAsync(url);
+                // Stored format, not f_auto: the bytes go straight into the card renderer's decoder.
+                return await client.GetByteArrayAsync(GameHubz.Logic.Utility.CloudinaryUrl.Resized(url, CardAvatarWidth));
             }
             catch
             {

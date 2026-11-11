@@ -455,8 +455,11 @@ namespace GameHubz.Logic.Services
             if (hub.UserId != caller.UserId)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyOwnerHubAvatar"]);
 
+            // Keyed by id, not by name — same reason as the user avatar (UserProfileService): the
+            // storage layer strips special characters from a path, so two hub names could share
+            // one folder and overwrite each other's logo. The old name-based logos stay in place.
             string fileName = $"avatar";
-            string folderPath = $"hubs/{hub!.Name}";
+            string folderPath = $"hubs/{hub!.Id}";
 
             string? url = await storageService.UploadFileAsync(file, folderPath, fileName);
 

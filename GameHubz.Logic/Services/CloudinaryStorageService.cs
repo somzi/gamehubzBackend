@@ -111,19 +111,27 @@ namespace GameHubz.Logic.Services
             // limited per hour; destroy is an Upload API call and is not. A sweep working off a
             // backlog would burn that hourly budget and start failing, so the chattier path is the
             // safer one here.
-            var deletionParams = new DeletionParams(storageKey)
-            {
-                ResourceType = mediaType == EvidenceMediaType.Video ? ResourceType.Video : ResourceType.Image,
-                // Evidence is being retired on purpose; leaving it warm on the CDN would keep it
-                // reachable by anyone still holding the URL.
-                Invalidate = true
-            };
+            var resourceType = mediaType == EvidenceMediaType.Video ? ResourceType.Video : ResourceType.Image;
 
-            var result = await cloudinary.DestroyAsync(deletionParams);
+            var result = await DestroyAsync(storageKey, resourceType);
+
+            // Keys recorded at upload time are the public id itself and never carry a '%'. The ones
+            // migration 79 backfilled were cut out of the delivery URL, where a folder with a space
+            // or a non-Latin letter in it is percent-encoded — while the asset is stored under the
+            // decoded id. Asked for by the encoded form it reads as "not found", and retiring the
+            // row on that answer would strand the file with nothing left pointing at it.
+            if (IsNotFound(result) && storageKey.Contains('%'))
+            {
+                string decodedKey = Uri.UnescapeDataString(storageKey);
+                if (!string.Equals(decodedKey, storageKey, StringComparison.Ordinal))
+                {
+                    result = await DestroyAsync(decodedKey, resourceType);
+                }
+            }
 
             // "not found" means somebody already removed it. The row can still be retired, so this
             // counts as done rather than as something the sweep should retry forever.
-            if (string.Equals(result.Result, "not found", StringComparison.OrdinalIgnoreCase))
+            if (IsNotFound(result))
             {
                 logger.LogInformation("Cloudinary asset {StorageKey} was already gone.", storageKey);
                 return false;
@@ -136,6 +144,20 @@ namespace GameHubz.Logic.Services
 
             return true;
         }
+
+        private Task<DeletionResult> DestroyAsync(string publicId, ResourceType resourceType)
+        {
+            return cloudinary.DestroyAsync(new DeletionParams(publicId)
+            {
+                ResourceType = resourceType,
+                // Evidence is being retired on purpose; leaving it warm on the CDN would keep it
+                // reachable by anyone still holding the URL.
+                Invalidate = true
+            });
+        }
+
+        private static bool IsNotFound(DeletionResult result)
+            => string.Equals(result.Result, "not found", StringComparison.OrdinalIgnoreCase);
 
         private static void EnsureWithinSize(IFormFile file, long maxBytes)
         {

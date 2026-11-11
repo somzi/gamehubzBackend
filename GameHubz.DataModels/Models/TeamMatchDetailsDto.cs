@@ -66,6 +66,9 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>Same evidence, typed. See MatchEvidenceItemDto for why both exist.</summary>
         public List<MatchEvidenceItemDto> EvidenceItems { get; set; } = [];
+
+        /// <summary>Same meaning as MatchResultDetailDto.EvidenceExpired, for this game of the tie.</summary>
+        public bool EvidenceExpired { get; set; }
         public int? ProposedHomeScore { get; set; }
         public int? ProposedAwayScore { get; set; }
         public Guid? ProposedByUserId { get; set; }

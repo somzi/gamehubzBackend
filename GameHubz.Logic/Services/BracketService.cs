@@ -234,10 +234,35 @@ namespace GameHubz.Logic.Services
             // never has to coalesce — and so the resolved format is what gets cached.
             ResolveSeriesFormat(response, tournament);
             ResolveCheckInWindows(response, tournament);
+            await MarkExpiredEvidence(response, tournament);
 
             await cacheService.SetAsync(cacheKey, response, TimeSpan.FromMinutes(5));
 
             return response;
+        }
+
+        /// <summary>
+        /// Flags the cards whose evidence the retention sweep has already removed. Clips go a few
+        /// days after their match is settled and screenshots at thirty days, both while a long
+        /// tournament is still running — and a card with an empty evidence list is what the
+        /// organizer's board marks "no evidence". The flag is what keeps a result that was proven
+        /// at the time from being reported as unproven afterwards.
+        /// </summary>
+        private async Task MarkExpiredEvidence(TournamentStructureDto response, TournamentEntity tournament)
+        {
+            // Team cards never carry their games' evidence, so there is nothing to explain on them.
+            if (tournament.IsTeamTournament) return;
+
+            var expired = await this.AppUnitOfWork.MatchEvidenceRepository
+                .GetMatchIdsWithExpiredEvidenceByTournament(tournament.Id!.Value);
+            if (expired.Count == 0) return;
+
+            foreach (var match in response.Stages
+                .SelectMany(s => (s.Rounds ?? Enumerable.Empty<BracketRoundDto>()).SelectMany(r => r.Matches)
+                    .Concat((s.Groups ?? Enumerable.Empty<GroupDto>()).SelectMany(g => g.Matches))))
+            {
+                if (expired.Contains(match.Id)) match.EvidenceExpired = true;
+            }
         }
 
         /// <summary>

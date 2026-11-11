@@ -151,8 +151,14 @@ namespace GameHubz.Logic.Services
             var user = await this.AppUnitOfWork.UserRepository.GetByIdOrThrowIfNull(
                 (await this.UserContextReader.GetTokenUserInfoFromContextThrowIfNull()).UserId);
 
+            // Keyed by id, not by username. The storage layer strips everything outside
+            // [a-zA-Z0-9_-] from a path, so two usernames could land on one folder ("a.b" and
+            // "a_b"; every all-Cyrillic or all-emoji name on the bare "users/") and each upload
+            // overwrote the other player's picture. An id cannot collide and survives a rename.
+            // Avatars uploaded before this stay where they are — AvatarUrl still points at them,
+            // and nothing writes to the old name-based folders any more.
             string fileName = $"avatar";
-            string folderPath = $"users/{user!.Username}";
+            string folderPath = $"users/{user!.Id}";
 
             string? url = await storageService.UploadFileAsync(file, folderPath, fileName);
 

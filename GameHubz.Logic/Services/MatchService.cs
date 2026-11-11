@@ -99,6 +99,16 @@ namespace GameHubz.Logic.Services
             detail.Games = DeserializeGames(detail.GamesJson);
             detail.ProposedGames = DeserializeGames(detail.ProposedGamesJson);
 
+            // Evidence is retired on a clock, so a settled match showing none may simply have
+            // outlived it — which is not the same as never having been proven. Asked only for a
+            // settled match with an empty list, so an open match being polled never pays for it.
+            if (detail.EvidenceItems.Count == 0
+                && (detail.Status == MatchStatus.Completed || detail.Status == MatchStatus.NoShow))
+            {
+                var expired = await this.AppUnitOfWork.MatchEvidenceRepository.GetMatchIdsWithExpiredEvidence(new[] { id });
+                detail.EvidenceExpired = expired.Count > 0;
+            }
+
             // The projection can only carry the stored columns; the ready-check window around them
             // is arithmetic. Resolved here so the client is handed the same moments the sweep will
             // act on, and the grace it needs to re-derive them after its own check-in.

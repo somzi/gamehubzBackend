@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
+using GameHubz.Logic.Utility;
 
 namespace GameHubz.Api.Share
 {
@@ -54,6 +55,21 @@ namespace GameHubz.Api.Share
     /// </summary>
     public static class SharePageBuilder
     {
+        // Avatars are stored at up to 800px; the page and the link preview both show them far
+        // smaller, and every byte served from the image CDN is billed. Each use asks for a size
+        // that fits it instead of the original.
+        //   • on the page the avatar is ~100px wide (400 keeps it sharp on a 3x phone) and the
+        //     "by <hub>" logo is 22px;
+        //   • a link preview is a crawler's download, so it gets a fixed format rather than
+        //     whatever the crawler's Accept header would negotiate.
+        private const int PageAvatarWidth = 400;
+        private const int ContextLogoWidth = 80;
+        private const int PreviewImageWidth = 600;
+
+        private static string PageAvatar(string url) => H(CloudinaryUrl.Resized(url, PageAvatarWidth, autoFormat: true)!);
+
+        private static string PreviewImage(string url) => H(CloudinaryUrl.Resized(url, PreviewImageWidth)!);
+
         public static string BuildPage(SharePageModel model)
         {
             if (model.Scoreboard is not null)
@@ -82,14 +98,14 @@ namespace GameHubz.Api.Share
             };
 
             string avatar = !string.IsNullOrWhiteSpace(model.ImageUrl)
-                ? $"<img class=\"avatar\" src=\"{H(model.ImageUrl)}\" alt=\"\" />"
+                ? $"<img class=\"avatar\" src=\"{PageAvatar(model.ImageUrl)}\" alt=\"\" />"
                 : $"<div class=\"avatar avatar-fallback\">{H(model.Title.Length > 0 ? model.Title[..1].ToUpperInvariant() : "G")}</div>";
 
             var imageTags = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(model.ImageUrl))
             {
-                imageTags.AppendLine($"    <meta property=\"og:image\" content=\"{H(model.ImageUrl)}\" />");
-                imageTags.AppendLine($"    <meta name=\"twitter:image\" content=\"{H(model.ImageUrl)}\" />");
+                imageTags.AppendLine($"    <meta property=\"og:image\" content=\"{PreviewImage(model.ImageUrl)}\" />");
+                imageTags.AppendLine($"    <meta name=\"twitter:image\" content=\"{PreviewImage(model.ImageUrl)}\" />");
             }
 
             var storeButtons = new StringBuilder();
@@ -114,7 +130,7 @@ namespace GameHubz.Api.Share
             if (!string.IsNullOrWhiteSpace(model.ContextText))
             {
                 string contextLogo = !string.IsNullOrWhiteSpace(model.ContextImageUrl)
-                    ? $"<img src=\"{H(model.ContextImageUrl)}\" alt=\"\" />"
+                    ? $"<img src=\"{H(CloudinaryUrl.Resized(model.ContextImageUrl, ContextLogoWidth, autoFormat: true)!)}\" alt=\"\" />"
                     : "";
                 contextRow = $"<div class=\"context\">{contextLogo}<span class=\"context-by\">by</span><span class=\"context-name\">{H(model.ContextText)}</span></div>";
             }
@@ -585,14 +601,14 @@ namespace GameHubz.Api.Share
             string entityLabel = H(model.EntityLabel);
 
             string avatar = !string.IsNullOrWhiteSpace(model.ImageUrl)
-                ? $"<img src=\"{H(model.ImageUrl)}\" alt=\"\" />"
+                ? $"<img src=\"{PageAvatar(model.ImageUrl)}\" alt=\"\" />"
                 : $"<div class=\"avatar-fallback\">{H(model.Title.Length > 0 ? model.Title[..1].ToUpperInvariant() : "G")}</div>";
 
             var imageTags = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(model.ImageUrl))
             {
-                imageTags.AppendLine($"    <meta property=\"og:image\" content=\"{H(model.ImageUrl)}\" />");
-                imageTags.AppendLine($"    <meta name=\"twitter:image\" content=\"{H(model.ImageUrl)}\" />");
+                imageTags.AppendLine($"    <meta property=\"og:image\" content=\"{PreviewImage(model.ImageUrl)}\" />");
+                imageTags.AppendLine($"    <meta name=\"twitter:image\" content=\"{PreviewImage(model.ImageUrl)}\" />");
             }
 
             var storeButtons = new StringBuilder();

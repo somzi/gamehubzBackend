@@ -30,6 +30,13 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>Same evidence, typed. See MatchEvidenceItemDto for why both exist.</summary>
         public List<MatchEvidenceItemDto> EvidenceItems { get; set; } = [];
+
+        /// <summary>
+        /// Evidence was attached to this match and the retention sweep has since removed some or
+        /// all of it. Without it an empty list reads as "this result stands on nothing", which is
+        /// what the organizer's board flags — wrongly, for a result that was proven at the time.
+        /// </summary>
+        public bool EvidenceExpired { get; set; }
         public bool IsRoundLocked { get; set; }
         public DateTime? MatchOpensAt { get; set; }
         public bool CanRevert { get; set; }

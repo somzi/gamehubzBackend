@@ -184,6 +184,18 @@ namespace GameHubz.Logic.Services
                 && sm.Status == MatchStatus.Scheduled
                 && sm.CheckInResolvedOn == null;
 
+            // Evidence is retired on a clock, so a settled game showing none may simply have
+            // outlived it. Asked in one query, and only about settled games with an empty list —
+            // this endpoint is polled while a tie is being played.
+            var settledWithoutEvidence = projection.SubMatches
+                .Where(sm => sm.EvidenceItems.Count == 0
+                    && (sm.Status == MatchStatus.Completed || sm.Status == MatchStatus.NoShow))
+                .Select(sm => sm.MatchId)
+                .ToList();
+            var expiredEvidence = settledWithoutEvidence.Count > 0
+                ? await this.AppUnitOfWork.MatchEvidenceRepository.GetMatchIdsWithExpiredEvidence(settledWithoutEvidence)
+                : new HashSet<Guid>();
+
             var subMatchDtos = projection.SubMatches.Select(sm =>
             {
                 bool isTieBreakMatch = (sm.MatchOrder ?? 0) >= baseTieBreakOrder;
@@ -228,6 +240,7 @@ namespace GameHubz.Logic.Services
                     IsTieBreakMatch = isTieBreakMatch,
                     Evidences = sm.Evidences,
                     EvidenceItems = sm.EvidenceItems,
+                    EvidenceExpired = expiredEvidence.Contains(sm.MatchId),
                     ProposedHomeScore = sm.ProposedHomeScore,
                     ProposedAwayScore = sm.ProposedAwayScore,
                     ProposedByUserId = sm.ProposedByUserId,

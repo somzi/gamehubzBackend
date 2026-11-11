@@ -40,6 +40,13 @@ namespace GameHubz.Logic.Test.Services
 
             unitOfWork.SetupGet(x => x.MatchEvidenceRepository).Returns(repository.Object);
 
+            // The sweep asks for clips and for screenshots. These tests drive the clip side, so the
+            // screenshot side finds nothing unless a test says otherwise.
+            repository
+                .Setup(x => x.GetExpiredImages(
+                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<MatchEvidenceEntity>());
+
             storage.SetupGet(x => x.Provider).Returns(StorageProviderType.Cloudinary);
             storage
                 .Setup(x => x.DeleteAsync(It.IsAny<string>(), It.IsAny<EvidenceMediaType>(), It.IsAny<CancellationToken>()))
@@ -76,7 +83,7 @@ namespace GameHubz.Logic.Test.Services
         {
             repository
                 .Setup(x => x.GetExpiredVideos(
-                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(rows.ToList());
         }
 
@@ -92,8 +99,8 @@ namespace GameHubz.Logic.Test.Services
 
             repository
                 .Setup(x => x.GetExpiredVideos(
-                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .Callback<DateTime, DateTime, int, CancellationToken>((ended, created, _, _) =>
+                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Callback<DateTime, DateTime, DateTime, int, CancellationToken>((_, ended, created, _, _) =>
                 {
                     endedBefore = ended;
                     createdBefore = created;
@@ -119,8 +126,8 @@ namespace GameHubz.Logic.Test.Services
 
             repository
                 .Setup(x => x.GetExpiredVideos(
-                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .Callback<DateTime, DateTime, int, CancellationToken>((ended, created, take, _) =>
+                    It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Callback<DateTime, DateTime, DateTime, int, CancellationToken>((_, ended, created, take, _) =>
                 {
                     endedBefore = ended;
                     createdBefore = created;

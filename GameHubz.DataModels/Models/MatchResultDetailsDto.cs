@@ -63,6 +63,12 @@ namespace GameHubz.DataModels.Models
 
         /// <summary>Same evidence, typed. See MatchEvidenceItemDto for why both exist.</summary>
         public List<MatchEvidenceItemDto> EvidenceItems { get; set; } = [];
+
+        /// <summary>
+        /// The match is settled, shows no evidence, and used to have some: the retention sweep
+        /// removed it. Lets the client say so instead of "no evidence attached".
+        /// </summary>
+        public bool EvidenceExpired { get; set; }
         public DateTime? ScheduledTime { get; set; }
         public string? AwayUserAvatarUrl { get; set; }
         public string? HomeUserAvatarUrl { get; set; }
