@@ -795,7 +795,63 @@ namespace GameHubz.Logic.Services
 
         // One clip is evidence, several are a video host. Kept low on purpose: video is the only
         // part of evidence whose storage and bandwidth we actually feel.
-        private const int MaxVideosPerMatch = 3;
+        //
+        // The cap follows the series: two clips per game, one for each side. A fixed number could
+        // not work for both ends — the count includes the per-game verification recordings (two
+        // per game, one from each player), so in a Best-of-3 those alone used up a cap of three and
+        // nobody could attach an ordinary clip on top.
+        private const int VideosPerGame = 2;
+
+        // What a single-game match was allowed before the cap followed the series. Never go below
+        // it: a Best-of-1 would otherwise drop from three clips to two.
+        private const int MinVideosPerMatch = 3;
+
+        /// <summary>
+        /// How many clips this match may carry: two per game of its series — Best-of-2 → 4,
+        /// Best-of-3 → 6 — counting every series it has gone into, so a tiebreak replay brings its
+        /// own games with it.
+        /// </summary>
+        private async Task<int> ResolveVideoLimitAsync(MatchEntity match)
+        {
+            var settings = await this.AppUnitOfWork.TournamentRepository.GetApprovalContext(match.TournamentId);
+            if (settings == null) return MinVideosPerMatch;
+
+            // Series 1 is the match itself; 2 and up are tiebreak replays, which only exist once a
+            // game of them has been reported or proposed.
+            int lastSeries = 1;
+            try
+            {
+                lastSeries = match.Games.Concat(match.ProposedGames)
+                    .Select(g => g.SeriesNumber)
+                    .DefaultIfEmpty(1)
+                    .Max();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // A malformed games blob must not stop someone attaching evidence; the main series
+                // alone is the cap then.
+            }
+
+            return VideoLimitFor(
+                SeriesEvaluator.BestOfFor(match, settings),
+                SeriesEvaluator.TiebreakBestOfFor(match, settings),
+                lastSeries);
+        }
+
+        /// <summary>
+        /// The cap as plain arithmetic: <see cref="VideosPerGame"/> for every game of every series
+        /// up to <paramref name="lastSeries"/>, never below what a single-game match always had.
+        /// </summary>
+        public static int VideoLimitFor(int bestOf, int? tiebreakBestOf, int lastSeries)
+        {
+            int games = 0;
+            for (int series = 1; series <= Math.Max(1, lastSeries); series++)
+            {
+                games += SeriesEvaluator.BestOfForSeries(series, bestOf, tiebreakBestOf);
+            }
+
+            return Math.Max(MinVideosPerMatch, games * VideosPerGame);
+        }
 
         // Video is enumerated rather than prefix-matched: "video/" must not become a way to park
         // arbitrary files on the account, and these are the containers a phone actually produces.
@@ -855,6 +911,8 @@ namespace GameHubz.Logic.Services
             // storage and bandwidth.
             var pending = new List<(IFormFile File, EvidenceMediaType MediaType)>();
             int videoCount = await this.AppUnitOfWork.MatchEvidenceRepository.CountVideosForMatch(matchId);
+            // Resolved on the first clip of the batch: a batch of screenshots never needs it.
+            int? videoLimit = null;
 
             foreach (var file in files)
             {
@@ -862,10 +920,15 @@ namespace GameHubz.Logic.Services
 
                 EvidenceMediaType mediaType = ResolveMediaType(file);
 
-                if (mediaType == EvidenceMediaType.Video && ++videoCount > MaxVideosPerMatch)
+                if (mediaType == EvidenceMediaType.Video)
                 {
-                    throw new BusinessRuleException(string.Format(
-                        this.LocalizationService["BusinessRule.EvidenceVideoLimit"], MaxVideosPerMatch));
+                    videoLimit ??= await ResolveVideoLimitAsync(matchForAuth);
+
+                    if (++videoCount > videoLimit.Value)
+                    {
+                        throw new BusinessRuleException(string.Format(
+                            this.LocalizationService["BusinessRule.EvidenceVideoLimit"], videoLimit.Value));
+                    }
                 }
 
                 pending.Add((file, mediaType));
