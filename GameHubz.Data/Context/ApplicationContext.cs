@@ -54,6 +54,18 @@ namespace GameHubz.Data.Context
             MatchChatReadConfigurator(modelBuilder);
             NotificationConfigurator(modelBuilder);
             ResultVerificationConfigurator(modelBuilder);
+            TournamentInviteConfigurator(modelBuilder);
+        }
+
+        private static void TournamentInviteConfigurator(ModelBuilder modelBuilder)
+        {
+            var invite = modelBuilder.Entity<TournamentInviteEntity>();
+            invite.ToTable("TournamentInvite").HasQueryFilter(x => x.IsDeleted == false);
+            invite.HasOne(x => x.Tournament).WithMany().HasForeignKey(x => x.TournamentId).OnDelete(DeleteBehavior.Cascade);
+            invite.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            invite.HasIndex(x => new { x.TournamentId, x.UserId }, "UX_TournamentInvite_Pending")
+                .IsUnique().HasFilter("\"Status\" = 1 AND \"IsDeleted\" = false");
+            invite.HasIndex(x => new { x.UserId, x.Status }, "IX_TournamentInvite_User_Status");
         }
 
         private static void ResultVerificationConfigurator(ModelBuilder modelBuilder)
@@ -168,6 +180,14 @@ namespace GameHubz.Data.Context
 
             modelBuilder.Entity<MatchStreamEntity>()
                 .HasIndex(x => x.MatchId);
+
+            var account = modelBuilder.Entity<UserStreamAccountEntity>();
+            account.ToTable("UserStreamAccount").HasQueryFilter(x => x.IsDeleted == false);
+            account.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            account.HasIndex(x => new { x.UserId, x.Platform }, "UX_UserStreamAccount_User_Platform")
+                .IsUnique().HasFilter("\"IsDeleted\" = false");
+            account.HasIndex(x => new { x.Platform, x.ExternalUserId }, "UX_UserStreamAccount_Platform_External")
+                .IsUnique().HasFilter("\"IsDeleted\" = false");
         }
 
         private static void ShareConfigurator(ModelBuilder modelBuilder)

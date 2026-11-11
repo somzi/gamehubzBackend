@@ -140,6 +140,28 @@ namespace GameHubz.Logic.Test.Bracket
             Assert.That(RemainingMessages(live), Is.EqualTo(2), "the sweep must be surgical, not a table truncate");
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task OpenHelp_PreservesConversationUntilResolved(bool abandoned)
+        {
+            var matchId = Seed(
+                endedOn: abandoned ? null : DateTime.UtcNow.AddDays(-(GraceDays + 1)),
+                tournamentCreatedOn: DateTime.UtcNow.AddDays(-(AbandonedDays + 1)),
+                adminHelpRequested: true);
+
+            await SweepAsync();
+            Assert.That(RemainingMessages(matchId), Is.EqualTo(2));
+            Assert.That(RemainingCursors(matchId), Is.EqualTo(1));
+
+            using (var context = new TestApplicationContext(options))
+            {
+                context.Set<MatchEntity>().Single(m => m.Id == matchId).AdminHelpRequested = false;
+                await context.SaveChangesAsync();
+            }
+            await SweepAsync();
+            Assert.That(RemainingMessages(matchId), Is.Zero);
+        }
+
         // ─────────────────────────── helpers ───────────────────────────
 
         /// <summary>Seeds one tournament + one match + two messages + one read cursor. Returns the match id.</summary>
@@ -147,7 +169,8 @@ namespace GameHubz.Logic.Test.Bracket
             DateTime? endedOn,
             DateTime? tournamentCreatedOn = null,
             DateTime? messageCreatedOn = null,
-            bool tournamentIsDeleted = false)
+            bool tournamentIsDeleted = false,
+            bool adminHelpRequested = false)
         {
             using var context = new TestApplicationContext(options);
 
@@ -171,6 +194,7 @@ namespace GameHubz.Logic.Test.Bracket
             {
                 Id = matchId,
                 TournamentId = tournamentId,
+                AdminHelpRequested = adminHelpRequested,
                 CreatedOn = created,
             });
 

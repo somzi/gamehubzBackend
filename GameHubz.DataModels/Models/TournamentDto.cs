@@ -88,6 +88,13 @@ namespace GameHubz.DataModels.Models
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool IsPrivate { get; set; }
 
+        /// <summary>
+        /// Players get in only by accepting an invite (see TournamentEntity.IsInviteOnly). Omitted
+        /// when false, like <see cref="IsPrivate"/>.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool IsInviteOnly { get; set; }
+
         public List<TournamentRegistrationDto>? TournamentRegistrations { get; set; } = new();
 
         public List<MatchDto>? Matches { get; set; } = new();

@@ -47,6 +47,8 @@ namespace GameHubz.Logic.Interfaces
 
         IMatchStreamRepository MatchStreamRepository { get; }
 
+        IUserStreamAccountRepository UserStreamAccountRepository { get; }
+
         ITournamentTeamRepository TournamentTeamRepository { get; }
         ITournamentTeamMemberRepository TournamentTeamMemberRepository { get; }
         ITeamJoinRequestRepository TeamJoinRequestRepository { get; }
@@ -74,6 +76,8 @@ namespace GameHubz.Logic.Interfaces
         IUserDeviceRepository UserDeviceRepository { get; }
 
         IMatchResultVerificationRepository MatchResultVerificationRepository { get; }
+
+        ITournamentInviteRepository TournamentInviteRepository { get; }
 
         // DO NOT DELETE - Generated Repository Tag
     }

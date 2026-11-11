@@ -32,10 +32,14 @@ namespace GameHubz.Data.Repository
         // its bracket — a concurrent or repeated CreateBracket sees 0 rows updated and bails.
         public async Task<bool> TryClaimBracketGeneration(Guid tournamentId)
         {
+            // Cancelled and Deleted are endings too: a delete committing between CreateBracket's read
+            // and this claim must not be brought back to life as a running tournament.
             int affected = await this.BaseDbSet()
                 .Where(t => t.Id == tournamentId
                     && t.Status != TournamentStatus.InProgress
-                    && t.Status != TournamentStatus.Completed)
+                    && t.Status != TournamentStatus.Completed
+                    && t.Status != TournamentStatus.Cancelled
+                    && t.Status != TournamentStatus.Deleted)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, TournamentStatus.InProgress));
 
             return affected > 0;
@@ -89,6 +93,46 @@ namespace GameHubz.Data.Repository
             {
                 // Balances the OpenConnection in Acquire — EF reopens on demand afterwards.
                 await this.ContextBase.Database.CloseConnectionAsync();
+            }
+        }
+
+        public async Task<bool> TryChangeStatus(Guid tournamentId, TournamentStatus expected, TournamentStatus newStatus, bool markEnded, DateTime now, Guid? modifiedBy)
+        {
+            var query = this.BaseDbSet().Where(t => t.Id == tournamentId && t.Status == expected);
+
+            int affected = markEnded
+                ? await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, newStatus)
+                    .SetProperty(t => t.EndedOn, t => t.EndedOn ?? now)
+                    .SetProperty(t => t.ModifiedOn, now)
+                    .SetProperty(t => t.ModifiedBy, modifiedBy))
+                : await query.ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, newStatus)
+                    .SetProperty(t => t.ModifiedOn, now)
+                    .SetProperty(t => t.ModifiedBy, modifiedBy));
+
+            return affected == 1;
+        }
+
+        public void KeepLifecycleColumns(TournamentEntity entity)
+        {
+            var entry = this.ContextBase.Entry(entity);
+            if (entry.State != EntityState.Modified) return;
+
+            entry.Property(t => t.Status).IsModified = false;
+            entry.Property(t => t.EndedOn).IsModified = false;
+            entry.Property(t => t.WinnerUserId).IsModified = false;
+            entry.Property(t => t.WinnerTeamId).IsModified = false;
+        }
+
+        public async Task LockEntry(Guid tournamentId)
+        {
+            // Its own key space (not the advancement lock's), so a sign-up never waits on bracket work.
+            if (this.ContextBase.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                string key = $"tournament-entry:{tournamentId:D}";
+                await this.ContextBase.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))");
             }
         }
 
@@ -146,6 +190,7 @@ namespace GameHubz.Data.Repository
                      IsTeamTournament = x.IsTeamTournament,
                      IsExclusive = x.IsExclusive,
                      IsPrivate = x.IsPrivate,
+                     IsInviteOnly = x.IsInviteOnly,
                      // Draft rows are listed on the hub page alongside open ones, so the card needs
                      // this to say "opens …" instead of looking like a tournament nobody can join.
                      RegistrationOpensAt = x.RegistrationOpensAt
@@ -191,6 +236,7 @@ namespace GameHubz.Data.Repository
                     TeamWinCondition = x.TeamWinCondition,
                     IsExclusive = x.IsExclusive,
                     IsPrivate = x.IsPrivate,
+                    IsInviteOnly = x.IsInviteOnly,
                     // Additive for v1 (which never returns a scheduled row); v2 needs it to render
                     // "opens …" instead of a join-ready card.
                     RegistrationOpensAt = x.RegistrationOpensAt
@@ -331,6 +377,7 @@ namespace GameHubz.Data.Repository
                       RequireAvailabilityForChat = x.RequireAvailabilityForChat,
                       IsExclusive = x.IsExclusive,
                       IsPrivate = x.IsPrivate,
+                      IsInviteOnly = x.IsInviteOnly,
                       DoubleRoundRobin = x.DoubleRoundRobin,
                       GroupsCount = x.GroupsCount,
                       QualifiersPerGroup = x.QualifiersPerGroup,
@@ -360,44 +407,33 @@ namespace GameHubz.Data.Repository
             // A user with no country sees only region/global tournaments. Codes are canonical ISO codes.
             IQueryable<TournamentEntity> query = this.BaseDbSet().AsNoTracking();
 
-            // Private tournaments are listed like any other in AvailableToJoin (the card carries a
-            // lock; registering needs the code). The other three tabs only ever list tournaments the
-            // user is IN, and a private one must show up there even though its entrants typically
-            // arrived through a code or invite link and don't follow the hub (or sit outside its
-            // region) — so on those tabs a private row skips the hub/region/exclusive visibility
-            // rules and the tab's own participation check is what scopes it. Composed per branch
-            // rather than as one OR over a flag, so the AvailableToJoin query keeps exactly the SQL
-            // it had.
-            bool ownTab = filter != TournamentUserStatus.AvailableToJoin;
-
-            if (string.IsNullOrEmpty(userCountry))
+            // The hub/region/exclusive rules decide what a user may DISCOVER, so they scope only
+            // AvailableToJoin. The other three tabs list tournaments the user is IN or played — the
+            // tab's own participation + status check below is all that scopes them — and a player
+            // must never lose one: joining doesn't require following the hub (a share link opens the
+            // details screen and Join works from there), unfollowing or a ban leaves the participant
+            // in place, a later country/region change or a lost exclusive role doesn't remove them,
+            // and neither does the hub being soft-deleted (the row then carries no hub name/avatar).
+            // Only AvailableToJoin is filtered here, so its query keeps exactly the SQL it had.
+            if (filter == TournamentUserStatus.AvailableToJoin)
             {
-                query = ownTab
-                    ? query.Where(x => x.IsPrivate
-                        || (hubIds.Contains(x.HubId!.Value)
-                            && x.Countries == null
-                            && (x.Region == region || x.Region == RegionType.GLOBAL)))
-                    : query.Where(x => hubIds.Contains(x.HubId!.Value)
+                if (string.IsNullOrEmpty(userCountry))
+                {
+                    query = query.Where(x => hubIds.Contains(x.HubId!.Value)
                         && x.Countries == null
                         && (x.Region == region || x.Region == RegionType.GLOBAL));
-            }
-            else
-            {
-                query = ownTab
-                    ? query.Where(x => x.IsPrivate
-                        || (hubIds.Contains(x.HubId!.Value)
-                            && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
-                                || (x.Countries != null && x.Countries.Contains(userCountry)))))
-                    : query.Where(x => hubIds.Contains(x.HubId!.Value)
+                }
+                else
+                {
+                    query = query.Where(x => hubIds.Contains(x.HubId!.Value)
                         && ((x.Countries == null && (x.Region == region || x.Region == RegionType.GLOBAL))
                             || (x.Countries != null && x.Countries.Contains(userCountry))));
-            }
+                }
 
-            // Exclusive tournaments are visible only in hubs where the user has exclusive-or-higher
-            // access. Non-exclusive tournaments stay visible to every member of the hub.
-            query = ownTab
-                ? query.Where(x => x.IsPrivate || !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value))
-                : query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
+                // Exclusive tournaments are visible only in hubs where the user has exclusive-or-higher
+                // access. Non-exclusive tournaments stay visible to every member of the hub.
+                query = query.Where(x => !x.IsExclusive || exclusiveHubIds.Contains(x.HubId!.Value));
+            }
 
             switch (filter)
             {
@@ -501,6 +537,14 @@ namespace GameHubz.Data.Repository
                 .FirstAsync(x => x.Id == id);
         }
 
+        public Task<Guid?> GetHubId(Guid tournamentId)
+        {
+            return this.BaseDbSet()
+                .Where(t => t.Id == tournamentId)
+                .Select(t => t.HubId)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<Guid?> GetHubOwnerUserId(Guid tournamentId)
         {
             return await this.BaseDbSet()
@@ -527,7 +571,9 @@ namespace GameHubz.Data.Repository
                 .Where(t => t.Id == tournamentId)
                 .Select(t => new TournamentApprovalContext
                 {
-                    HubOwnerUserId = t.Hub!.UserId,
+                    // A soft-deleted hub is filtered out of the join, and reading its NULL into a
+                    // Guid would throw — every match action on that tournament would 500.
+                    HubOwnerUserId = t.Hub != null ? t.Hub.UserId : Guid.Empty,
                     RequireResultApproval = t.RequireResultApproval,
                     RequireMatchCheckIn = t.RequireMatchCheckIn,
                     CheckInGraceMinutes = t.CheckInGraceMinutes,

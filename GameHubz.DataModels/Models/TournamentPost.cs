@@ -101,6 +101,14 @@ namespace GameHubz.DataModels.Models
         public bool? IsPrivate { get; set; }
 
         /// <summary>
+        /// Invite-only tournament: players get in only by accepting a manager's invite. Solo
+        /// tournaments only, and never together with <see cref="IsPrivate"/>. Nullable for the same
+        /// reason as <see cref="IsPrivate"/>: a client that predates it never sends it, and an edit
+        /// from that client must not open an invite-only tournament to everyone. Null on create = off.
+        /// </summary>
+        public bool? IsInviteOnly { get; set; }
+
+        /// <summary>
         /// Games a single match is played over (1 = one game decides it). Applies to solo matches
         /// and, in team tournaments, to each individual sub-match — the team tie itself is still
         /// settled by <see cref="TeamWinCondition"/> over those sub-matches.

@@ -38,9 +38,10 @@ namespace GameHubz.Logic.Services
         {
             // A private tournament gets no "new tournament / come register" announcement — only its
             // code holders can register, so inviting the whole hub would just send people to a
-            // locked door. Same guard on both RegistrationOpened overloads. Everything after
-            // registration (closed, started, finished) is announced like any other tournament.
-            if (model.IsPrivate) return;
+            // locked door. An invite-only one even less: nobody can sign up at all. Same guard on
+            // both RegistrationOpened overloads. Everything after registration (closed, started,
+            // finished) is announced like any other tournament.
+            if (model.IsPrivate || model.IsInviteOnly) return;
 
             try
             {
@@ -85,7 +86,7 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public async Task RegistrationOpened(TournamentDto model)
         {
-            if (model.IsPrivate) return;
+            if (model.IsPrivate || model.IsInviteOnly) return;
 
             try
             {
@@ -115,7 +116,7 @@ namespace GameHubz.Logic.Services
         /// </summary>
         public async Task RegistrationOpened(TournamentEntity tournament)
         {
-            if (tournament.IsPrivate) return;
+            if (tournament.IsPrivate || tournament.IsInviteOnly) return;
 
             try
             {

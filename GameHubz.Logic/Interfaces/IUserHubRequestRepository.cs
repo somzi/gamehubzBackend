@@ -8,6 +8,8 @@ namespace GameHubz.Logic.Interfaces
         Task<UserHubRequestEntity?> GetPendingByHubAndUser(Guid hubId, Guid userId);
         Task<UserHubRequestEntity?> GetByIdWithHub(Guid requestId);
         Task<bool> HasPendingRequest(Guid hubId, Guid userId);
+        /// <summary>Any join request, whatever became of it — pending, approved or rejected.</summary>
+        Task<bool> HasAnyRequest(Guid hubId, Guid userId);
         Task<int> CountPendingByHubId(Guid hubId);
         Task<int> CountPendingByHubIds(List<Guid> hubIds);
         Task<List<HubCountRow>> GetPendingCountsByHub(List<Guid> hubIds);

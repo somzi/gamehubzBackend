@@ -8,6 +8,7 @@ namespace GameHubz.Logic.Services
         private readonly INotificationService notificationService;
         private readonly BadgeService badgeService;
         private readonly TournamentAuthorizationService tournamentAuth;
+        private readonly UserHubRequestService userHubRequestService;
 
         public TournamentTeamService(
             IUnitOfWorkFactory unitOfWorkFactory,
@@ -16,13 +17,15 @@ namespace GameHubz.Logic.Services
             ICacheService cacheService,
             INotificationService notificationService,
             BadgeService badgeService,
-            TournamentAuthorizationService tournamentAuth)
+            TournamentAuthorizationService tournamentAuth,
+            UserHubRequestService userHubRequestService)
             : base(unitOfWorkFactory.CreateAppUnitOfWork(), userContextReader, localizationService)
         {
             this.cacheService = cacheService;
             this.notificationService = notificationService;
             this.badgeService = badgeService;
             this.tournamentAuth = tournamentAuth;
+            this.userHubRequestService = userHubRequestService;
         }
 
         public async Task<TeamDto> CreateTeam(CreateTeamRequest request)
@@ -44,6 +47,9 @@ namespace GameHubz.Logic.Services
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(user.UserId, request.TournamentId);
             if (alreadyInTeam)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
+
+            // Banned from the hub, out of its tournaments (HubBans) — before the code check below.
+            await HubBans.EnsureCallerNotBannedAsync(this.AppUnitOfWork, this.LocalizationService, tournament.HubId, user.UserId);
 
             // Creating a team is an entry into a private tournament, just like joining an
             // existing team or requesting a place on its roster; each route checks the code.
@@ -78,6 +84,9 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await InvalidateCache(request.TournamentId);
+
+            // Entering a tournament follows its hub — after the save, and never failing the entry.
+            await this.userHubRequestService.FollowHubOfTournament(request.TournamentId);
 
             return MapTeamsToDto(team, [member], tournament.TeamSize, tournament.AllowReserves, tournament.MaxReserves);
         }
@@ -149,6 +158,10 @@ namespace GameHubz.Logic.Services
             if (data.UserAlreadyInTournament)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
 
+            await HubBans.EnsureCallerNotBannedAsync(
+                this.AppUnitOfWork, this.LocalizationService,
+                await this.AppUnitOfWork.TournamentRepository.GetHubId(data.TournamentId), user.UserId);
+
             // A private tournament also requires the same code as solo registration and team
             // creation. Checked last: every check spends one of the caller's few attempts
             // (TournamentJoinCodes), so it must not be burnt on a join that fails for another reason.
@@ -169,6 +182,9 @@ namespace GameHubz.Logic.Services
             await this.SaveAsync();
 
             await InvalidateCache(data.TournamentId);
+
+            // Same as CreateTeam: joining a team is entering the tournament.
+            await this.userHubRequestService.FollowHubOfTournament(data.TournamentId);
 
             return new TeamDto
             {
@@ -239,6 +255,10 @@ namespace GameHubz.Logic.Services
             if (alreadyRequested)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.PendingRequestForTeam"]);
 
+            await HubBans.EnsureCallerNotBannedAsync(
+                this.AppUnitOfWork, this.LocalizationService,
+                await this.AppUnitOfWork.TournamentRepository.GetHubId(data.TournamentId), user.UserId);
+
             // Last, for the same reason as in JoinTeam: a code check spends an attempt.
             await EnsurePrivateTeamAccess(data.TournamentId, joinCode, user.UserId);
 
@@ -261,6 +281,9 @@ namespace GameHubz.Logic.Services
                 PushText.FromLiteral(data.TeamName),
                 PushText.FromKey("Push.TeamJoinRequest.Body", user.Username),
                 new { teamId = data.TeamId.ToString(), tournamentId = data.TournamentId.ToString(), type = "teamJoinRequest" });
+
+            // Asking for a place is the player's own step in, like a solo sign-up awaiting approval.
+            await this.userHubRequestService.FollowHubOfTournament(data.TournamentId);
 
             return new TeamDto
             {
@@ -395,6 +418,9 @@ namespace GameHubz.Logic.Services
             var alreadyInTeam = await this.AppUnitOfWork.TournamentTeamMemberRepository.ExistsInTournament(request.UserId!.Value, team.TournamentId!.Value);
             if (alreadyInTeam)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.UserAlreadyInATeam"]);
+
+            // A ban placed after the request still keeps the player out of the roster (HubBans).
+            await HubBans.EnsureNoneBannedAsync(this.AppUnitOfWork, this.LocalizationService, tournament.HubId, [request.UserId.Value]);
 
             var member = new TournamentTeamMemberEntity
             {

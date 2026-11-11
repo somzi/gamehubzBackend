@@ -24,10 +24,10 @@ namespace GameHubz.Data.Repository
         {
             return await this.BaseDbSet()
                 .Where(x => hubIds.Contains(x.HubId!.Value))
-                // Private tournaments are listed but never announced — highlights are an announcement
+                // Private and invite-only tournaments are listed but never announced — highlights are an announcement
                 // feed, like the push they sit next to. Filtered on read rather than skipped on write
                 // so a tournament switched to private later also drops the rows it logged while public.
-                .Where(x => x.Tournament == null || !x.Tournament.IsPrivate)
+                .Where(x => x.Tournament == null || (!x.Tournament.IsPrivate && !x.Tournament.IsInviteOnly))
                 .OrderByDescending(x => x.CreatedOn)
                 .Take(count)
                 .Select(x => new DashboardActivityDto
@@ -47,7 +47,7 @@ namespace GameHubz.Data.Repository
             var query = this.BaseDbSet()
                 .Where(x => hubIds.Contains(x.HubId!.Value))
                 // See GetRecentActivity.
-                .Where(x => x.Tournament == null || !x.Tournament.IsPrivate);
+                .Where(x => x.Tournament == null || (!x.Tournament.IsPrivate && !x.Tournament.IsInviteOnly));
 
             var count = await query.CountAsync();
 

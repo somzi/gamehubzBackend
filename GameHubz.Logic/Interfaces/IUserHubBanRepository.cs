@@ -6,6 +6,9 @@ namespace GameHubz.Logic.Interfaces
 
         Task<UserHubBanEntity?> FindActiveBan(Guid userId, Guid hubId);
 
+        /// <summary>The ones among <paramref name="userIds"/> with an active ban in the hub.</summary>
+        Task<List<Guid>> GetBannedUserIds(Guid hubId, IReadOnlyCollection<Guid> userIds);
+
         Task<List<HubBanOverview>> GetBansByHub(Guid hubId);
     }
 }

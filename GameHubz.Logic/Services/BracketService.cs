@@ -338,7 +338,23 @@ namespace GameHubz.Logic.Services
             // the InProgress flip used to happen only at the end of generation. Generators
             // no longer touch Status themselves.
             var previousStatus = tournament.Status;
-            bool claimed = await this.AppUnitOfWork.TournamentRepository.TryClaimBracketGeneration(tournamentId);
+
+            // The claim takes the entry lock, and checks the roster read above is still the roster: an
+            // invite accepted (or a sign-up approved) after that read would otherwise be a participant
+            // the draw never saw. Once the claim commits, every later entry sees InProgress and is refused.
+            bool claimed = await this.AppUnitOfWork.ExecuteInTransactionAsync(async () =>
+            {
+                await this.AppUnitOfWork.TournamentRepository.LockEntry(tournamentId);
+
+                if (!await this.AppUnitOfWork.TournamentRepository.TryClaimBracketGeneration(tournamentId))
+                    return false;
+
+                int entrants = await this.AppUnitOfWork.TournamentParticipantRepository.CountByTournament(tournamentId);
+                if (entrants != tournament.TournamentParticipants!.Count)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.RosterChangedWhileStarting"]);
+
+                return true;
+            });
             if (!claimed)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentAlreadyStarted"]);
 
@@ -1756,7 +1772,7 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Builds a double-elimination bracket: Winners Bracket (single-elim tree), Losers Bracket
-        /// (with WB losers dropping in via reverse placement to avoid early rematches), and a
+        /// (with WB losers dropping in a round-by-round order that delays rematches), and a
         /// single-match Grand Final fed by the WB champion (home) and the LB champion (away).
         /// </summary>
         /// <remarks>
@@ -1857,10 +1873,10 @@ namespace GameHubz.Logic.Services
             }
 
             // Wire WB losers → LB. WB R1 losers pair into LB R1 in the natural order
-            // (no rematch risk since they just played each other). All later WB rounds use
-            // REVERSE placement into the matching LB round — the seed-1 side of WB is sent to
-            // the seed-N side of LB so a WB-R(r) loser cannot face the player who just sent
-            // them down without first surviving the LB.
+            // (no rematch risk since they just played each other). Later WB rounds drop into
+            // their LB round in an order that changes from round to round (LoserDropIndex), so
+            // a player who beat you in the WB and loses the next WB round lands in the other
+            // half of the LB from you.
             var wbR1 = wbByRound[1];
             var lbR1 = lbByRound[1];
             for (int i = 0; i < wbR1.Count; i++)
@@ -1878,7 +1894,7 @@ namespace GameHubz.Logic.Services
 
                 for (int i = 0; i < count; i++)
                 {
-                    wbRound[i].NextMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextMatchLoserBracketId = lbRound[LoserDropIndex(r, i, count)].Id;
                     wbRound[i].NextMatchLoserBracketHomeAwaySlot = 1; // away — LB winner already holds home
                 }
             }
@@ -1989,6 +2005,37 @@ namespace GameHubz.Logic.Services
         }
 
         /// <summary>
+        /// Which match of its LB round (2r−2) the loser of WB round <paramref name="wbRound"/> (r ≥ 2),
+        /// match <paramref name="index"/>, drops into — <paramref name="count"/> matches on each side.
+        /// </summary>
+        /// <remarks>
+        /// The order cycles through four patterns, round by round: reverse, reverse within each half,
+        /// swap the halves, natural. That is the drop order Battlefy uses — read off a live 64-player
+        /// bracket: WB R2 reversed, WB R3 reversed within halves, WB R4 halves swapped, WB R5 natural.
+        ///
+        /// What it buys: which half of the LB a drop lands in flips from one WB round to the next.
+        /// So a player who beat you in WB round r and loses WB round r+1 lands in the other half of
+        /// the LB from you, and the two of you can meet again at the LB semifinal at the earliest.
+        /// Reversing every round (the old order) undid itself across the LB's halving rounds and
+        /// sent that player straight back to your path: a guaranteed rematch in LB round 2r.
+        /// Rounds further apart can't all be kept on opposite halves (there are only two), so the
+        /// cycle also alternates the order inside the halves to push those meetings late too.
+        /// </remarks>
+        internal static int LoserDropIndex(int wbRound, int index, int count)
+        {
+            if (count <= 1) return 0;
+
+            int half = count / 2;
+            return ((wbRound - 2) % 4) switch
+            {
+                0 => count - 1 - index,                                       // reverse
+                1 => index < half ? half - 1 - index : half + (count - 1 - index), // reverse within halves
+                2 => (index + half) % count,                                  // swap halves
+                _ => index,                                                   // natural
+            };
+        }
+
+        /// <summary>
         /// Team variant of <see cref="GenerateDoubleEliminationMatches"/> — identical bracket shape
         /// and routing, expressed with <see cref="TeamMatchEntity"/> links (NextTeamMatch* + slot
         /// overrides) and the IsUpperBracket / IsGrandFinal flags. See that method's remarks for the
@@ -2079,8 +2126,8 @@ namespace GameHubz.Logic.Services
                 }
             }
 
-            // Wire WB losers → LB. WB R1 losers pair naturally into LB R1; later WB rounds use
-            // REVERSE placement into the away slot (LB winner already holds home).
+            // Wire WB losers → LB. WB R1 losers pair naturally into LB R1; later WB rounds drop
+            // into the away slot (LB winner already holds home) in the order LoserDropIndex gives.
             var wbR1 = wbByRound[1];
             var lbR1 = lbByRound[1];
             for (int i = 0; i < wbR1.Count; i++)
@@ -2098,7 +2145,7 @@ namespace GameHubz.Logic.Services
 
                 for (int i = 0; i < count; i++)
                 {
-                    wbRound[i].NextTeamMatchLoserBracketId = lbRound[count - 1 - i].Id;
+                    wbRound[i].NextTeamMatchLoserBracketId = lbRound[LoserDropIndex(r, i, count)].Id;
                     wbRound[i].NextTeamMatchLoserBracketHomeAwaySlot = 1; // away — LB winner holds home
                 }
             }
@@ -2999,6 +3046,22 @@ namespace GameHubz.Logic.Services
             match.GamesJson = null;
             match.WinnerParticipantId = null;
             ClearProposal(match);
+            ClearSoloPlayedBy(match);
+        }
+
+        /// <summary>
+        /// A solo match carries players on the row (HomeUserId / AwayUserId) only after a participant
+        /// swap: they record who actually played it, so the result stays on that player's profile
+        /// (see TournamentParticipantService.StampPlayedMatches). Once the result is wiped the match
+        /// is played again by whoever holds the spots now, so the record goes with it. Team
+        /// sub-matches keep theirs: there the row's players ARE the lineup.
+        /// </summary>
+        private static void ClearSoloPlayedBy(MatchEntity match)
+        {
+            if (match.TeamMatchId.HasValue) return;
+
+            match.HomeUserId = null;
+            match.AwayUserId = null;
         }
 
         /// <summary>
@@ -3032,18 +3095,57 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Refuses a result write when the match's participants are no longer the ones this request
-        /// loaded. Runs under the tournament's advancement lock, which a bracket swap holds for its whole
-        /// transaction: without the re-check, a report that waited on the lock would write the pre-swap
-        /// pairing back over the row and advance a player who was swapped out of the fixture. A team
-        /// game the swap rebuilt no longer exists at all.
+        /// loaded. Runs under the tournament's advancement lock, which a bracket swap (and a participant
+        /// swap) holds for its whole transaction: without the re-check, a report that waited on the lock
+        /// would write the pre-swap pairing back over the row and advance a player who was swapped out
+        /// of the fixture. A team game the swap rebuilt no longer exists at all.
+        /// Returns the row as committed, for a caller with more to check under the same lock.
         /// </summary>
-        private async Task EnsureParticipantsUnchangedAsync(MatchEntity match)
+        private async Task<MatchSidesRow> EnsureParticipantsUnchangedAsync(MatchEntity match)
         {
-            var current = await this.AppUnitOfWork.MatchRepository.GetParticipantIds(match.Id!.Value)
+            var current = await this.AppUnitOfWork.MatchRepository.GetSides(match.Id!.Value)
                 ?? throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
+
+            // Cancelling takes this same lock (TournamentService.ChangeTournamentStatus): a result that
+            // waited for it would otherwise finish the cancelled tournament as Completed.
+            if (current.TournamentStatus is null or TournamentStatus.Cancelled or TournamentStatus.Deleted)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNoLongerRunning"]);
 
             if (current.HomeParticipantId != match.HomeParticipantId || current.AwayParticipantId != match.AwayParticipantId)
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
+
+            // A participant swap keeps the spots and changes who holds them, under this same lock
+            // (TournamentParticipantService.RunSwapLocked). Solo only: a team sub-match's players are
+            // its lineup, which the swap never touches.
+            if (!match.TeamMatchId.HasValue)
+            {
+                // It also writes the players who played the spot's finished matches onto those rows
+                // (StampPlayedMatches). A row loaded before that and saved now would write them back out.
+                if (current.HomeUserId != match.HomeUserId || current.AwayUserId != match.AwayUserId)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
+
+                // And a result (or proposal) this request read for the previous holder of a spot must
+                // not land on the new one, who never played it. Every result path loads the match with
+                // its participants (GetWithStage); a caller without them skips only this part.
+                if ((match.HomeParticipant != null && current.HomeParticipantUserId != match.HomeParticipant.UserId)
+                    || (match.AwayParticipant != null && current.AwayParticipantUserId != match.AwayParticipant.UserId))
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchParticipantsChanged"]);
+            }
+
+            return current;
+        }
+
+        /// <summary>
+        /// For the organizer's walkover tools, under the advancement lock: a tournament cancelled (or
+        /// deleted) while the request waited takes no more results — closing its last match would
+        /// otherwise finish it as Completed. Result reports get the same check from
+        /// <see cref="EnsureParticipantsUnchangedAsync"/>.
+        /// </summary>
+        private async Task EnsureTournamentStillRunningAsync(Guid tournamentId)
+        {
+            var tournament = await this.AppUnitOfWork.TournamentRepository.ShallowGetById(tournamentId);
+            if (tournament == null || tournament.Status is TournamentStatus.Cancelled or TournamentStatus.Deleted)
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.TournamentNoLongerRunning"]);
         }
 
         // A real result landing on a NoShow (double-walkover) team game: if the closed game already
@@ -3699,6 +3801,8 @@ namespace GameHubz.Logic.Services
                 await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
                 try
                 {
+                    await EnsureTournamentStillRunningAsync(match.TournamentId);
+
                     // Close the match with no winner. A Completed elimination match with no
                     // WinnerParticipantId is the codebase's existing "dead feeder" signal (see
                     // SourceProducesWinner) — both players are out, nothing advances from here.
@@ -3949,6 +4053,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
             try
             {
+                await EnsureTournamentStillRunningAsync(match.TournamentId);
+
                 match.Status = MatchStatus.NoShow;
                 ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
@@ -3989,6 +4095,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
             try
             {
+                await EnsureTournamentStillRunningAsync(match.TournamentId);
+
                 match.Status = MatchStatus.NoShow;
                 ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
@@ -4059,6 +4167,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
             try
             {
+                await EnsureTournamentStillRunningAsync(match.TournamentId);
+
                 match.Status = MatchStatus.NoShow;
                 ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
@@ -4192,6 +4302,8 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(tournamentId);
             try
             {
+                await EnsureTournamentStillRunningAsync(tournamentId);
+
                 foreach (var match in eligible)
                 {
                     // Elimination rows close Completed-with-no-winner — the "dead feeder" signal
@@ -4615,13 +4727,6 @@ namespace GameHubz.Logic.Services
             TokenUserInfo currentUser,
             bool requireMatchCheckIn)
         {
-            match.ProposedHomeScore = series.HomeScore;
-            match.ProposedAwayScore = series.AwayScore;
-            // The whole series travels with the proposal, so approving replays exactly what the
-            // participant reported instead of re-deriving a headline score into a single game.
-            match.ProposedGames = series.Games;
-            match.ProposedByUserId = currentUser.UserId;
-
             // A proposal in approval mode is two-sided once the opponent confirms it, so the ready
             // check must no longer auto-rule the fixture while that confirmation is pending. Store
             // the proposal and marker atomically against the sweep: whichever update reaches the row
@@ -4643,7 +4748,23 @@ namespace GameHubz.Logic.Services
             await this.AppUnitOfWork.TournamentRepository.AcquireAdvancementLock(match.TournamentId);
             try
             {
-                await EnsureParticipantsUnchangedAsync(match);
+                var committed = await EnsureParticipantsUnchangedAsync(match);
+
+                // A report that is already waiting belongs to whoever filed it: they may amend it, the
+                // other side confirms or rejects it. Without this the opponent's own report — sent from
+                // a screen opened before the first one landed, or in the same second — silently replaced
+                // it and swapped the roles: the first reporter kept seeing "waiting for the opponent",
+                // the second now saw the same, and neither had anything left to confirm. Read under the
+                // lock, so two reports racing for an open match cannot both get through.
+                if (committed.ProposedByUserId.HasValue && committed.ProposedByUserId.Value != currentUser.UserId)
+                    throw new BusinessRuleException(this.LocalizationService["BusinessRule.OpponentAlreadyReported"]);
+
+                match.ProposedHomeScore = series.HomeScore;
+                match.ProposedAwayScore = series.AwayScore;
+                // The whole series travels with the proposal, so approving replays exactly what the
+                // participant reported instead of re-deriving a headline score into a single game.
+                match.ProposedGames = series.Games;
+                match.ProposedByUserId = currentUser.UserId;
 
                 if (requireMatchCheckIn
                     && match.Status == MatchStatus.Scheduled
@@ -5280,6 +5401,7 @@ namespace GameHubz.Logic.Services
                         nextMatch.HomeUserScore = 0;
                         nextMatch.AwayUserScore = 0;
                         nextMatch.WinnerParticipantId = null;
+                        ClearSoloPlayedBy(nextMatch);
                     }
                     else if (nextMatch.Status == MatchStatus.Scheduled)
                     {
@@ -5325,6 +5447,7 @@ namespace GameHubz.Logic.Services
                             loserBracketMatch.HomeUserScore = 0;
                             loserBracketMatch.AwayUserScore = 0;
                             loserBracketMatch.WinnerParticipantId = null;
+                            ClearSoloPlayedBy(loserBracketMatch);
                         }
                         else if (loserBracketMatch.Status == MatchStatus.Scheduled)
                         {

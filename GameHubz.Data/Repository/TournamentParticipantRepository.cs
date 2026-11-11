@@ -146,7 +146,8 @@ namespace GameHubz.Data.Repository
                     Format = x.Tournament.Format,
                     RoundDurationMinutes = x.Tournament.RoundDurationMinutes,
                     IsTeamTournament = x.Tournament.IsTeamTournament,
-                    IsPrivate = x.Tournament.IsPrivate
+                    IsPrivate = x.Tournament.IsPrivate,
+                    IsInviteOnly = x.Tournament.IsInviteOnly
                 })
                 .ToListAsync();
 
@@ -228,6 +229,20 @@ namespace GameHubz.Data.Repository
                 .Union(teamMemberUserIds)
                 .Distinct()
                 .ToListAsync();
+        }
+
+        public Task<int> CountByTournament(Guid tournamentId)
+        {
+            return this.BaseDbSet()
+                .CountAsync(tp => tp.TournamentId == tournamentId);
+        }
+
+        public async Task<Dictionary<Guid, Guid>> GetSoloUserIdsByParticipant(Guid tournamentId)
+        {
+            return await this.BaseDbSet()
+                .Where(tp => tp.TournamentId == tournamentId && tp.UserId.HasValue)
+                .Select(tp => new { Id = tp.Id!.Value, UserId = tp.UserId!.Value })
+                .ToDictionaryAsync(x => x.Id, x => x.UserId);
         }
     }
 }

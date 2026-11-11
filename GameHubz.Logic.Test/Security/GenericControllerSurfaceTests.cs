@@ -329,7 +329,9 @@ namespace GameHubz.Logic.Test.Security
                 tournamentParticipantService: null!,
                 cache,
                 badgeService: null!,
-                tournamentAuth);
+                tournamentAuth,
+                new UserHubRequestService(factory, null!, localization, null!, null!, null!, userContext.Object,
+                    cache, null!, null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<UserHubRequestService>.Instance));
 
             return (service, cache);
         }

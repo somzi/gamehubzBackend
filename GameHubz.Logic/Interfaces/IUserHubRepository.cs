@@ -8,6 +8,12 @@ namespace GameHubz.Logic.Interfaces
 
         Task<UserHubEntity?> FindByUserAndHub(Guid userId, Guid hubId);
 
+        /// <summary>
+        /// Whether the user has ever had a membership row in the hub — current, or soft-deleted by an
+        /// unfollow, a removal or a ban.
+        /// </summary>
+        Task<bool> HasMembershipHistory(Guid userId, Guid hubId);
+
         Task<HubRole?> GetRole(Guid userId, Guid hubId);
 
         Task<List<Guid>> GetHubIdsWithExclusiveAccess(Guid userId);

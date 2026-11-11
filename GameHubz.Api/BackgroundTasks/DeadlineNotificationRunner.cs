@@ -174,9 +174,9 @@ namespace GameHubz.Api.BackgroundTasks
 
                     if (claimed == 0) continue;
 
-                    // A private tournament opens silently: no activity row here, and the notifier
-                    // below skips it too.
-                    if (!tournament.IsPrivate)
+                    // A private or invite-only tournament opens silently: no activity row here, and
+                    // the notifier below skips it too.
+                    if (!tournament.IsPrivate && !tournament.IsInviteOnly)
                     {
                         await LogRegistrationOpenedAsync(tournament.HubId!.Value, tournament.Id!.Value, now, ct);
                     }
@@ -237,6 +237,8 @@ namespace GameHubz.Api.BackgroundTasks
                     // Private tournaments are invite-only: nudging the hub's members would
                     // announce one to exactly the people it is hidden from.
                     && !t.IsPrivate
+                    // Invite-only: nobody can register on their own, so there is nothing to nudge.
+                    && !t.IsInviteOnly
                     && t.HubId != null
                     && t.RegistrationDeadline != null
                     && t.RegistrationDeadline > now

@@ -67,7 +67,10 @@ namespace GameHubz.Logic.Services
                 return;
             }
 
-            await this.AppUnitOfWork.UserHubRepository.HardDeleteEntity(userHub);
+            // Soft, like a removal or a ban: the row is the record that this player chose to leave, so
+            // entering one of the hub's tournaments later doesn't sign them back up
+            // (UserHubRequestService.FollowHubOfTournament). Following again by hand adds a new row.
+            await this.AppUnitOfWork.UserHubRepository.SoftDeleteEntity(userHub, this.UserContextReader);
 
             await this.SaveAsync();
 

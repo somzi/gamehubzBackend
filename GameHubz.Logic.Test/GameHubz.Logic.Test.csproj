@@ -28,6 +28,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\GameHubz.DataMigrations\Migration_00103_Unique_Pending_Friend_Request.cs"
+          Link="Fixtures\Migration_00103_Unique_Pending_Friend_Request.cs"
+          CopyToOutputDirectory="PreserveNewest" />
     <None Update="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

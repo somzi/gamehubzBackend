@@ -249,14 +249,8 @@ namespace GameHubz.Logic.Services
             var existing = await this.AppUnitOfWork.FriendRequestRepository.FindPendingBetween(user.UserId, toUserId);
             if (existing != null)
             {
-                // If the other party already sent a request, just accept it.
-                if (existing.FromUserId == toUserId)
-                {
-                    await AcceptRequest(existing.Id!.Value);
-                    return MapToDto(existing, target.Username, target.Nickname, target.AvatarUrl,
-                                            user.Username, null, null);
-                }
-
+                // Incoming requests need an explicit Accept decision. A stale Add Friend action
+                // must neither create a second row nor silently accept the other person's request.
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestAlreadyPending"]);
             }
 
@@ -268,7 +262,17 @@ namespace GameHubz.Logic.Services
             };
 
             await this.AppUnitOfWork.FriendRequestRepository.AddEntity(request, this.UserContextReader);
-            await this.SaveAsync();
+            try
+            {
+                await this.SaveAsync();
+            }
+            catch (Exception ex) when (IsPendingPairConflict(ex))
+            {
+                // The same or opposite request won the race after our read. The database index
+                // keeps one pending row; return a domain error so the client reloads its actions.
+                await this.AppUnitOfWork.FriendRequestRepository.DetachEntity(request);
+                throw new BusinessRuleException(this.LocalizationService["BusinessRule.RequestAlreadyPending"]);
+            }
 
             // New pending request → both users' incoming/outgoing lists are stale.
             await InvalidateFriendListsBoth(user.UserId, toUserId);
@@ -510,24 +514,17 @@ namespace GameHubz.Logic.Services
             });
         }
 
-        private static FriendRequestDto MapToDto(
-            FriendRequestEntity r, string toUsername, string? toNick, string? toAvatar,
-            string fromUsername, string? fromNick, string? fromAvatar)
+        internal static bool IsPendingPairConflict(Exception exception)
         {
-            return new FriendRequestDto
+            for (Exception? error = exception; error != null; error = error.InnerException)
             {
-                Id = r.Id!.Value,
-                FromUserId = r.FromUserId,
-                FromUsername = fromUsername,
-                FromNickname = fromNick,
-                FromAvatarUrl = fromAvatar,
-                ToUserId = r.ToUserId,
-                ToUsername = toUsername,
-                ToNickname = toNick,
-                ToAvatarUrl = toAvatar,
-                Status = r.Status,
-                CreatedOn = r.CreatedOn!.Value,
-            };
+                var type = error.GetType();
+                if (type.Name == "PostgresException"
+                    && type.GetProperty("SqlState")?.GetValue(error) as string == "23505"
+                    && type.GetProperty("ConstraintName")?.GetValue(error) as string == "UX_FriendRequest_PendingPair")
+                    return true;
+            }
+            return false;
         }
     }
 }

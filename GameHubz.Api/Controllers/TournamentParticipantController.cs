@@ -70,11 +70,24 @@ namespace GameHubz.Api.Controllers
             return await this.Service.GetSwapCandidates(tournamentId, search, pageNumber);
         }
 
-        /// <summary>Hands a participant's spot — seed, group, standings and played matches — to another member.</summary>
+        /// <summary>
+        /// Hands a participant's spot — seed, group and standings — to another member straight away.
+        /// Kept for the shipped app; newer clients send a swap invite (below) instead.
+        /// </summary>
         [HttpPost("tournament/{tournamentId}/swap")]
         public async Task<ParticipantSwapResultDto> Swap(Guid tournamentId, [FromBody] ParticipantSwapRequest request)
         {
             return await this.Service.SwapParticipant(tournamentId, request);
+        }
+
+        /// <summary>
+        /// Offers a participant's spot to another member. The spot changes hands only when they accept
+        /// (api/v2/tournament-invites/{id}/accept). New route, so no /vN is needed.
+        /// </summary>
+        [HttpPost("tournament/{tournamentId}/swap-invite")]
+        public async Task<TournamentInviteDto> SendSwapInvite(Guid tournamentId, [FromBody] ParticipantSwapRequest request)
+        {
+            return await this.Service.SendSwapInvite(tournamentId, request);
         }
     }
 }

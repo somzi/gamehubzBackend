@@ -132,7 +132,8 @@ namespace GameHubz.Logic.Services
 
         /// <summary>
         /// Fetches this match's streams (empty on any error) alongside the caller's availability
-        /// (when the match is still in play — Completed / NoShow returns null). Used by the
+        /// (when the match is still in play — Completed / NoShow returns null) and, for an
+        /// organizer, both sides' scheduling state at any status. Used by the
         /// /details/full combo endpoint; kept as its own method so the controller can compose the
         /// polymorphic details piece without pulling team logic into MatchService. Takes the
         /// already-loaded match status so we don't re-hit the DB just to check it — the caller
@@ -147,29 +148,33 @@ namespace GameHubz.Logic.Services
 
             MatchAvailabilityDto? availability = null;
             MatchAvailabilityAdminDto? adminAvailability = null;
-            if (matchStatus == MatchStatus.Pending || matchStatus == MatchStatus.Scheduled || matchStatus == MatchStatus.Live)
+            bool inPlay = matchStatus == MatchStatus.Pending || matchStatus == MatchStatus.Scheduled || matchStatus == MatchStatus.Live;
+
+            TokenUserInfo? user = null;
+            try { user = await this.UserContextReader.GetTokenUserInfoFromContext(); }
+            catch { user = null; }
+
+            // The caller's own picker only matters while the match can still be scheduled.
+            if (inPlay && user != null)
+            {
+                try { availability = await GetAvailability(id, user.UserId); }
+                catch { availability = null; }
+            }
+
+            // Organizers get both sides named — also once the match is over, so they can still
+            // look up when the pair agreed to play (a dispute raised in private after the fact).
+            // Caught separately so a failure here cannot take the caller's OWN availability down
+            // with it — an admin playing their own tournament still needs their picker.
+            if (user != null)
             {
                 try
                 {
-                    var user = await this.UserContextReader.GetTokenUserInfoFromContext();
-                    if (user != null)
+                    if (await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
                     {
-                        availability = await GetAvailability(id, user.UserId);
-
-                        // Organizers additionally get both sides named. Caught separately so a
-                        // failure here cannot take the caller's OWN availability down with it —
-                        // an admin playing their own tournament still needs their picker.
-                        try
-                        {
-                            if (await this.tournamentAuth.CanManageTournamentAsync(tournamentId, user))
-                            {
-                                adminAvailability = await GetAdminAvailability(id);
-                            }
-                        }
-                        catch { adminAvailability = null; }
+                        adminAvailability = await GetAdminAvailability(id);
                     }
                 }
-                catch { availability = null; }
+                catch { adminAvailability = null; }
             }
 
             return (streams, availability, adminAvailability);
@@ -931,7 +936,7 @@ namespace GameHubz.Logic.Services
             match.AdminHelpRequestedByUserId = user.UserId;
             match.AdminHelpRequestedOn = DateTime.UtcNow;
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            this.AppUnitOfWork.MatchRepository.UpdateAdminHelp(match, user.UserId);
             await this.SaveAsync();
 
             // Managers' "admin help" badge just went up — refresh it live (before the push
@@ -969,7 +974,10 @@ namespace GameHubz.Logic.Services
             var match = await this.AppUnitOfWork.MatchRepository.ShallowGetById(matchId);
             if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
-            if (!await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
+            // A player may withdraw only the request they raised. Playing in the same match
+            // is not enough: the opponent must never be able to dismiss someone else's issue.
+            if (match.AdminHelpRequestedByUserId != user.UserId
+                && !await this.tournamentAuth.CanManageTournamentAsync(match.TournamentId, user))
                 throw new BusinessRuleException(this.LocalizationService["BusinessRule.OnlyAdminsResolveHelp"]);
 
             if (!match.AdminHelpRequested) return;
@@ -979,13 +987,22 @@ namespace GameHubz.Logic.Services
             match.AdminHelpRequestedByUserId = null;
             match.AdminHelpRequestedOn = null;
 
-            await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+            // Keep who closed the request and when in the conversation, independently of the
+            // result. This is saved in the same unit of work as the request's state change.
+            await this.AppUnitOfWork.MatchChatRepository.AddEntity(new MatchChatEntity
+            {
+                MatchId = matchId,
+                UserId = user.UserId,
+                Content = this.LocalizationService["Chat.AdminHelpResolved"],
+            }, this.UserContextReader);
+            this.AppUnitOfWork.MatchRepository.UpdateAdminHelp(match, user.UserId);
             await this.SaveAsync();
 
             // Managers' "admin help" badge just dropped — refresh it live.
             await this.badgeService.PushToTournamentManagersAsync(match.TournamentId);
 
-            if (requesterUserId == null) return;
+            // Self-resolution needs no notification claiming that an admin reviewed the issue.
+            if (requesterUserId == null || requesterUserId == user.UserId) return;
 
             // Resolve the requester now, while the scope is alive. No push token still means an inbox row.
             var requester = await this.AppUnitOfWork.UserRepository.GetById(requesterUserId.Value);
@@ -1308,7 +1325,7 @@ namespace GameHubz.Logic.Services
 
             var latestPerStreamer = all
                 .GroupBy(s => s.StreamerUserId)
-                .Select(g => g.First()) // GetByMatchId is newest-first
+                .Select(g => g.First()) // GetByMatchId is current-first (live, then newest)
                 .OrderByDescending(s => s.Status == MatchStreamStatus.Live)
                 .ThenByDescending(s => s.StartedAt)
                 .ToList();
