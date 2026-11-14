@@ -170,6 +170,7 @@ namespace GameHubz.Logic.Test.Bracket
                 var p = participants.Single(x => x.Id == pid);
                 Assert.That(p.Points, Is.EqualTo(0), "nobody played, so nobody scores");
                 Assert.That(p.Draws, Is.EqualTo(0));
+                Assert.That(p.Losses, Is.EqualTo(1), "but the fixture still counts as played, and lost");
             }
         }
 

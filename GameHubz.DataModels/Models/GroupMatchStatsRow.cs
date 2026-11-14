@@ -17,5 +17,9 @@ namespace GameHubz.DataModels.Models
         public int AwayGoals { get; set; }
 
         public Guid? WinnerParticipantId { get; set; }
+
+        // The fixture was closed as a double walkover (MatchStatus.NoShow): nobody played it, so
+        // there is no score and no winner — both sides take it as a loss.
+        public bool IsDoubleNoShow { get; set; }
     }
 }

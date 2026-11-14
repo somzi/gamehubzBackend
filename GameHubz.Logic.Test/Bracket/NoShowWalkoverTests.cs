@@ -11,7 +11,8 @@ using GameHubz.Logic.Exceptions;
 namespace GameHubz.Logic.Test.Bracket
 {
     // Double walkover on group-machinery formats (Swiss / League / GroupStage): the fixture closes
-    // as NoShow — a double forfeit awarding NOTHING to either player (deliberately not a draw) —
+    // as NoShow — a double forfeit awarding NOTHING to either player (deliberately not a draw),
+    // entered in the table as a match both of them played and lost —
     // while the round still pairs / unlocks / completes as if it had been played. Also covers the
     // undo (delete-result reopens), the late real result (overwrites the NoShow), and the play-in
     // rejection. SQLite harness.
@@ -183,6 +184,68 @@ namespace GameHubz.Logic.Test.Bracket
                 Is.True, "the knockout was drawn despite the no-show fixture");
         }
 
+        // The table's "played" column is W + D + L. A no-show left out of all three kept the two
+        // of them a match short of everyone else for the rest of the stage.
+        [TestCase(TournamentFormat.League)]
+        [TestCase(TournamentFormat.Swiss)]
+        public async Task NoShow_CountsAsPlayedAndLostForBoth_WithNoPointsOrGoals(TournamentFormat format)
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(format, 4);
+            if (format == TournamentFormat.Swiss)
+                await harness.NewService().GenerateSwissTournament(tournamentId);
+            else
+                await harness.NewService().GenerateLeagueTournament(tournamentId);
+
+            var round1 = harness.Matches(tournamentId).Where(m => m.RoundNumber == 1).ToList();
+            var noShowMatch = round1[0];
+            var playedMatch = round1[1];
+
+            await harness.NewService().ApplyDoubleWalkover(noShowMatch.Id!.Value);
+            await harness.NewService().UpdateMatchResult(new MatchResultDto
+            {
+                MatchId = playedMatch.Id!.Value, TournamentId = tournamentId, HomeScore = 2, AwayScore = 0,
+            });
+
+            var participants = harness.Participants(tournamentId);
+            foreach (var pid in new[] { noShowMatch.HomeParticipantId!.Value, noShowMatch.AwayParticipantId!.Value })
+            {
+                var p = participants.Single(x => x.Id == pid);
+                Assert.That(p.Losses, Is.EqualTo(1), "the no-show is a match they lost");
+                Assert.That(p.Wins, Is.EqualTo(0));
+                Assert.That(p.Draws, Is.EqualTo(0));
+                Assert.That(p.Points, Is.EqualTo(0));
+                Assert.That(p.GoalsFor, Is.EqualTo(0), "no invented goals");
+                Assert.That(p.GoalsAgainst, Is.EqualTo(0));
+            }
+
+            // Everyone has now been through round 1, and the table says so for all four.
+            Assert.That(participants.Select(p => p.Wins + p.Draws + p.Losses), Is.All.EqualTo(1),
+                "the no-show pair is level with the pair that played");
+        }
+
+        [Test]
+        public async Task GroupNoShow_CountsInTheGroupTable_OfThatGroupOnly()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tournamentId = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            await harness.NewService().GenerateGroupStageWithKnockout(tournamentId, numberOfGroups: 2, qualifiersPerGroup: 2);
+
+            var groupStage = harness.Stages(tournamentId).Single(s => s.Type == StageType.GroupStage);
+            var fixture = harness.Matches(tournamentId)
+                .First(m => m.TournamentStageId == groupStage.Id && m.RoundNumber == 1);
+
+            await harness.NewService().ApplyDoubleWalkover(fixture.Id!.Value);
+
+            var noShows = new[] { fixture.HomeParticipantId!.Value, fixture.AwayParticipantId!.Value };
+            foreach (var p in harness.Participants(tournamentId))
+            {
+                int expected = noShows.Contains(p.Id!.Value) ? 1 : 0;
+                Assert.That(p.Losses, Is.EqualTo(expected), "only the two who failed to show carry the loss");
+                Assert.That(p.Points, Is.EqualTo(0));
+            }
+        }
+
         [Test]
         public async Task NoShow_CanBeUndone_ByDeletingTheResult()
         {
@@ -198,6 +261,9 @@ namespace GameHubz.Logic.Test.Bracket
 
             var reopened = harness.Match(match.Id!.Value);
             Assert.That(reopened.Status, Is.EqualTo(MatchStatus.Scheduled), "the mistaken no-show is reopened");
+
+            Assert.That(harness.Participants(tournamentId).Select(p => p.Losses), Is.All.EqualTo(0),
+                "and the loss it put on both of them is taken back");
         }
 
         [Test]
@@ -222,6 +288,10 @@ namespace GameHubz.Logic.Test.Bracket
 
             var home = harness.Participants(tournamentId).Single(p => p.Id == match.HomeParticipantId);
             Assert.That(home.Points, Is.EqualTo(3), "the late result now counts in the standings");
+            Assert.That(home.Losses, Is.EqualTo(0), "the no-show loss is gone — the winner did not lose this");
+
+            var away = harness.Participants(tournamentId).Single(p => p.Id == match.AwayParticipantId);
+            Assert.That(away.Losses, Is.EqualTo(1), "one loss for the one match, not the no-show's on top");
         }
 
         [Test]

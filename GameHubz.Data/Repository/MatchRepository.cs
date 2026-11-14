@@ -156,7 +156,9 @@ namespace GameHubz.Data.Repository
 
         public void DetachAll() => this.ContextBase.ChangeTracker.Clear();
 
-        public Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId)
+        // Every fixture that counts in the table: the played ones (Completed) and the double
+        // walkovers (NoShow), which both sides lose without a point or a goal.
+        public Task<List<GroupMatchStatsRow>> GetSettledSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId)
         {
             return this.BaseDbSet()
                 .AsNoTracking()
@@ -164,7 +166,8 @@ namespace GameHubz.Data.Repository
                     m.TournamentStageId == stageId &&
                     m.TournamentGroupId == groupId &&
                     m.TeamMatchId == null &&
-                    m.Status == MatchStatus.Completed &&
+                    (m.Status == MatchStatus.Completed
+                        || (m.Status == MatchStatus.NoShow && m.AwayParticipantId.HasValue)) &&
                     // Away may be null only for Swiss byes (home gets the free win);
                     // league/group matches always carry both participants.
                     m.HomeParticipantId.HasValue &&
@@ -181,7 +184,8 @@ namespace GameHubz.Data.Repository
                     // headline IS the score — hence the fallback.
                     HomeGoals = m.HomeGoalsTotal ?? m.HomeUserScore ?? 0,
                     AwayGoals = m.AwayGoalsTotal ?? m.AwayUserScore ?? 0,
-                    WinnerParticipantId = m.WinnerParticipantId
+                    WinnerParticipantId = m.WinnerParticipantId,
+                    IsDoubleNoShow = m.Status == MatchStatus.NoShow
                 })
                 .ToListAsync();
         }

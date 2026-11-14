@@ -104,7 +104,7 @@
         // saves-then-reloads in a loop, so it must drop prior instances to avoid identity collisions.
         void DetachAll();
 
-        Task<List<GroupMatchStatsRow>> GetCompletedSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId);
+        Task<List<GroupMatchStatsRow>> GetSettledSoloMatchStatsForGroup(Guid stageId, Guid? groupId, Guid? excludeMatchId);
 
         Task<List<MatchEntity>> GetByTournamentAndRound(Guid tournamentId, int roundNumber);
 

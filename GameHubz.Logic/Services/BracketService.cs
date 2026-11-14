@@ -3210,8 +3210,8 @@ namespace GameHubz.Logic.Services
             if (match == null) throw new BusinessRuleException(this.LocalizationService["BusinessRule.MatchNotFound"]);
 
             // NoShow is deletable too — that's the undo for a mistakenly applied group/league/Swiss
-            // double walkover (the core reopens the match to Scheduled; standings are unaffected
-            // since a NoShow never contributed to them). TieBreakRequired likewise: the series was
+            // double walkover (the core reopens the match to Scheduled and re-derives the table,
+            // which takes the loss back off both sides). TieBreakRequired likewise: the series was
             // reported but decided nothing, so deleting it just discards the games played so far.
             if (match.Status != MatchStatus.Completed
                 && match.Status != MatchStatus.NoShow
@@ -3767,11 +3767,12 @@ namespace GameHubz.Logic.Services
         /// late case). A terminal third-place play-off is closed as <see cref="MatchStatus.NoShow"/>
         /// and, once the final is already decided, completes the tournament without recording a
         /// result for either play-off participant. League / group / Swiss: the fixture is closed as <see cref="MatchStatus.NoShow"/>
-        /// — a double forfeit awarding NOTHING to either player (deliberately not a draw), while the
-        /// round still completes, unlocks and pairs as if the match had been played. Team sub-matches
+        /// — a double forfeit awarding NOTHING to either player (deliberately not a draw): it goes
+        /// into the table as a match both of them played and lost, with no points and no goals, while
+        /// the round still completes, unlocks and pairs as if the match had been played. Team sub-matches
         /// close as a NoShow game contributing nothing to the tie (see
         /// <see cref="ApplyTeamSubMatchWalkover"/> — if NO game of the tie ends up played, the whole
-        /// team match is voided). Caller must be able to manage the tournament. Play-in matches are
+        /// team match is voided, which in a league / group is likewise a loss for both teams). Caller must be able to manage the tournament. Play-in matches are
         /// rejected because every play-in slot must produce a qualifier for the knockout draw.
         /// </summary>
         public async Task ApplyDoubleWalkover(Guid matchId)
@@ -4066,11 +4067,12 @@ namespace GameHubz.Logic.Services
         // NoShow — an explicit "administratively closed, nobody played" signal. Deliberately NOT
         // the elimination path's Completed-with-no-winner: ResyncSoloLeagueStatistics scores a
         // completed no-winner match as a DRAW (a point each), and a double no-show must award
-        // nothing. NoShow rows contribute nothing to standings (the stats reads filter on
-        // Completed), still register the pairing for Swiss rematch avoidance, and count as
-        // terminal for round-completeness — so the round unlocks / pairs / completes exactly as
-        // if the fixture had been played. Undo: delete-result reopens it, or a late real result
-        // simply overwrites it through the normal report path.
+        // nothing. In the table a NoShow row is a fixture both sides LOST — played, no points, no
+        // goals (see ApplyDoubleNoShowStats) — so nobody is left a match short of the rest of the
+        // group. It still registers the pairing for Swiss rematch avoidance and counts as terminal
+        // for round-completeness — so the round unlocks / pairs / completes exactly as if the
+        // fixture had been played. Undo: delete-result reopens it, or a late real result simply
+        // overwrites it through the normal report path; both re-derive the table.
         private async Task ApplyGroupNoShowWalkover(MatchEntity match)
         {
             // Serialised per tournament like FinalizeMatchResult — the advancement hooks below are
@@ -4084,12 +4086,14 @@ namespace GameHubz.Logic.Services
                 ClearSeriesResult(match);
                 match.ScheduledStartTime ??= DateTime.UtcNow;
                 await this.AppUnitOfWork.MatchRepository.UpdateEntity(match, this.UserContextReader);
+
+                // Both sides take the fixture as a loss — re-derive the table, exactly as a
+                // reported result does, and commit it with the match.
+                await ResyncSoloLeagueStatistics(match);
                 await this.SaveAsync();
 
                 // The closed fixture may have been the round's (or the competition's) last open
-                // one — run the same advancement hooks a reported result runs. Standings need no
-                // resync: an unplayed fixture never contributed, and NoShow keeps contributing
-                // nothing.
+                // one — run the same advancement hooks a reported result runs.
                 if (match.TournamentStage?.Type == StageType.Swiss)
                 {
                     await CheckAndAdvanceSwissStage(match);
@@ -4352,6 +4356,15 @@ namespace GameHubz.Logic.Services
                 // The same advancement hooks a single walkover runs — once, for the whole round.
                 if (isGroupMachinery)
                 {
+                    // Both sides of every closed fixture take it as a loss. The rows are committed,
+                    // so each touched group (or the one league / Swiss table) is re-derived once
+                    // from the Match table — before the hooks, which rank and pair off it.
+                    foreach (var groupId in eligible.Select(m => m.TournamentGroupId).Distinct().ToList())
+                        await ResyncSoloLeagueStatistics(tournamentId, stageId, groupId, current: null);
+
+                    await this.SaveAsync();
+                    this.AppUnitOfWork.MatchRepository.DetachAll();
+
                     if (stage.Type == StageType.Swiss)
                     {
                         await CheckAndAdvanceSwissStage(anchor);
@@ -5186,23 +5199,30 @@ namespace GameHubz.Logic.Services
         // calls, double-applied increments, or any other inconsistent revert/apply path.
         //
         // Cost per call (scoped to a single group, or to the whole league):
-        //   1 DB read — completed matches in scope, projected to a tiny no-tracking row (excludes
-        //               the current match: we apply its in-memory state instead so we don't need
-        //               an intermediate SaveAsync to make the new score visible to the query).
+        //   1 DB read — settled matches in scope (played, or closed as a double walkover),
+        //               projected to a tiny no-tracking row (excludes the current match: we apply
+        //               its in-memory state instead so we don't need an intermediate SaveAsync to
+        //               make the new score visible to the query).
         //   1 DB read — participants in scope (tracked, since we update them).
         //   1 DB write — batched in the caller's SaveAsync alongside the match update.
-        private async Task ResyncSoloLeagueStatistics(MatchEntity match)
+        private Task ResyncSoloLeagueStatistics(MatchEntity match)
+            => match.TournamentStageId.HasValue
+                ? ResyncSoloLeagueStatistics(match.TournamentId, match.TournamentStageId.Value, match.TournamentGroupId, match)
+                : Task.CompletedTask;
+
+        // Scope-level form: one group of a stage, or the whole league / Swiss when groupId is null.
+        // Pass `current` when the caller holds a match whose new state is not saved yet; pass null
+        // when everything in scope is already committed (the round-wide walkover).
+        private async Task ResyncSoloLeagueStatistics(Guid tournamentId, Guid stageId, Guid? groupId, MatchEntity? current)
         {
-            if (!match.TournamentStageId.HasValue) return;
+            var otherMatchStats = await this.AppUnitOfWork.MatchRepository.GetSettledSoloMatchStatsForGroup(
+                stageId,
+                groupId,
+                excludeMatchId: current?.Id);
 
-            var otherMatchStats = await this.AppUnitOfWork.MatchRepository.GetCompletedSoloMatchStatsForGroup(
-                match.TournamentStageId.Value,
-                match.TournamentGroupId,
-                excludeMatchId: match.Id);
-
-            var participants = match.TournamentGroupId.HasValue
-                ? await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(match.TournamentGroupId.Value)
-                : await this.AppUnitOfWork.TournamentParticipantRepository.GetForLeagueResync(match.TournamentId);
+            var participants = groupId.HasValue
+                ? await this.AppUnitOfWork.TournamentParticipantRepository.GetByGroupId(groupId.Value)
+                : await this.AppUnitOfWork.TournamentParticipantRepository.GetForLeagueResync(tournamentId);
 
             if (participants.Count == 0) return;
 
@@ -5215,28 +5235,53 @@ namespace GameHubz.Logic.Services
             }
 
             foreach (var m in otherMatchStats)
-                ApplyMatchStats(byId, m.HomeParticipantId, m.AwayParticipantId, m.HomeGoals, m.AwayGoals, m.WinnerParticipantId);
+            {
+                if (m.IsDoubleNoShow)
+                    ApplyDoubleNoShowStats(byId, m.HomeParticipantId, m.AwayParticipantId);
+                else
+                    ApplyMatchStats(byId, m.HomeParticipantId, m.AwayParticipantId, m.HomeGoals, m.AwayGoals, m.WinnerParticipantId);
+            }
 
             // Fold in the current match using its in-memory state — fresher than the DB.
-            if (match.Status == MatchStatus.Completed
-                && match.TeamMatchId == null
-                && match.HomeParticipantId.HasValue
-                && match.AwayParticipantId.HasValue)
+            if (current != null
+                && current.TeamMatchId == null
+                && current.HomeParticipantId.HasValue
+                && current.AwayParticipantId.HasValue)
             {
-                ApplyMatchStats(
-                    byId,
-                    match.HomeParticipantId.Value,
-                    match.AwayParticipantId.Value,
-                    // Goal difference counts goals, not the headline: a Bo3 won 2–1 under MatchWins
-                    // posts the goals from all three games, not "2". Null on pre-series matches,
-                    // where the headline is the score.
-                    match.HomeGoalsTotal ?? match.HomeUserScore ?? 0,
-                    match.AwayGoalsTotal ?? match.AwayUserScore ?? 0,
-                    match.WinnerParticipantId);
+                if (current.Status == MatchStatus.Completed)
+                {
+                    ApplyMatchStats(
+                        byId,
+                        current.HomeParticipantId.Value,
+                        current.AwayParticipantId.Value,
+                        // Goal difference counts goals, not the headline: a Bo3 won 2–1 under MatchWins
+                        // posts the goals from all three games, not "2". Null on pre-series matches,
+                        // where the headline is the score.
+                        current.HomeGoalsTotal ?? current.HomeUserScore ?? 0,
+                        current.AwayGoalsTotal ?? current.AwayUserScore ?? 0,
+                        current.WinnerParticipantId);
+                }
+                else if (current.Status == MatchStatus.NoShow)
+                {
+                    ApplyDoubleNoShowStats(byId, current.HomeParticipantId.Value, current.AwayParticipantId);
+                }
             }
 
             foreach (var p in participants)
                 await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(p, this.UserContextReader);
+        }
+
+        // A double walkover in a league / group / Swiss: the fixture counts as played and LOST by
+        // both sides — no points, no goals. Left out of the table entirely, the two no-shows sat one
+        // match short of everyone else in the "played" column (W + D + L) for the rest of the stage.
+        // A loss rather than a draw, because a draw is a point neither of them turned up to earn.
+        private static void ApplyDoubleNoShowStats(
+            Dictionary<Guid, TournamentParticipantEntity> byId,
+            Guid homeId,
+            Guid? awayId)
+        {
+            if (byId.TryGetValue(homeId, out var home)) home.Losses++;
+            if (awayId.HasValue && byId.TryGetValue(awayId.Value, out var away)) away.Losses++;
         }
 
         // homeGoals/awayGoals are REAL goals across every game of the series, never the headline
@@ -5277,13 +5322,21 @@ namespace GameHubz.Logic.Services
             if (teamMatch == null) return;
             if (teamMatch.Status != TeamMatchStatus.Completed) return;
 
-            // A voided fixture (every game closed as a no-show double walkover) awarded NOTHING
-            // when it completed, so there is nothing to subtract — just reopen the tie below.
+            // A voided fixture (every game closed as a no-show double walkover) put a loss on both
+            // teams when it completed and nothing else — no points, no goals.
             // (The game being reverted is still NoShow here; the core clears it afterwards.)
             bool nothingPlayed = teamMatch.SubMatches.All(sm => sm.Status == MatchStatus.NoShow);
 
-            TournamentParticipantEntity? homePart = null, awayPart = null;
-            if (!nothingPlayed)
+            var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
+            var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
+
+            if (nothingPlayed)
+            {
+                // Floored at zero: a tie voided before the loss was recorded has none to give back.
+                if (homePart.Losses > 0) homePart.Losses--;
+                if (awayPart.Losses > 0) awayPart.Losses--;
+            }
+            else
             {
                 int homeTotal = 0, awayTotal = 0;
                 foreach (var sm in teamMatch.SubMatches)
@@ -5296,9 +5349,6 @@ namespace GameHubz.Logic.Services
 
                 var winnerId = teamMatch.WinnerTeamParticipantId;
 
-                homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
-                awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
-
                 homePart.GoalsFor -= homeTotal; homePart.GoalsAgainst -= awayTotal;
                 awayPart.GoalsFor -= awayTotal; awayPart.GoalsAgainst -= homeTotal;
 
@@ -5308,10 +5358,10 @@ namespace GameHubz.Logic.Services
                 { awayPart.Wins--; awayPart.Points -= 3; homePart.Losses--; }
                 else
                 { homePart.Draws--; homePart.Points -= 1; awayPart.Draws--; awayPart.Points -= 1; }
-
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
             }
+
+            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
+            await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
 
             teamMatch.Status = TeamMatchStatus.Pending;
             teamMatch.WinnerTeamParticipantId = null;
@@ -5341,8 +5391,8 @@ namespace GameHubz.Logic.Services
             // and leaving teamMatch tracked after save crashes the downstream
             // ProcessTeamMatchResult -> ProcessTeamMatchResultInner reload+UpdateEntity at the
             // "another instance with the same key is already tracked" check.
-            if (homePart != null) await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
-            if (awayPart != null) await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
+            await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
+            await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
             await this.AppUnitOfWork.TeamMatchRepository.DetachEntity(teamMatch);
             if (revertedTournament)
                 await this.AppUnitOfWork.TournamentRepository.DetachById(teamMatch.TournamentId);
@@ -6336,13 +6386,20 @@ namespace GameHubz.Logic.Services
                 teamMatch.Status = TeamMatchStatus.Completed;
                 await this.AppUnitOfWork.TeamMatchRepository.UpdateEntity(teamMatch, this.UserContextReader);
 
-                // A voided fixture (all games double-walkover'd) awards NOTHING: no points, no
-                // draws, no goals — the round still completes as if it had been played.
-                if (!nothingPlayed)
-                {
-                    var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
-                    var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
+                var homePart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.HomeTeamParticipantId!.Value);
+                var awayPart = await this.AppUnitOfWork.TournamentParticipantRepository.GetByIdOrThrowIfNull(teamMatch.AwayTeamParticipantId!.Value);
 
+                if (nothingPlayed)
+                {
+                    // A voided fixture (all games double-walkover'd) awards NOTHING — no points, no
+                    // draw, no goals — but it is still a fixture both teams played and lost, so
+                    // neither sits a match short of the rest of the table. The round completes as
+                    // if it had been played. Mirror of ApplyDoubleNoShowStats on the solo side.
+                    homePart.Losses++;
+                    awayPart.Losses++;
+                }
+                else
+                {
                     homePart.GoalsFor += homeTotalScore; homePart.GoalsAgainst += awayTotalScore;
                     awayPart.GoalsFor += awayTotalScore; awayPart.GoalsAgainst += homeTotalScore;
 
@@ -6352,19 +6409,15 @@ namespace GameHubz.Logic.Services
                     { awayPart.Wins++; awayPart.Points += 3; homePart.Losses++; }
                     else
                     { homePart.Draws++; homePart.Points += 1; awayPart.Draws++; awayPart.Points += 1; }
-
-                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
-                    await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
-
-                    await this.SaveAsync();
-
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
-                    await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
                 }
-                else
-                {
-                    await this.SaveAsync();
-                }
+
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(homePart, this.UserContextReader);
+                await this.AppUnitOfWork.TournamentParticipantRepository.UpdateEntity(awayPart, this.UserContextReader);
+
+                await this.SaveAsync();
+
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(homePart);
+                await this.AppUnitOfWork.TournamentParticipantRepository.DetachEntity(awayPart);
 
                 if (stageType == StageType.GroupStage)
                     await CheckAndAdvanceGroupStage(teamMatch.TournamentId, teamMatch.TournamentStageId!.Value);

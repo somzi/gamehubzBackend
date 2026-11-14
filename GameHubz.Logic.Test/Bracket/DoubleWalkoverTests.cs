@@ -259,7 +259,9 @@ namespace GameHubz.Logic.Test.Bracket
                 Assert.That(p.Points, Is.EqualTo(0), "a double no-show awards no points — deliberately not a draw");
                 Assert.That(p.Draws, Is.EqualTo(0), "and no draw is recorded");
                 Assert.That(p.Wins, Is.EqualTo(0));
-                Assert.That(p.Losses, Is.EqualTo(0));
+                Assert.That(p.Losses, Is.EqualTo(1), "the voided fixture is one both teams played and lost");
+                Assert.That(p.GoalsFor, Is.EqualTo(0));
+                Assert.That(p.GoalsAgainst, Is.EqualTo(0));
             }
         }
 
@@ -307,8 +309,8 @@ namespace GameHubz.Logic.Test.Bracket
             foreach (var sub in subs)
                 await harness.NewService().ApplyDoubleWalkover(sub.Id!.Value);
 
-            // Delete-result on one no-show game: the fixture reopens and — since the void awarded
-            // nothing — nothing may be subtracted either.
+            // Delete-result on one no-show game: the fixture reopens and the loss the void put on
+            // both teams is taken back — the void awarded nothing else, so nothing else may move.
             await harness.NewService().RevertMatchResult(subs[0].Id!.Value);
 
             Assert.That(harness.Match(subs[0].Id!.Value).Status, Is.EqualTo(MatchStatus.Pending),
@@ -320,6 +322,7 @@ namespace GameHubz.Logic.Test.Bracket
             {
                 Assert.That(p.Points, Is.EqualTo(0), "no phantom subtraction — the void never awarded points");
                 Assert.That(p.Draws, Is.EqualTo(0));
+                Assert.That(p.Losses, Is.EqualTo(0), "the reopened fixture is no longer a loss for either team");
             }
         }
 

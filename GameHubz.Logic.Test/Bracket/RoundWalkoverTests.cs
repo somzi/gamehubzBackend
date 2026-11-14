@@ -55,13 +55,45 @@ namespace GameHubz.Logic.Test.Bracket
                 var p = participants.Single(x => x.Id == pid);
                 Assert.That(p.Points, Is.EqualTo(0), "a double forfeit awards nothing");
                 Assert.That(p.Draws, Is.EqualTo(0), "and is not a draw");
+                Assert.That(p.Losses, Is.EqualTo(1), "it is a match they both played and lost");
             }
+
+            Assert.That(participants.Select(p => p.Wins + p.Draws + p.Losses), Is.All.EqualTo(1),
+                "the whole table has played one round");
 
             // The round is complete now, so the advancement hook must have opened round 2 — the
             // reason the bulk path runs the hooks at all rather than just rewriting rows.
             var round2 = harness.Matches(tid).Where(m => m.RoundNumber == 2).ToList();
             Assert.That(round2, Is.Not.Empty);
             Assert.That(round2.All(m => m.RoundOpenAt <= DateTime.UtcNow), Is.True, "round 2 unlocked");
+        }
+
+        // A group-stage round runs across every group at once, and each group has its own table —
+        // the bulk path has to re-derive all of them, not just the one its first fixture sits in.
+        [Test]
+        public async Task RoundWalkover_GroupStage_CountsTheFixtureAsPlayedInEveryGroup()
+        {
+            var harness = new BracketTestHarness(useSqlite: true);
+            var tid = await harness.SeedSoloTournamentAsync(TournamentFormat.GroupStageWithKnockout, 8);
+            await harness.NewService().GenerateGroupStageWithKnockout(tid, numberOfGroups: 2, qualifiersPerGroup: 2);
+
+            var groupStage = harness.Stages(tid).Single(s => s.Type == StageType.GroupStage);
+            var round1 = harness.Matches(tid)
+                .Where(m => m.TournamentStageId == groupStage.Id && m.RoundNumber == 1)
+                .ToList();
+            Assert.That(round1.Select(m => m.TournamentGroupId).Distinct().Count(), Is.EqualTo(2),
+                "precondition: the round spans both groups");
+
+            var result = await harness.NewService().ApplyRoundWalkover(groupStage.Id!.Value, 1);
+            Assert.That(result.Closed, Is.EqualTo(round1.Count));
+
+            // Four to a group, so round 1 has all eight of them on the pitch.
+            foreach (var p in harness.Participants(tid))
+            {
+                Assert.That(p.Losses, Is.EqualTo(1), "one match played and lost, in whichever group");
+                Assert.That(p.Points, Is.EqualTo(0));
+                Assert.That(p.Draws, Is.EqualTo(0));
+            }
         }
 
         [Test]
